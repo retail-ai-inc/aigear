@@ -1,0 +1,15 @@
+syntax = "proto3";
+import "google/protobuf/struct.proto";
+option go_package = "./proto";
+
+service ML {
+  rpc Predict(MLRequest) returns (MLResponse) {}
+}
+
+message MLRequest {
+  google.protobuf.Struct request = 1;
+}
+
+message MLResponse {
+  google.protobuf.Struct response = 2;
+}
