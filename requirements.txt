@@ -1,0 +1,4 @@
+# additional development/testing requirements
+flake8>=3.5
+pytest>=5.3
+setuptools~=65.6.3
