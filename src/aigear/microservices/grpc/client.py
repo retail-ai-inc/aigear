@@ -1,7 +1,7 @@
 import grpc
 from google.protobuf import struct_pb2
 from google.protobuf.json_format import MessageToDict
-from aigear.proto import grpc_pb2, grpc_pb2_grpc
+from .proto import grpc_pb2, grpc_pb2_grpc
 
 
 class MlgrpcClient:

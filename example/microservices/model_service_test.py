@@ -1,8 +1,8 @@
 # This script is used to test deployment
 # pip install aigear-0.0.1-py3-none-any.whl
-from aigear.client import MlgrpcClient
+from aigear.microservices import grpc
 
-grpc_client = MlgrpcClient(
+grpc_client = grpc.MlgrpcClient(
     service_host='localhost:50051'
 )
 
