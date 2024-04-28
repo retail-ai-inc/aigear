@@ -3,11 +3,12 @@ import shutil
 from .constant import (
     PROJECT_NAME,
     PROJECT_VERSION,
+    PROJECT_DESCRIBE,
 )
 
 
 class Project:
-    def __init__(self, name: str = PROJECT_NAME, version: str = PROJECT_VERSION):
+    def __init__(self, name: str = PROJECT_NAME, version: str = PROJECT_VERSION, describe: str = PROJECT_DESCRIBE):
         """
         Used to manage project related functions and information
 
@@ -16,6 +17,7 @@ class Project:
         """
         self.name = name
         self.version = version
+        self.describe = describe
 
     def init(self):
         """

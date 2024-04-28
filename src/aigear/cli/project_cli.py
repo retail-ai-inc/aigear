@@ -3,6 +3,7 @@ from aigear.project import Project
 from aigear.constant import (
     PROJECT_NAME,
     PROJECT_VERSION,
+    PROJECT_DESCRIBE,
 )
 
 
@@ -14,11 +15,13 @@ def get_argument():
                         help='Project name.')
     parser.add_argument('--version', default=PROJECT_VERSION,
                         help='Project version.')
+    parser.add_argument('--describe', default=PROJECT_DESCRIBE,
+                        help='Project describe.')
     args = parser.parse_args()
     return args.tag
 
 
 def project_init():
     args = get_argument()
-    project = Project(name=args.name, version=args.version)
+    project = Project(name=args.name, version=args.version, describe=args.describe)
     project.init()
