@@ -44,6 +44,7 @@ msgrpc = [
 
 [project.scripts]
 aigear-msgrpc = "aigear.microservices.grpc.service:main"
+aigear-init = "aigear.cli.project_cli:project_init"
 
 [tool.setuptools.packages.find]
 where = ["src"]
