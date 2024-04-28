@@ -1,9 +1,13 @@
 import os
 import shutil
+from .constant import (
+    PROJECT_NAME,
+    PROJECT_VERSION,
+)
 
 
 class Project:
-    def __init__(self, name: str = "template_project", version: str = "0.0.1"):
+    def __init__(self, name: str = PROJECT_NAME, version: str = PROJECT_VERSION):
         """
         Used to manage project related functions and information
 
