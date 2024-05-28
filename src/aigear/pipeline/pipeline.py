@@ -22,13 +22,11 @@ class Pipeline:
         self.all_output_results = {}
 
     @staticmethod
-    def step(func, parm, output_key: str = ""):
+    def step(function, parm=None, output=None):
         """
         Used to define the relationships between tasks
         """
-        if output_key == "":
-            output_key = func.__name__
-        step = Step(func, parm, output_key)
+        step = Step(function, parm, output)
         return step
 
     def workflow(self, *args):
@@ -48,7 +46,7 @@ class Pipeline:
     def _run(self, workflow):
         for step in workflow:
             if isinstance(step, Step):
-                self.all_output_results[step.output_key] = step_executor(step, self.all_output_results)
+                self.all_output_results[step.output_key.key] = step_executor(step, self.all_output_results)
             elif isinstance(step, Workflow):
                 self._run(step)
             elif isinstance(step, Parallel):

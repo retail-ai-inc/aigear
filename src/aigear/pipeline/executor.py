@@ -5,62 +5,43 @@ import concurrent.futures
 def step_executor(step, all_output_results):
     func = step.func
     params = step.params
-    output_key = step.output_key
+    output = step.output_key
 
-    # If output_key is not set, the output result will be saved using the function name
-    if output_key == "":
-        output_key = func.__name__
+    all_params = []
+    for parm in params:
+        if isinstance(parm, RelyParams):
+            rely_params = _expand_rely_params(parm, all_output_results)
+            all_params.extend(rely_params)
+        else:
+            all_params.append(parm)
+    # Run and save output results
+    outputs = func(*all_params)
 
-    if params.is_dict:
-        # Run based on keyword parameters
-        all_params = {}
-        for parm in params:
-            if isinstance(parm, RelyParams):
-                rely_params = _expand_rely_params(parm, all_output_results)
-                all_params.update(rely_params)
-            else:
-                all_params.update(parm)
-        # Run and save output results
-        results = func(**all_params)
+    if output.keywords:
+        # Store parameters according to keywords
+        results = {key: output for key, output in zip(output.keywords, outputs)}
+    elif isinstance(outputs, tuple):
+        # Store parameters according to positional parameters
+        results = outputs
     else:
-        # Run based on positional parameters
-        all_params = []
-        for parm in params:
-            if isinstance(parm, RelyParams):
-                rely_params = _expand_rely_params(parm, all_output_results)
-                all_params.extend(rely_params)
-            else:
-                all_params.append(parm)
-        # Run and save output results
-        results = func(*all_params)
+        # When the output is a value, wrap it into a tuple
+        results = (outputs, )
     return results
 
 
 def _expand_rely_params(params, all_output_results):
     rely_params = all_output_results.get(params.rely_output_key)
-    # When it is a value, wrap it in a list
-    if not isinstance(rely_params, tuple):
-        rely_params = [rely_params]
-
-    # By default, all outputs of dependent functions are taken as parameters
-    rely_index = params.rely_index
-    if not rely_index:
-        return rely_params
-
-    if isinstance(rely_index, dict):
-        # Creating keyword parameters based on indexes
-        rely_params = {key: rely_params[val] for key, val in params.rely_index}
+    if params.keywords:
+        rely_params = [rely_params[key] for key in params.keywords]
     else:
-        # Creating positional parameters based on indexes
-        rely_params = [rely_params[idx] for idx in params.rely_index]
-
+        rely_params = list(rely_params)
     return rely_params
 
 
 def thread_executor(steps, all_output_results):
     with concurrent.futures.ThreadPoolExecutor() as executor:
         futures = [executor.submit(step_executor, step, all_output_results) for step in steps]
-        results_dict = {step.output_key: future.result() for future, step in
+        results_dict = {step.output_key.key: future.result() for future, step in
                         zip(concurrent.futures.as_completed(futures), steps)}
     return results_dict
 
@@ -68,6 +49,6 @@ def thread_executor(steps, all_output_results):
 def process_executor(steps, all_output_results):
     with concurrent.futures.ProcessPoolExecutor() as executor:
         futures = [executor.submit(step_executor, step, all_output_results) for step in steps]
-        results_dict = {step.output_key: future.result() for future, step in
+        results_dict = {step.output_key.key: future.result() for future, step in
                         zip(concurrent.futures.as_completed(futures), steps)}
     return results_dict

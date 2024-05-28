@@ -1,5 +1,5 @@
 from .pipeline import Pipeline
-from .types import Parallel, NBParallel, RelyParams, InputParams
+from .types import Parallel, NBParallel, RelyParams, InputParams, OutputKey
 
 __all__ = [
     "Pipeline",
@@ -7,4 +7,5 @@ __all__ = [
     "NBParallel",
     "RelyParams",
     "InputParams",
+    "OutputKey",
 ]
