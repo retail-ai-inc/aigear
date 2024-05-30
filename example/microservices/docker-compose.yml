@@ -1,0 +1,33 @@
+version: '3.7'
+
+services:
+  demo1-grpc:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /microservices
+    ports:
+      - 50051:50051
+    command: aigear-msgrpc --tag demo1
+    volumes:
+      - .:/microservices:rw
+    hostname: demo1-host
+    networks:
+      - backend
+  demo2-grpc:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /microservices
+    ports:
+      - 50052:50051
+    command: aigear-msgrpc --tag demo2
+    volumes:
+      - .:/microservices:rw
+    hostname: demo2-host
+    networks:
+      - backend
+
+networks:
+  backend:
+    external: true

@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=46.4.0", "wheel>=0.36.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aigear"
+version = "0.0.1"
+#dynamic = ["version"]
+description = "Machine learning microservices based on gRPC"
+keywords = ["MLOps", "AI", "ML", "Model Serving", "Model Deployment", "Model Training"]
+authors = [{ name = "Retail AI Groups Inc." }]
+readme = "README.md"
+license = { file = 'LICENSE' }
+requires-python = ">=3.8"
+classifiers = [
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    'Programming Language :: Python :: 3 :: Only',
+    'Programming Language :: Python :: 3.9',
+    'Programming Language :: Python :: 3.10',
+    'Programming Language :: Python :: 3.11',
+    'Programming Language :: Python :: 3.12',
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: Unix",
+    "Operating System :: MacOS",
+]
+dependencies = [
+    "aigear[msgrpc]",
+]
+
+[project.urls]
+Homepage = "https://github.com/retail-ai-inc/gear"
+Repository = "https://github.com/retail-ai-inc/aigear.git"
+Issues = "https://github.com/retail-ai-inc/aigear/issues"
+
+[project.optional-dependencies]
+msgrpc = [
+    "grpcio >= 1.54.2",
+    "protobuf >= 4.23.3",
+    "grpcio-health-checking >= 1.56.0",
+    "sentry-sdk >= 1.29.2",
+]
+
+[project.scripts]
+aigear-msgrpc = "aigear.microservices.grpc.service:main"
+aigear-init = "aigear.cli.project_cli:project_init"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = [
+    "aigear*",
+]
+
