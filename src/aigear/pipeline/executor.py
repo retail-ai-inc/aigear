@@ -20,22 +20,21 @@ def step_executor(step, all_output_results):
     if output.keywords:
         # Store parameters according to keywords
         results = {key: output for key, output in zip(output.keywords, outputs)}
-    elif isinstance(outputs, tuple):
-        # Store parameters according to positional parameters
-        results = outputs
     else:
         # When the output is a value, wrap it into a tuple
-        results = (outputs, )
+        results = outputs
     return results
 
 
 def _expand_rely_params(params, all_output_results):
     rely_params = all_output_results.get(params.rely_output_key)
     if params.keywords:
-        rely_params = [rely_params[key] for key in params.keywords]
+        expanded_params = [rely_params[key] for key in params.keywords]
+    elif isinstance(rely_params, tuple):
+        expanded_params = rely_params
     else:
-        rely_params = list(rely_params)
-    return rely_params
+        expanded_params = [rely_params]
+    return expanded_params
 
 
 def thread_executor(steps, all_output_results):
