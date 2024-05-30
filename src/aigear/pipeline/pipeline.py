@@ -1,5 +1,6 @@
 from .types import Step, Parallel, NBParallel, Workflow
 from .executor import step_executor, thread_executor, process_executor
+from ..common import logger, state, StateType
 
 
 class Pipeline:
@@ -20,6 +21,7 @@ class Pipeline:
         self.version = version
         self.describe = describe
         self.all_output_results = {}
+        self.state = None
 
     @staticmethod
     def step(function, parm=None, output=None):
@@ -27,6 +29,7 @@ class Pipeline:
         Used to define the relationships between tasks
         """
         step = Step(function, parm, output)
+        state.set_state(function, StateType.PENDING)
         return step
 
     def workflow(self, *args):
@@ -37,7 +40,13 @@ class Pipeline:
         return self.workflows
 
     def run(self):
-        result = self._run(self.workflows)
+        try:
+            logger.info("Pipeline run start.")
+            result = self._run(self.workflows)
+            logger.info("Pipeline run completed.")
+        finally:
+            self.state = state
+            logger.info('\n' + state.state)
         return result
 
     def stop(self):
