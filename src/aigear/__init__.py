@@ -7,6 +7,11 @@ __all__ = list(
     set(pipeline.__all__)
 )
 
-__all__.append(
-    Project,
+__version__ = "0.0.1"
+
+__all__.extend(
+    [
+        Project,
+        __version__,
+    ]
 )

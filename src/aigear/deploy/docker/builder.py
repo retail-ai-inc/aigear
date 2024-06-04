@@ -1,60 +1,24 @@
-import warnings
+import hashlib
+import os
+import shutil
+import sys
+import subprocess
 from contextlib import contextmanager
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from tempfile import TemporaryDirectory
+from types import TracebackType
 from typing import (
-    Generator,
+    Iterable,
+    List,
     Optional,
     TextIO,
+    Type,
+    Union,
 )
-import aigear
-
-
-@contextmanager
-def silence_docker_warnings() -> Generator[None, None, None]:
-    with warnings.catch_warnings():
-        warnings.filterwarnings(
-            "ignore",
-            message="distutils Version classes are deprecated.*",
-            category=DeprecationWarning,
-        )
-        warnings.filterwarnings(
-            "ignore",
-            message="The distutils package is deprecated and slated for removal.*",
-            category=DeprecationWarning,
-        )
-        yield
-
-
-with silence_docker_warnings():
-    import docker
-    from docker import DockerClient
-    from docker.errors import DockerException
-
-
-@contextmanager
-def docker_client() -> Generator["DockerClient", None, None]:
-    """Get the environmentally-configured Docker client"""
-    client = None
-    try:
-        with silence_docker_warnings():
-            client = docker.DockerClient.from_env()
-            yield client
-    except DockerException as exc:
-        raise RuntimeError(
-            "This error is often thrown because Docker is not running. Please ensure Docker is running."
-        ) from exc
-    finally:
-        client is not None and client.close()
-
-
-class BuildError(Exception):
-    """Raised when a Docker build fails"""
-
-
-# Labels to apply to all images built with Prefect
-IMAGE_LABELS = {
-    "io.aigear.version": aigear.__version__,
-}
+from typing_extensions import Self
+from aigear import __version__
+from .client import docker_client, APIError
+from .errors import BuildError
 
 
 def build_image(
@@ -87,16 +51,19 @@ def build_image(
         raise ValueError(f"Context path {context} does not exist")
 
     kwargs = {key: kwargs[key] for key in kwargs if key not in ["decode", "labels"]}
+    image_labels = {
+        "io.aigear.version": __version__,
+    }
 
     image_id = None
     with docker_client() as client:
         events = client.api.build(
-            path=str(context),
+            path=context.as_posix(),
             tag=tag,
             dockerfile=dockerfile,
             pull=pull,
             decode=True,
-            labels=IMAGE_LABELS,
+            labels=image_labels,
             platform=platform,
             **kwargs,
         )
@@ -114,8 +81,62 @@ def build_image(
                     raise BuildError(event["error"])
                 elif "message" in event:
                     raise BuildError(event["message"])
-        except docker.errors.APIError as e:
+        except APIError as e:
             raise BuildError(e.explanation) from e
 
     assert image_id, "The Docker daemon did not return an image ID"
     return image_id
+
+
+def default_dockerfile(
+        context: Optional[Path] = None,
+        base_image: str = None,
+        package_source: str = None
+):
+    if not context:
+        context = Path.cwd()
+
+    if (context / "Dockerfile").exists():
+        return
+
+    lines = []
+    if base_image is None:
+        base_image = f"python:{sys.version_info.major}.{sys.version_info.minor}"
+    lines.append(f"FROM {base_image}")
+
+    dir_name = context.name
+    workdir = f"/aigear/{dir_name}"
+
+    lines.append(f"WORKDIR {workdir}/")
+    lines.append(f"COPY . {workdir}/")
+
+    if package_source is None:
+        package_source = ""
+    else:
+        package_source = " -i " + package_source
+
+    lines.append(f"COPY requirements.txt {workdir}/requirements.txt")
+    lines.append(f"RUN python -m pip install --upgrade pip{package_source}")
+    lines.append(
+        f"RUN python -m pip install -r {workdir}/requirements.txt{package_source}"
+    )
+
+    with Path("Dockerfile").open("w") as f:
+        f.writelines(line + "\n" for line in lines)
+
+
+def default_requirements(
+        context: Optional[Path] = None,
+):
+    if not context:
+        context = Path.cwd()
+
+    if (context / "requirements.txt").exists():
+        return
+
+    try:
+        command = ['pipreqs', context, '--use-local', '--encoding', 'UTF-8']
+        subprocess.run(command, check=True, text=True, capture_output=True)
+        print("Automatically generate ./requirements.txt. But it's not tidy.")
+    except subprocess.CalledProcessError as e:
+        print("Error occurred while running command:", e.stderr)
