@@ -1,28 +1,31 @@
-import hashlib
-import os
-import shutil
 import sys
 import subprocess
-from contextlib import contextmanager
-from pathlib import Path, PurePosixPath
-from tempfile import TemporaryDirectory
-from types import TracebackType
+from pathlib import Path
 from typing import (
-    Iterable,
-    List,
     Optional,
     TextIO,
-    Type,
-    Union,
 )
-from typing_extensions import Self
 from aigear import __version__
 from .client import docker_client, APIError
 from .errors import BuildError
 
 
+# class ImageBuilder:
+#     def build(self, image_path: Path, stream_progress_to, **kwargs):
+#         if not image_path:
+#             image_path = Path.cwd()
+#
+#         # If requirements.txt and dockerfile do not exist, the default will be used
+#         self.default_requirements(image_path)
+#         self.default_dockerfile(image_path)
+#
+#         # create docker image
+#         image_id = self.build_image(image_path, stream_progress_to=stream_progress_to, **kwargs)
+#         return image_id
+
+
 def build_image(
-        context: Path,
+        image_path: Path,
         dockerfile: str = "Dockerfile",
         tag: Optional[str] = None,
         pull: bool = False,
@@ -33,22 +36,65 @@ def build_image(
     """Builds a Docker image, returning the image ID
 
     Args:
-        context: the root directory for the Docker build context
+        image_path: the root directory for the Docker build context
         dockerfile: the path to the Dockerfile, relative to the context
         tag: the tag to give this image
         pull: True to pull the base image during the build
+        platform (str): Platform in the format ``os[/arch[/variant]]``
         stream_progress_to: an optional stream (like sys.stdout, or an io.TextIO) that
             will collect the build output as it is reported by Docker
+        fileobj: A file object to use as the Dockerfile. (Or a file-like
+            object)
+        quiet (bool): Whether to return the status
+        nocache (bool): Don't use the cache when set to ``True``
+        rm (bool): Remove intermediate containers. The ``docker build``
+            command now defaults to ``--rm=true``, but we have kept the old
+            default of `False` to preserve backward compatibility
+        timeout (int): HTTP timeout
+        custom_context (bool): Optional if using ``fileobj``
+        encoding (str): The encoding for a stream. Set to ``gzip`` for
+            compressing
+        forcerm (bool): Always remove intermediate containers, even after
+            unsuccessful builds
+        buildargs (dict): A dictionary of build arguments
+        container_limits (dict): A dictionary of limits applied to each
+            container created by the build process. Valid keys:
+
+            - memory (int): set memory limit for build
+            - memswap (int): Total memory (memory + swap), -1 to disable
+                swap
+            - cpushares (int): CPU shares (relative weight)
+            - cpusetcpus (str): CPUs in which to allow execution, e.g.,
+                ``"0-3"``, ``"0,1"``
+        shmsize (int): Size of `/dev/shm` in bytes. The size must be
+            greater than 0. If omitted the system uses 64MB
+        labels (dict): A dictionary of labels to set on the image
+        cache_from (list): A list of images used for build cache
+            resolution
+        target (str): Name of the build-stage to build in a multi-stage
+            Dockerfile
+        network_mode (str): networking mode for the run commands during
+            build
+        squash (bool): Squash the resulting images layers into a
+            single layer.
+        extra_hosts (dict): Extra hosts to add to /etc/hosts in building
+            containers, as a mapping of hostname to IP address.
+        isolation (str): Isolation technology used during build.
+            Default: `None`.
+        use_config_proxy (bool): If ``True``, and if the docker client
+            configuration file (``~/.docker/config.json`` by default)
+            contains a proxy configuration, the corresponding environment
+            variables will be set in the container being built.
 
     Returns:
         The image ID
     """
 
-    if not context:
-        raise ValueError("context required to build an image")
+    if not image_path:
+        raise ValueError("image_path required to build an image")
 
-    if not Path(context).exists():
-        raise ValueError(f"Context path {context} does not exist")
+    if not Path(image_path).exists():
+        raise ValueError(f"Context path {image_path} does not exist")
 
     kwargs = {key: kwargs[key] for key in kwargs if key not in ["decode", "labels"]}
     image_labels = {
@@ -58,13 +104,14 @@ def build_image(
     image_id = None
     with docker_client() as client:
         events = client.api.build(
-            path=context.as_posix(),
+            path=image_path.as_posix(),
             tag=tag,
             dockerfile=dockerfile,
             pull=pull,
             decode=True,
             labels=image_labels,
             platform=platform,
+            rm=True,
             **kwargs,
         )
 
@@ -89,14 +136,14 @@ def build_image(
 
 
 def default_dockerfile(
-        context: Optional[Path] = None,
+        image_path: Optional[Path] = None,
         base_image: str = None,
         package_source: str = None
 ):
-    if not context:
-        context = Path.cwd()
+    if not image_path:
+        raise ValueError("image_path required to build an image")
 
-    if (context / "Dockerfile").exists():
+    if (image_path / "Dockerfile").exists():
         return
 
     lines = []
@@ -104,7 +151,7 @@ def default_dockerfile(
         base_image = f"python:{sys.version_info.major}.{sys.version_info.minor}"
     lines.append(f"FROM {base_image}")
 
-    dir_name = context.name
+    dir_name = image_path.name
     workdir = f"/aigear/{dir_name}"
 
     lines.append(f"WORKDIR {workdir}/")
@@ -126,16 +173,16 @@ def default_dockerfile(
 
 
 def default_requirements(
-        context: Optional[Path] = None,
+        image_path: Optional[Path] = None,
 ):
-    if not context:
-        context = Path.cwd()
+    if not image_path:
+        raise ValueError("image_path required to build an image")
 
-    if (context / "requirements.txt").exists():
+    if (image_path / "requirements.txt").exists():
         return
 
     try:
-        command = ['pipreqs', context, '--use-local', '--encoding', 'UTF-8']
+        command = ['pipreqs', image_path, '--use-local', '--encoding', 'UTF-8']
         subprocess.run(command, check=True, text=True, capture_output=True)
         print("Automatically generate ./requirements.txt. But it's not tidy.")
     except subprocess.CalledProcessError as e:

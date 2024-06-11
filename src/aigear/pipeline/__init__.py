@@ -1,9 +1,9 @@
-from .pipeline import Pipeline
+from .pipeline import WorkFlow
 from .types import Parallel, NBParallel, RelyParams, InputParams, OutputKey
 from .task import task
 
 __all__ = [
-    "Pipeline",
+    "WorkFlow",
     "Parallel",
     "NBParallel",
     "RelyParams",

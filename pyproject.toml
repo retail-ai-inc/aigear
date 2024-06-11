@@ -40,6 +40,8 @@ msgrpc = [
     "protobuf >= 4.23.3",
     "grpcio-health-checking >= 1.56.0",
     "sentry-sdk >= 1.29.2",
+    "docker >= 6.13",
+    "tabulate >= 0.9",
 ]
 
 [project.scripts]
