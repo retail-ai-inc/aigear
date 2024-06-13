@@ -2,7 +2,7 @@ from sklearn.datasets import load_iris
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import classification_report, accuracy_score
-from aigear.pipeline import Pipeline, task
+from aigear.pipeline import workflow, task
 import time
 import pickle
 
@@ -39,67 +39,16 @@ def save_model(model, model_path):
         pickle.dump(model, md)
 
 
+@workflow
 def my_pipeline():
-    pipeline = Pipeline(
-        name="template",
-        version="0.0.1",
-        describe="",
-    )
-
-    # Dependency relationship
-    step1 = pipeline.step(load_data)
-    step2 = pipeline.step(
-        split_dataset,
-        step1.get_output(),
-        ('X_train', 'X_test', 'y_train', 'y_test')
-    )
-    step4 = pipeline.step(
-        fit_model,
-        (step2.get_output('X_train'), step2.get_output('y_train')),
-    )
-    step5 = pipeline.step(
-        save_model,
-        (
-            step4.get_output(),
-            "iris_model.pkl"
-        )
-    )
-    step6 = pipeline.step(
-        evaluate,
-        (
-            step4.get_output(),
-            step2.get_output('X_test'),
-            step2.get_output('y_test')
-        ),
-        ('y_pred', 'accuracy')
-    )
-    # print(step5)
-    # print('-------------------------------------------------------')
-
-    # Operation mode
-    my_workflow = pipeline.workflow(
-        step1,
-        step2,
-        step4,
-        step5,
-        step6,
-    )
-    print(my_workflow)
-
-    print("------start------")
-    start_time = time.time()
-
-    result = pipeline.run()
-    end_time = time.time()
-    print('Pipeline run time: ', round(end_time - start_time, 3), 's')
-
-    print("准确率：", result.get("evaluate")['accuracy'])
-    # y_test = result.get("split_dataset")['y_test']
-    # y_pred = result.get("evaluate")['y_pred']
-    # iris = result.get("load_data")
-    # print("分类报告：\n", classification_report(y_test, y_pred, target_names=iris.target_names))
-    print("------end------")
+    iris = load_iris()
+    X_train, X_test, y_train, y_test = split_dataset(iris)
+    model = fit_model(X_train, y_train)
+    y_pred, accuracy = evaluate(model, X_test, y_test)
+    print("准确率：", accuracy)
+    model_path = 'iris_model.pkl'
+    save_model(model, model_path)
 
 
 if __name__ == "__main__":
-    my_pipeline()
+    my_pipeline.run_in_executor()

@@ -3,7 +3,7 @@ import inspect
 import time
 import traceback
 from ..common import logger, state, StateType
-from ..common.callables import get_call_parameters
+from ..common.callable import get_call_parameters
 
 
 class Task:
@@ -14,7 +14,6 @@ class Task:
         description: str = None,
         tags: set[str] = None,
         version: str = None,
-        group: str = None,
     ):
         if not callable(fn):
             raise TypeError("'fn' must be callable")
@@ -31,7 +30,6 @@ class Task:
         self.description = description or inspect.getdoc(fn)
         self.tags = tags
         self.version = version
-        self.group = group
 
         state.set_state(fn, StateType.PENDING)
 
@@ -58,7 +56,6 @@ def task(
     description: str = None,
     tags: set[str] = None,
     version: str = None,
-    group: str = None,
 ):
     """
     Decorator to designate a function as a task in a workflow.
@@ -72,7 +69,6 @@ def task(
             tags are combined with any tags defined by a `aigear.tags` context at
             task runtime.
         version: An optional string specifying the version of this task definition
-        group: Group key for parallel tasks
 
     Returns:
         A callable `Task` object which, when called, will submit the task for execution.
@@ -89,6 +85,7 @@ def task(
         >>> def my_task():
         >>>     pass
     """
+
     def decorator(fn):
         return Task(
             fn=fn,
@@ -96,7 +93,6 @@ def task(
             description=description,
             tags=tags,
             version=version,
-            group=group,
         )
 
     if __fn is None:
