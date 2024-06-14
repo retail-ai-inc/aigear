@@ -10,7 +10,7 @@ from typing import (
     Literal,
     Dict,
 )
-from ..common import logger, state, StateType
+from ..common import logger
 from ..common.callable import (
     parse_function,
     topological_sort,
@@ -44,7 +44,6 @@ class TaskRunner:
             self._run_code(task)
             self._run_function(task)
 
-        self._executor.submit(self._wait_features, pipeline_name)
         return self._output()
 
     def _output(self):
@@ -66,11 +65,6 @@ class TaskRunner:
                 output = self._namespace.get(key)
             outputs[key] = output
         return outputs
-
-    def _wait_features(self, pipeline_name: str):
-        features = [feature[0] if isinstance(feature, list) else feature for feature in self._features.values()]
-        wait(features)
-        logger.info(f"All tasks of the {pipeline_name} have been completed.")
 
     def _run_code(self, task: WrappedTask):
         if not task.is_feature:
@@ -130,6 +124,7 @@ class TaskRunner:
             results = feature.result()
             self._namespace.update({k: v for k, v in zip(output_keys, results)})
         else:
+            # TODO: Can't pickle <function> for ProcessPool.
             self._namespace[k] = feature.result()
 
     def _get_task_name(self, arg_key: str):
@@ -137,6 +132,9 @@ class TaskRunner:
         task_name = [task.task_name for task in tasks if arg_key in task.output_key][0]
         tasks_sorted = [task.task_name for task in tasks]
         return task_name, tasks_sorted
+
+    def submit(self, func: callable, *args, **kwargs):
+        return self._executor.submit(func, *args, **kwargs)
 
     def __enter__(self):
         if self.executor == "ProcessPool":

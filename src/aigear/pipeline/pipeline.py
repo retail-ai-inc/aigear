@@ -1,10 +1,10 @@
-from functools import update_wrapper
 import inspect
 import time
 import traceback
 from typing import (
     Optional,
     Literal,
+    Any,
 )
 from ..common import (
     logger,
@@ -31,7 +31,6 @@ class WorkFlow:
         if name is not None and not isinstance(name, str):
             raise TypeError("Expected string for workflow parameter 'name'.")
 
-        update_wrapper(self, fn)
         self.fn = fn
         self.name = name or fn.__name__.replace("_", "-")
         self.description = description or inspect.getdoc(fn)
@@ -72,7 +71,11 @@ class WorkFlow:
             logger.info('\n' + state.state)
         return outputs
 
-    def __call__(self, *args, **kwargs):
+    def __call__(
+        self,
+        *args: tuple[Any, ...],
+        **kwargs: dict[str, Any],
+    ):
         result = None
         try:
             start_time = time.time()
@@ -118,9 +121,20 @@ def workflow(
     Examples:
         Define a simple workflow
 
-        >>> @workflow()
-        >>> def my_task(x, y):
-        >>>     return x + y
+        >>> from aigear.pipeline import task, workflow
+        >>> from sklearn.datasets import load_iris
+        >>> @task
+        >>> def load_data():
+        >>>     iris = load_iris()
+        >>>     return iris
+
+        >>> @workflow
+        >>> def my_pipeline():
+        >>>     iris = load_iris()
+
+        >>> if __name__ == "__main__":
+        >>>    # my_pipeline()  # or the following command
+        >>>    my_pipeline.run_in_executor()
     """
 
     def decorator(fn):

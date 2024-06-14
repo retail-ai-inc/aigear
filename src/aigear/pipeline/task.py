@@ -1,9 +1,15 @@
-from functools import update_wrapper
 import inspect
 import time
+import __main__
 import traceback
+from typing import (
+    Optional,
+    Literal,
+    Any,
+)
 from ..common import logger, state, StateType
 from ..common.callable import get_call_parameters
+from .executor import TaskRunner
 
 
 class Task:
@@ -18,7 +24,6 @@ class Task:
         if not callable(fn):
             raise TypeError("'fn' must be callable")
 
-        update_wrapper(self, fn)
         self.fn = fn
         if not name:
             if not hasattr(self.fn, "__name__"):
@@ -33,7 +38,34 @@ class Task:
 
         state.set_state(fn, StateType.PENDING)
 
-    def __call__(self, *args, **kwargs):
+    def run_in_executor(
+        self,
+        *args: tuple[Any, ...],
+        max_workers: Optional[int] = 1,
+        executor: Optional[Literal["ThreadPool", "ProcessPool"]] = "ThreadPool",
+        **kwargs: dict[str, Any],
+    ):
+        outputs = None
+        try:
+            start_time = time.time()
+
+            with TaskRunner(max_workers, executor) as runner:
+                setattr(__main__, self.fn.__name__, self.fn)
+                feature = runner.submit(self.fn, *args, **kwargs)
+                outputs = feature.result()
+
+            end_time = time.time()
+            run_time = str(round(end_time - start_time, 3))
+            logger.info(f"The total running time of the Task: {run_time}s")
+        except Exception as e:
+            logger.error(f"Task '{self.name}' failed running: \n{traceback.format_exc()}")
+        return outputs
+
+    def __call__(
+        self,
+        *args: tuple[Any, ...],
+        **kwargs: dict[str, Any],
+    ):
         try:
             start_time = time.time()
             args, kwargs = get_call_parameters(self.fn, args, kwargs)

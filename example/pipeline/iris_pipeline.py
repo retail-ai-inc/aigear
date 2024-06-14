@@ -1,10 +1,10 @@
 from sklearn.datasets import load_iris
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import classification_report, accuracy_score
+from sklearn.metrics import accuracy_score
 from aigear.pipeline import workflow, task
-import time
 import pickle
+
 
 @task
 def load_data():
@@ -41,7 +41,7 @@ def save_model(model, model_path):
 
 @workflow
 def my_pipeline():
-    iris = load_iris()
+    iris = load_data()
     X_train, X_test, y_train, y_test = split_dataset(iris)
     model = fit_model(X_train, y_train)
     y_pred, accuracy = evaluate(model, X_test, y_test)
@@ -50,5 +50,6 @@ def my_pipeline():
     save_model(model, model_path)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
+    # my_pipeline()
     my_pipeline.run_in_executor()
