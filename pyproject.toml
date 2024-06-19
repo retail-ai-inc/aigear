@@ -26,6 +26,8 @@ classifiers = [
     "Operating System :: MacOS",
 ]
 dependencies = [
+    "aigear[common]",
+    "aigear[docker]",
     "aigear[msgrpc]",
 ]
 
@@ -35,18 +37,23 @@ Repository = "https://github.com/retail-ai-inc/aigear.git"
 Issues = "https://github.com/retail-ai-inc/aigear/issues"
 
 [project.optional-dependencies]
+common = [
+    "tabulate >= 0.9",
+]
+docker = [
+    "docker >= 6.13",
+]
 msgrpc = [
     "grpcio >= 1.54.2",
     "protobuf >= 4.23.3",
     "grpcio-health-checking >= 1.56.0",
     "sentry-sdk >= 1.29.2",
-    "docker >= 6.13",
-    "tabulate >= 0.9",
 ]
 
 [project.scripts]
 aigear-msgrpc = "aigear.microservices.grpc.service:main"
 aigear-init = "aigear.cli.project_cli:project_init"
+run-workflow = "aigear.cli.workflow:run_workflow"
 
 [tool.setuptools.packages.find]
 where = ["src"]

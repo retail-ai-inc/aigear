@@ -1,6 +1,6 @@
 import argparse
-from aigear.project import Project
-from aigear.constant import (
+from ..project import Project
+from ..constant import (
     PROJECT_NAME,
     PROJECT_VERSION,
     PROJECT_DESCRIBE,

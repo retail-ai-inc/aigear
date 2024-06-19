@@ -51,5 +51,5 @@ def my_pipeline():
 
 
 if __name__ == '__main__':
-    # my_pipeline()
-    my_pipeline.run_in_executor()
+    # my_pipeline.run_in_executor()
+    my_pipeline.deploy()

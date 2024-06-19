@@ -13,6 +13,9 @@ from ..common import (
 from ..common.callable import get_call_parameters
 from ..common.hashing import file_hash, stable_hash
 from .executor import TaskRunner
+from ..deploy.docker.builder import ImageBuilder
+from ..deploy.docker.container import Container, stream_logs
+from ..deploy.docker.utilities import flow_path_in_workdir
 
 
 class WorkFlow:
@@ -35,17 +38,35 @@ class WorkFlow:
         self.name = name or fn.__name__.replace("_", "-")
         self.description = description or inspect.getdoc(fn)
         self.tags = tags
+        self._flow_file = inspect.getsourcefile(self.fn)
         if not version:
             try:
-                flow_file = inspect.getsourcefile(self.fn)
-                version = file_hash(flow_file)
+                version = file_hash(self._flow_file)
             except (FileNotFoundError, TypeError, OSError):
                 version = stable_hash(self.name)
         self.version = version
 
-    def deploy(self, platform=None):
-        # service// train
-        pass
+    def deploy(self, hostname=None, ports=None, volumes=None, skip_build_image=False, **kwargs):
+        image_builder = ImageBuilder()
+        if skip_build_image:
+            image_id = image_builder.get_image_id(tag=self.name)
+        else:
+            image_id = image_builder.build(tag=self.name)
+        with Container() as container:
+            flow_file = flow_path_in_workdir(self._flow_file)
+            container_instance = container.run(
+                image=image_id,
+                name=self.name,
+                detach=True,
+                command=f"run-workflow --script_path {flow_file} --function_name {self.fn.__name__}",
+                volumes=volumes,
+                ports=ports,
+                hostname=hostname,
+                **kwargs
+            )
+            logger.info("Streaming logs from container:")
+            for line in stream_logs(container_instance):
+                logger.info(line)
 
     def run_in_executor(
         self,
