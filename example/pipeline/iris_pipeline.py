@@ -4,6 +4,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score
 from aigear.pipeline import workflow, task
 import pickle
+import os
 
 
 @task
@@ -52,4 +53,8 @@ def my_pipeline():
 
 if __name__ == '__main__':
     # my_pipeline.run_in_executor()
-    my_pipeline.deploy()
+    current_directory = os.getcwd()
+    volumes = {
+        current_directory: {'bind': "/pipeline", 'mode': 'rw'}
+    }
+    my_pipeline.deploy(volumes=volumes, skip_build_image=True)

@@ -14,7 +14,7 @@ from ..common.callable import get_call_parameters
 from ..common.hashing import file_hash, stable_hash
 from .executor import TaskRunner
 from ..deploy.docker.builder import ImageBuilder
-from ..deploy.docker.container import Container, stream_logs
+from ..deploy.docker.container import run_or_restart_container
 from ..deploy.docker.utilities import flow_path_in_workdir
 
 
@@ -52,21 +52,16 @@ class WorkFlow:
             image_id = image_builder.get_image_id(tag=self.name)
         else:
             image_id = image_builder.build(tag=self.name)
-        with Container() as container:
-            flow_file = flow_path_in_workdir(self._flow_file)
-            container_instance = container.run(
-                image=image_id,
-                name=self.name,
-                detach=True,
-                command=f"run-workflow --script_path {flow_file} --function_name {self.fn.__name__}",
-                volumes=volumes,
-                ports=ports,
-                hostname=hostname,
-                **kwargs
-            )
-            logger.info("Streaming logs from container:")
-            for line in stream_logs(container_instance):
-                logger.info(line)
+        flow_path = flow_path_in_workdir(self._flow_file)
+        run_or_restart_container(
+            self.name, image_id,
+            flow_path,
+            self.fn.__name__,
+            volumes,
+            ports,
+            hostname,
+            **kwargs
+        )
 
     def run_in_executor(
         self,

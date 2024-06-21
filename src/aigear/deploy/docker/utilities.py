@@ -16,10 +16,10 @@ def read_workdir_from_dockerfile(dockerfile_path):
 
 def flow_path_in_workdir(absolute_path: str):
     flow_name = Path(absolute_path).name
-    directory = Path(absolute_path).parent
-    dockerfile_path = os.path.join(directory, "Dockerfile")
+    current_dir = Path(absolute_path).parent
+    dockerfile_path = os.path.join(current_dir, "Dockerfile")
     workdir = read_workdir_from_dockerfile(dockerfile_path)
     if not workdir:
         logger.error(f"`WORKDIR` not found from {dockerfile_path}.")
-    pipeline_path = os.path.join(workdir, flow_name).replace("\\", "/")
-    return pipeline_path
+    flow_path = os.path.join(workdir, flow_name).replace("\\", "/")
+    return flow_path

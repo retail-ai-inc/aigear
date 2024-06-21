@@ -3,6 +3,10 @@ from .client import (
     DockerException,
     silence_docker_warnings,
     APIError,
+    NotFound,
+)
+from ...common import (
+    logger,
 )
 
 
@@ -76,3 +80,29 @@ def stream_logs(container):
             yield log.decode('utf-8').strip()
     except APIError as e:
         yield f"Failed to stream logs from container: {e}"
+
+
+def run_or_restart_container(container_name, image_id, flow_path, fn_name, volumes, ports, hostname, **kwargs):
+    with Container() as container_instance:
+        try:
+            container = container_instance.client.containers.get(container_name)
+            if container.status == "running":
+                logger.info(f"Container '{container_name}' is already running")
+            else:
+                logger.info(f"Restarting container '{container_name}'")
+                container.start()
+        except NotFound:
+            logger.info(f"Starting new container '{container_name}' from image '{image_id}'")
+            container = container_instance.run(
+                image=image_id,
+                name=container_name,
+                detach=True,
+                command=f"run-workflow --script_path {flow_path} --function_name {fn_name}",
+                volumes=volumes,
+                ports=ports,
+                hostname=hostname,
+                **kwargs
+            )
+        logger.info("Streaming logs from container:")
+        for line in stream_logs(container):
+            logger.info(line)

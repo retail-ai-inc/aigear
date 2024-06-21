@@ -24,7 +24,7 @@ def silence_docker_warnings() -> Generator[None, None, None]:
 with silence_docker_warnings():
     import docker
     from docker import DockerClient
-    from docker.errors import DockerException, APIError, ImageNotFound
+    from docker.errors import DockerException, APIError, ImageNotFound, NotFound
 
 
 @contextmanager
