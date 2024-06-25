@@ -1,3 +1,4 @@
+from __future__ import annotations
 import sys
 import subprocess
 from pathlib import Path
@@ -9,6 +10,7 @@ from .client import docker_client, silence_docker_warnings
 from .errors import BuildError
 from ..._version import __version__
 from ...common.logger import logger
+
 with silence_docker_warnings():
     from docker.errors import APIError, ImageNotFound
 
@@ -175,7 +177,8 @@ def build_image(
 def default_dockerfile(
     image_path: Optional[Path] = None,
     base_image: str = None,
-    package_source: str = None
+    package_source: str = None,
+    port: str = None,
 ):
     if not image_path:
         raise ValueError("image_path required to build an image")
@@ -204,6 +207,17 @@ def default_dockerfile(
     lines.append(
         f"RUN python -m pip install -r {workdir}/requirements.txt{package_source}"
     )
+    if port is not None:
+        lines.append(
+            f"EXPOSE {port}"
+        )
+        lines.append(
+            f"""
+            ENV PORT={port} \
+            PYTHONDONTWRITEBYTECODE=1 \
+            PYTHONBUFFERED=1
+            """
+        )
 
     with Path("Dockerfile").open("w") as f:
         f.writelines(line + "\n" for line in lines)

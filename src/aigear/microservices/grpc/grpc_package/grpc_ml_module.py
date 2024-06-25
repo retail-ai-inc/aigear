@@ -1,5 +1,7 @@
 import importlib
 import glob
+import importlib.util
+import os
 
 
 class MLModule:
@@ -23,18 +25,13 @@ class MLModule:
     @staticmethod
     def import_module_from_file(parts, module_path):
         module_parts = parts[0]
-        try:
-            module = importlib.import_module(module_path)
-            if len(parts) == 1:
-                model_service = getattr(module, module_parts)
-            else:
-                module_parts = parts[1]
-                model_service = getattr(module, module_parts)
-            return model_service
-        except ImportError:
-            print("Module '{}' not found.".format(module_path))
-        except AttributeError:
-            print("Function '{}' not found in module '{}'.".format(module_parts, module_path))
+        module = importlib.import_module(module_path)
+        if len(parts) == 1:
+            model_service = getattr(module, module_parts)
+        else:
+            module_parts = parts[1]
+            model_service = getattr(module, module_parts)
+        return model_service
 
     def find_module_path(self):
         """

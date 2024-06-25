@@ -93,21 +93,21 @@ def check_env_variables(env_variables: dict):
     return run_or_not
 
 
-def main():
+def main(default_tag=""):
     sys.path.append(os.getcwd())
-    tag = grpc_features.get_argument()
+    args = grpc_features.get_argument(default_tag)
     # Check Arg parameters
-    if tag == "":
+    if args.tag == "":
         logger.error("Miss tag code in command!")
 
     # Get environment variables
-    env_variables = get_env_variables(tag)
+    env_variables = get_env_variables(args.tag)
 
     # install ml package and load ml module
-    ml_module_instance = grpc_ml_module.MLModule(tag)
+    ml_module_instance = grpc_ml_module.MLModule(args.tag)
     model_class = ml_module_instance.load_module()
     if model_class is None:
-        logger.error("Model file not found!!!!!!")
+        logger.error("Model file not found.")
     else:
         logger.error(f"gRPC load module: {ml_module_instance.ml_module_path}")
 

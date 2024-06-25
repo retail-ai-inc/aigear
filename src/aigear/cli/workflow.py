@@ -19,7 +19,7 @@ def load_function_from_file(
     script_path,
     function_name
 ) -> WorkFlow:
-    spec = importlib.util.spec_from_file_location("module_name", script_path)
+    spec = importlib.util.spec_from_file_location("pipeline", script_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     function = getattr(module, function_name, None)

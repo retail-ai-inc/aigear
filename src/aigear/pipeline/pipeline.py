@@ -1,3 +1,4 @@
+from __future__ import annotations
 import inspect
 import time
 import traceback
@@ -16,6 +17,7 @@ from .executor import TaskRunner
 from ..deploy.docker.builder import ImageBuilder
 from ..deploy.docker.container import run_or_restart_container
 from ..deploy.docker.utilities import flow_path_in_workdir
+from ..microservices.grpc.service import main
 
 
 class WorkFlow:
@@ -46,22 +48,65 @@ class WorkFlow:
                 version = stable_hash(self.name)
         self.version = version
 
-    def deploy(self, hostname=None, ports=None, volumes=None, skip_build_image=False, **kwargs):
+    def deploy(
+        self,
+        hostname=None,
+        ports=None,
+        volumes=None,
+        skip_build_image=False,
+        is_stream_logs=True,
+        **kwargs
+    ):
         image_builder = ImageBuilder()
         if skip_build_image:
             image_id = image_builder.get_image_id(tag=self.name)
         else:
             image_id = image_builder.build(tag=self.name)
         flow_path = flow_path_in_workdir(self._flow_file)
+        command = f"aigear-workflow --script_path {flow_path} --function_name {self.fn.__name__}"
         run_or_restart_container(
-            self.name, image_id,
-            flow_path,
-            self.fn.__name__,
-            volumes,
-            ports,
-            hostname,
+            container_name=self.name,
+            image_id=image_id,
+            command=command,
+            volumes=volumes,
+            ports=ports,
+            hostname=hostname,
+            is_stream_logs=is_stream_logs,
             **kwargs
         )
+        return self
+
+    def to_service(
+        self,
+        hostname=None,
+        ports=None,
+        volumes=None,
+        tag=None,
+        is_stream_logs=False,
+        **kwargs
+    ):
+        image_builder = ImageBuilder()
+        image_id = image_builder.get_image_id(tag=self.name)
+        if image_id is None:
+            logger.info(f"No image found: {self.name}, will create it.")
+            image_id = image_builder.build(tag=self.name)
+
+        container_name = self.name + "-ms"
+        command = f"aigear-msgrpc --tag {tag}"
+        run_or_restart_container(
+            container_name=container_name,
+            image_id=image_id,
+            command=command,
+            volumes=volumes,
+            ports=ports,
+            hostname=hostname,
+            is_stream_logs=is_stream_logs,
+            **kwargs
+        )
+
+    @staticmethod
+    def run_service(tag: str):
+        main(default_tag=tag)
 
     def run_in_executor(
         self,

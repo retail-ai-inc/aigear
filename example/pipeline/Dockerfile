@@ -6,3 +6,10 @@ COPY . .
 RUN pip install --upgrade pip -i https://mirrors.aliyun.com/pypi/simple
 RUN pip install -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple
 RUN pip install aigear-0.0.1-py3-none-any.whl
+
+## Port for GRPC
+#EXPOSE 50051
+#
+#ENV PORT=50051 \
+#    PYTHONDONTWRITEBYTECODE=1 \
+#    PYTHONBUFFERED=1

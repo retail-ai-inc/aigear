@@ -1,9 +1,9 @@
+from __future__ import annotations
 import ast
 from concurrent.futures import (
     ThreadPoolExecutor,
     ProcessPoolExecutor,
     Future,
-    wait,
 )
 from typing import (
     Optional,

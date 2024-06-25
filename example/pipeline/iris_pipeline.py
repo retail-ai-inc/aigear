@@ -4,6 +4,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score
 from aigear.pipeline import workflow, task
 import pickle
+import json
 import os
 
 
@@ -35,6 +36,14 @@ def evaluate(clf, X_test, y_test):
 
 
 @task
+def get_env_variables():
+    with open("env.json", "r") as f:
+        env = json.load(f)
+    model_path = env.get("grpc", {}).get("servers", {}).get("demo", {}).get("modelPath")
+    return model_path
+
+
+@task
 def save_model(model, model_path):
     with open(model_path, "wb") as md:
         pickle.dump(model, md)
@@ -47,14 +56,29 @@ def my_pipeline():
     model = fit_model(X_train, y_train)
     y_pred, accuracy = evaluate(model, X_test, y_test)
     print("准确率：", accuracy)
-    model_path = 'iris_model.pkl'
+
+    model_path = get_env_variables()
     save_model(model, model_path)
 
 
 if __name__ == '__main__':
     # my_pipeline.run_in_executor()
+    # my_pipeline.run_service(tag="demo")
+
     current_directory = os.getcwd()
     volumes = {
         current_directory: {'bind': "/pipeline", 'mode': 'rw'}
     }
-    my_pipeline.deploy(volumes=volumes, skip_build_image=True)
+    hostname = "demo-host"
+    ports = {'50051/tcp': 50051}
+    service_dir = "demo"
+
+    my_pipeline.deploy(
+        volumes=volumes,
+        skip_build_image=False
+    ).to_service(
+        hostname=hostname,
+        ports=ports,
+        volumes=volumes,
+        tag=service_dir,
+    )

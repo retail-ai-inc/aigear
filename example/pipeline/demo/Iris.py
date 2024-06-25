@@ -1,6 +1,5 @@
 import pickle
 from sentry_sdk import capture_exception
-import pandas as pd
 
 
 class Iris(object):
@@ -19,7 +18,7 @@ class Iris(object):
     def predict(self, data) -> float:
         result = -1
         try:
-            feature = pd.DataFrame([data["features"]])
+            feature = [data["features"]]
             result = self.model.predict(feature)[0]
         except Exception as e:
             capture_exception(e)
