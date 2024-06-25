@@ -11,21 +11,25 @@ keywords = ["MLOps", "AI", "ML", "Model Serving", "Model Deployment", "Model Tra
 authors = [{ name = "Retail AI Groups Inc." }]
 readme = "README.md"
 license = { file = 'LICENSE' }
-requires-python = ">=3.8"
+requires-python = ">=3.7"
 classifiers = [
     "Intended Audience :: Science/Research",
     "Intended Audience :: Developers",
-    'Programming Language :: Python :: 3 :: Only',
-    'Programming Language :: Python :: 3.9',
-    'Programming Language :: Python :: 3.10',
-    'Programming Language :: Python :: 3.11',
-    'Programming Language :: Python :: 3.12',
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "License :: OSI Approved :: MIT License",
     "Operating System :: Microsoft :: Windows",
     "Operating System :: Unix",
     "Operating System :: MacOS",
 ]
 dependencies = [
+    "aigear[common]",
+    "aigear[docker]",
     "aigear[msgrpc]",
 ]
 
@@ -35,6 +39,12 @@ Repository = "https://github.com/retail-ai-inc/aigear.git"
 Issues = "https://github.com/retail-ai-inc/aigear/issues"
 
 [project.optional-dependencies]
+common = [
+    "tabulate >= 0.9",
+]
+docker = [
+    "docker >= 6.13",
+]
 msgrpc = [
     "grpcio >= 1.54.2",
     "protobuf >= 4.23.3",
@@ -45,6 +55,7 @@ msgrpc = [
 [project.scripts]
 aigear-msgrpc = "aigear.microservices.grpc.service:main"
 aigear-init = "aigear.cli.project_cli:project_init"
+aigear-workflow = "aigear.cli.workflow:run_workflow"
 
 [tool.setuptools.packages.find]
 where = ["src"]

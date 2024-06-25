@@ -1,5 +1,7 @@
 import importlib
 import glob
+import importlib.util
+import os
 
 
 class MLModule:
@@ -16,13 +18,20 @@ class MLModule:
         module_path = self.find_module_path()
         self.ml_module_path = module_path
         if module_path:
-            module = importlib.import_module(module_path)
             parts = module_path.rsplit(".", 1)
-            if len(parts) == 1:
-                model_service = getattr(module, parts[0])
-            else:
-                model_service = getattr(module, parts[1])
+            model_service = self.import_module_from_file(parts, module_path)
             return model_service
+
+    @staticmethod
+    def import_module_from_file(parts, module_path):
+        module_parts = parts[0]
+        module = importlib.import_module(module_path)
+        if len(parts) == 1:
+            model_service = getattr(module, module_parts)
+        else:
+            module_parts = parts[1]
+            model_service = getattr(module, module_parts)
+        return model_service
 
     def find_module_path(self):
         """

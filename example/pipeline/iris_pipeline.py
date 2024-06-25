@@ -1,10 +1,11 @@
 from sklearn.datasets import load_iris
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
-from sklearn.svm import SVC
-from sklearn.metrics import classification_report, accuracy_score
-from aigear.pipeline import Pipeline, task
-import time
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score
+from aigear.pipeline import workflow, task
+import pickle
+import json
+import os
 
 
 @task
@@ -20,88 +21,64 @@ def split_dataset(iris):
 
 
 @task
-def feature_process(X_train, X_test):
-    scaler = StandardScaler()
-    X_train = scaler.fit_transform(X_train)
-    X_test = scaler.transform(X_test)
-    return X_train, X_test
-
-
-@task
 def fit_model(X_train, y_train):
-    svm_classifier = SVC(kernel='linear', random_state=42)
-    svm_classifier.fit(X_train, y_train)
-    return svm_classifier
+    clf = LogisticRegression(random_state=0, max_iter=1000, solver="lbfgs")
+    model = clf.fit(X_train, y_train)
+    return model
 
 
 @task
-def evaluate(svm_classifier, X_test, y_test):
-    y_pred = svm_classifier.predict(X_test)
+def evaluate(clf, X_test, y_test):
+    y_pred = clf.predict(X_test)
     accuracy = accuracy_score(y_test, y_pred)
     # accuracy.get("ss")
     return y_pred, accuracy
 
 
+@task
+def get_env_variables():
+    with open("env.json", "r") as f:
+        env = json.load(f)
+    model_path = env.get("grpc", {}).get("servers", {}).get("demo", {}).get("modelPath")
+    return model_path
+
+
+@task
+def save_model(model, model_path):
+    with open(model_path, "wb") as md:
+        pickle.dump(model, md)
+
+
+@workflow
 def my_pipeline():
-    pipeline = Pipeline(
-        name="template",
-        version="0.0.1",
-        describe="",
+    iris = load_data()
+    X_train, X_test, y_train, y_test = split_dataset(iris)
+    model = fit_model(X_train, y_train)
+    y_pred, accuracy = evaluate(model, X_test, y_test)
+    print("准确率：", accuracy)
+
+    model_path = get_env_variables()
+    save_model(model, model_path)
+
+
+if __name__ == '__main__':
+    # my_pipeline.run_in_executor()
+    # my_pipeline.run_service(tag="demo")
+
+    current_directory = os.getcwd()
+    volumes = {
+        current_directory: {'bind': "/pipeline", 'mode': 'rw'}
+    }
+    hostname = "demo-host"
+    ports = {'50051/tcp': 50051}
+    service_dir = "demo"
+
+    my_pipeline.deploy(
+        volumes=volumes,
+        skip_build_image=False
+    ).to_service(
+        hostname=hostname,
+        ports=ports,
+        volumes=volumes,
+        tag=service_dir,
     )
-
-    # Dependency relationship
-    step1 = pipeline.step(load_data)
-    step2 = pipeline.step(
-        split_dataset,
-        step1.get_output(),
-        ('X_train', 'X_test', 'y_train', 'y_test')
-    )
-    step3 = pipeline.step(
-        feature_process,
-        step2.get_output('X_train', 'X_test'),
-        ('X_train', 'X_test')
-    )
-    step4 = pipeline.step(
-        fit_model,
-        (step3.get_output('X_train'), step2.get_output('y_train')),
-    )
-    step5 = pipeline.step(
-        evaluate,
-        (
-            step4.get_output(),
-            step3.get_output('X_test'),
-            step2.get_output('y_test')
-        ),
-        ('y_pred', 'accuracy')
-    )
-    print(step5)
-    print('-------------------------------------------------------')
-
-    # Operation mode
-    my_workflow = pipeline.workflow(
-        step1,
-        step2,
-        step3,
-        step4,
-        step5,
-    )
-    print(my_workflow)
-
-    print("------start------")
-    start_time = time.time()
-
-    result = pipeline.run()
-    end_time = time.time()
-    print('Pipeline run time: ', round(end_time - start_time, 3), 's')
-
-    print("准确率：", result.get("evaluate")['accuracy'])
-    y_test = result.get("split_dataset")['y_test']
-    y_pred = result.get("evaluate")['y_pred']
-    iris = result.get("load_data")
-
-    print("分类报告：\n", classification_report(y_test, y_pred, target_names=iris.target_names))
-    print("------end------")
-
-
-if __name__ == "__main__":
-    my_pipeline()

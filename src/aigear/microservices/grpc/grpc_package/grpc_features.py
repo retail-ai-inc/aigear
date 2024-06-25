@@ -39,12 +39,12 @@ def reserve_port(port):
         sock.close()
 
 
-def get_argument():
+def get_argument(default_tag=""):
     # Arg
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--tag', default="",
+    parser.add_argument('--tag', default=default_tag,
                         help='Deploy gRPC services by tag code, tag is also a version.')
     args = parser.parse_args()
-    return args.tag
+    return args

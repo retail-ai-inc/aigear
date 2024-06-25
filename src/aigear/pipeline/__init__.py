@@ -1,13 +1,9 @@
-from .pipeline import Pipeline
-from .types import Parallel, NBParallel, RelyParams, InputParams, OutputKey
+from .pipeline import workflow
 from .task import task
+from .executor import TaskRunner
 
 __all__ = [
-    "Pipeline",
-    "Parallel",
-    "NBParallel",
-    "RelyParams",
-    "InputParams",
-    "OutputKey",
+    "workflow",
     "task",
+    "TaskRunner"
 ]
