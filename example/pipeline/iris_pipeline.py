@@ -5,8 +5,6 @@ from sklearn.metrics import accuracy_score
 from aigear.pipeline import workflow, task
 import pickle
 import json
-import os
-
 
 @task
 def load_data():
@@ -62,6 +60,9 @@ def my_pipeline():
 
 
 if __name__ == '__main__':
+    # data = load_data()
+    # print("Data size: ", len(data))
+    # my_pipeline()
     # my_pipeline.run_in_executor()
     # my_pipeline.run_service(tag="demo")
 

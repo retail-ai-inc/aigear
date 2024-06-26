@@ -44,6 +44,9 @@ class TaskRunner:
             self._run_code(task)
             self._run_function(task)
 
+        if self._nodes:
+            self.exec_code()
+
         return self._output()
 
     def _output(self):
@@ -72,8 +75,11 @@ class TaskRunner:
             _ = self._get_keywords(task)
             self._nodes.append(task.task)
         else:
-            exec(compile(ast.Module(body=self._nodes, type_ignores=[]), filename="<ast>", mode="exec"), self._namespace)
-            self._nodes.clear()
+            self.exec_code()
+
+    def exec_code(self):
+        exec(compile(ast.Module(body=self._nodes, type_ignores=[]), filename="<ast>", mode="exec"), self._namespace)
+        self._nodes.clear()
 
     def _run_function(self, task: WrappedTask):
         if task.is_feature:
