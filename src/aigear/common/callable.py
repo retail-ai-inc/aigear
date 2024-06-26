@@ -43,13 +43,36 @@ class TaskVisitor(ast.NodeVisitor):
         var_name, var_args, output_key = self._get_output_keys(node)
         if isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name):
             task_name = node.value.func.id
+            if task_name in __builtins__:
+                self._args_keys.update(var_args)
+                self.tasks[var_name] = WrappedTask(
+                    task_name=var_name,
+                    task=node,
+                    args=args,
+                    keywords=keywords,
+                    output_key=output_key,
+                )
+            else:
+                if node.value.args:
+                    args = [arg.id for arg in node.value.args if isinstance(arg, ast.Name)]
+                if node.value.keywords:
+                    keywords = {keyword.arg: keyword.value.id for keyword in node.value.keywords}
+                self._args_keys.update(var_args)
+                self.tasks[var_name] = WrappedTask(
+                    task_name=task_name,
+                    args=args,
+                    keywords=keywords,
+                    output_key=output_key,
+                )
+        elif isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Attribute):
             if node.value.args:
                 args = [arg.id for arg in node.value.args if isinstance(arg, ast.Name)]
             if node.value.keywords:
                 keywords = {keyword.arg: keyword.value.id for keyword in node.value.keywords}
             self._args_keys.update(var_args)
             self.tasks[var_name] = WrappedTask(
-                task_name=task_name,
+                task_name=var_name,
+                task=node,
                 args=args,
                 keywords=keywords,
                 output_key=output_key,
@@ -73,6 +96,21 @@ class TaskVisitor(ast.NodeVisitor):
         # Handle expressions like function calls
         if isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name):
             var_name = node.value.func.id
+            # print("--visit_Expr: ", var_name)
+            if node.value.args:
+                args = [arg.id for arg in node.value.args if isinstance(arg, ast.Name)]
+            if node.value.keywords:
+                keywords = {keyword.arg: keyword.value.id for keyword in node.value.keywords}
+            if var_name == "print":
+                var_name = f"{var_name}-{len(self.tasks)+1}"
+            self.tasks[var_name] = WrappedTask(
+                task_name=var_name,
+                task=node,
+                args=args,
+                keywords=keywords,
+            )
+        elif isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Attribute):
+            var_name = f"{node.value.func.attr}-{len(self.tasks)+1}"
             if node.value.args:
                 args = [arg.id for arg in node.value.args if isinstance(arg, ast.Name)]
             if node.value.keywords:
@@ -83,6 +121,7 @@ class TaskVisitor(ast.NodeVisitor):
                 args=args,
                 keywords=keywords,
             )
+
         self._get_dependencies(args, keywords, var_name)
         self.generic_visit(node)
 
@@ -128,11 +167,11 @@ def parse_function(func):
     for var, task in tasks.items():
         func_id = func_globals.get(task.task_name)
         if func_id is None:
-            task_funcs[var] = task
+            task.is_feature = False
         else:
             task.task = func_id
             task.is_feature = True
-            task_funcs[var] = task
+        task_funcs[var] = task
     return task_funcs, dependencies
 
 
@@ -179,4 +218,4 @@ class WrappedTask:
     def __repr__(self):
         return f"Task(task_name={self.task_name}, " \
                f"task={self.task}, args={self.args}, " \
-               f"keywords={self.keywords}, output_key={self.output_key})"
+               f"keywords={self.keywords}, output_key={self.output_key}, is_feature={self.is_feature})"

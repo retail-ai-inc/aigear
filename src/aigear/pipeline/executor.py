@@ -35,6 +35,7 @@ class TaskRunner:
         self._tasks = {}
 
     def run_in_executor(self, fn: callable, pipeline_name: str = ""):
+        self._namespace.update(fn.__globals__)
         self._tasks, dependencies = parse_function(fn)
         self._task_sorted = topological_sort(self._tasks, dependencies)
         logger.info(f"Task order: {[self._tasks.get(task_key).task_name for task_key in self._task_sorted]}")
@@ -64,7 +65,7 @@ class TaskRunner:
         for key in output_keys:
             output = self._namespace.get(key)
             if output is None:
-                self._save_feature_result_to_namespace("", key)
+                self._save_feature_result_to_namespace(k=key)
                 output = self._namespace.get(key)
             outputs[key] = output
         return outputs
@@ -118,20 +119,23 @@ class TaskRunner:
                 args_list.append(arg)
         return args_list
 
-    def _save_feature_result_to_namespace(self, task_name_current: str, k: str):
+    def _save_feature_result_to_namespace(self, task_name_current: str = None, k: str = None):
         feature = self._features.get(k)
         if feature is None:
-            task_name_dependent, tasks_sorted = self._get_task_name(k)
-            raise ValueError(
-                f"Dependency error: {tasks_sorted}, `{task_name_current}` should be after `{task_name_dependent}`")
-
-        if isinstance(feature, list):
-            feature, output_keys = feature
-            results = feature.result()
-            self._namespace.update({k: v for k, v in zip(output_keys, results)})
+            if task_name_current is None:
+                self._namespace[k] = None
+            else:
+                task_name_dependent, tasks_sorted = self._get_task_name(k)
+                raise ValueError(
+                    f"Dependency error: {tasks_sorted}, `{task_name_current}` should be after `{task_name_dependent}`")
         else:
-            # TODO: Can't pickle <function> for ProcessPool.
-            self._namespace[k] = feature.result()
+            if isinstance(feature, list):
+                feature, output_keys = feature
+                results = feature.result()
+                self._namespace.update({k: v for k, v in zip(output_keys, results)})
+            else:
+                # TODO: Can't pickle <function> for ProcessPool.
+                self._namespace[k] = feature.result()
 
     def _get_task_name(self, arg_key: str):
         tasks = [self._tasks[task_key] for task_key in self._task_sorted]

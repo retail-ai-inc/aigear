@@ -5,6 +5,8 @@ from sklearn.metrics import accuracy_score
 from aigear.pipeline import workflow, task
 import pickle
 import json
+import os
+
 
 @task
 def load_data():
