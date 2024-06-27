@@ -1,5 +1,6 @@
 from __future__ import annotations
 import ast
+import astor
 from concurrent.futures import (
     ThreadPoolExecutor,
     ProcessPoolExecutor,
@@ -110,13 +111,15 @@ class TaskRunner:
     def _get_args(self, task: WrappedTask):
         args_list = []
         for k in task.args:
-            arg = self._namespace.get(k)
-            if arg is None:
-                self._save_feature_result_to_namespace(task.task_name, k)
+            if isinstance(k, str):
                 arg = self._namespace.get(k)
-                args_list.append(arg)
+                if arg is None:
+                    self._save_feature_result_to_namespace(task.task_name, k)
+                    arg = self._namespace.get(k)
             else:
-                args_list.append(arg)
+                code = astor.to_source(k)
+                arg = eval(code, self._namespace)
+            args_list.append(arg)
         return args_list
 
     def _save_feature_result_to_namespace(self, task_name_current: str = None, k: str = None):

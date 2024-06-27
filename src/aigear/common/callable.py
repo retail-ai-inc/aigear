@@ -48,15 +48,10 @@ class TaskVisitor(ast.NodeVisitor):
                 self.tasks[var_name] = WrappedTask(
                     task_name=var_name,
                     task=node,
-                    args=args,
-                    keywords=keywords,
                     output_key=output_key,
                 )
             else:
-                if node.value.args:
-                    args = [arg.id for arg in node.value.args if isinstance(arg, ast.Name)]
-                if node.value.keywords:
-                    keywords = {keyword.arg: keyword.value.id for keyword in node.value.keywords}
+                args, keywords = self._get_args_keywords(node)
                 self._args_keys.update(var_args)
                 self.tasks[var_name] = WrappedTask(
                     task_name=task_name,
@@ -65,10 +60,7 @@ class TaskVisitor(ast.NodeVisitor):
                     output_key=output_key,
                 )
         elif isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Attribute):
-            if node.value.args:
-                args = [arg.id for arg in node.value.args if isinstance(arg, ast.Name)]
-            if node.value.keywords:
-                keywords = {keyword.arg: keyword.value.id for keyword in node.value.keywords}
+            args, keywords = self._get_args_keywords(node)
             self._args_keys.update(var_args)
             self.tasks[var_name] = WrappedTask(
                 task_name=var_name,
@@ -96,13 +88,9 @@ class TaskVisitor(ast.NodeVisitor):
         # Handle expressions like function calls
         if isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name):
             var_name = node.value.func.id
-            # print("--visit_Expr: ", var_name)
-            if node.value.args:
-                args = [arg.id for arg in node.value.args if isinstance(arg, ast.Name)]
-            if node.value.keywords:
-                keywords = {keyword.arg: keyword.value.id for keyword in node.value.keywords}
+            args, keywords = self._get_args_keywords(node)
             if var_name == "print":
-                var_name = f"{var_name}-{len(self.tasks)+1}"
+                var_name = f"{var_name}-{len(self.tasks) + 1}"
             self.tasks[var_name] = WrappedTask(
                 task_name=var_name,
                 task=node,
@@ -110,11 +98,8 @@ class TaskVisitor(ast.NodeVisitor):
                 keywords=keywords,
             )
         elif isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Attribute):
-            var_name = f"{node.value.func.attr}-{len(self.tasks)+1}"
-            if node.value.args:
-                args = [arg.id for arg in node.value.args if isinstance(arg, ast.Name)]
-            if node.value.keywords:
-                keywords = {keyword.arg: keyword.value.id for keyword in node.value.keywords}
+            var_name = f"{node.value.func.attr}-{len(self.tasks) + 1}"
+            args, keywords = self._get_args_keywords(node)
             self.tasks[var_name] = WrappedTask(
                 task_name=var_name,
                 task=node,
@@ -146,13 +131,28 @@ class TaskVisitor(ast.NodeVisitor):
         return var_name, var_args, out_keys
 
     def _get_dependencies(self, args: list, keywords: dict, var_name: str):
-        args_list = args.copy()
+        args_list = [arg for arg in args if isinstance(arg, str)]
         for v in keywords.values():
             args_list.append(v)
 
         args_list = [self._args_keys.get(arg) if self._args_keys.get(arg) else arg for arg in args_list]
         for arg in set(args_list):
             self.dependencies.append((arg, var_name))
+
+    @staticmethod
+    def _get_arg_value(node):
+        if isinstance(node, ast.Name):
+            return node.id
+        return node
+
+    def _get_args_keywords(self, node):
+        args = []
+        keywords = {}
+        if node.value.args:
+            args = [self._get_arg_value(arg) for arg in node.value.args]
+        if node.value.keywords:
+            keywords = {keyword.arg: self._get_arg_value(keyword.value) for keyword in node.value.keywords}
+        return args, keywords
 
 
 def parse_function(func):
