@@ -31,7 +31,6 @@ def fit_model(X_train, y_train):
 def evaluate(clf, X_test, y_test):
     y_pred = clf.predict(X_test)
     accuracy = accuracy_score(y_test, y_pred)
-    # accuracy.get("ss")
     return y_pred, accuracy
 
 
