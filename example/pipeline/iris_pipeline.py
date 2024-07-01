@@ -31,7 +31,6 @@ def fit_model(X_train, y_train):
 def evaluate(clf, X_test, y_test):
     y_pred = clf.predict(X_test)
     accuracy = accuracy_score(y_test, y_pred)
-    # accuracy.get("ss")
     return y_pred, accuracy
 
 
@@ -55,15 +54,15 @@ def my_pipeline():
     X_train, X_test, y_train, y_test = split_dataset(iris)
     model = fit_model(X_train, y_train)
     y_pred, accuracy = evaluate(model, X_test, y_test)
-    print("准确率：", accuracy)
+    print("accuracy：", accuracy)
 
     model_path = get_env_variables()
     save_model(model, model_path)
 
 
 if __name__ == '__main__':
+    # my_pipeline()
     # my_pipeline.run_in_executor()
-    # my_pipeline.run_service(tag="demo")
 
     current_directory = os.getcwd()
     volumes = {
@@ -75,7 +74,7 @@ if __name__ == '__main__':
 
     my_pipeline.deploy(
         volumes=volumes,
-        skip_build_image=False
+        skip_build_image=True
     ).to_service(
         hostname=hostname,
         ports=ports,

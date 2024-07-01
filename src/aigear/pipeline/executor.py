@@ -1,5 +1,6 @@
 from __future__ import annotations
 import ast
+import astor
 from concurrent.futures import (
     ThreadPoolExecutor,
     ProcessPoolExecutor,
@@ -35,6 +36,7 @@ class TaskRunner:
         self._tasks = {}
 
     def run_in_executor(self, fn: callable, pipeline_name: str = ""):
+        self._namespace.update(fn.__globals__)
         self._tasks, dependencies = parse_function(fn)
         self._task_sorted = topological_sort(self._tasks, dependencies)
         logger.info(f"Task order: {[self._tasks.get(task_key).task_name for task_key in self._task_sorted]}")
@@ -43,6 +45,9 @@ class TaskRunner:
             task = self._tasks[task_key]
             self._run_code(task)
             self._run_function(task)
+
+        if self._nodes:
+            self.exec_code()
 
         return self._output()
 
@@ -61,7 +66,7 @@ class TaskRunner:
         for key in output_keys:
             output = self._namespace.get(key)
             if output is None:
-                self._save_feature_result_to_namespace("", key)
+                self._save_feature_result_to_namespace(k=key)
                 output = self._namespace.get(key)
             outputs[key] = output
         return outputs
@@ -72,8 +77,11 @@ class TaskRunner:
             _ = self._get_keywords(task)
             self._nodes.append(task.task)
         else:
-            exec(compile(ast.Module(body=self._nodes, type_ignores=[]), filename="<ast>", mode="exec"), self._namespace)
-            self._nodes.clear()
+            self.exec_code()
+
+    def exec_code(self):
+        exec(compile(ast.Module(body=self._nodes, type_ignores=[]), filename="<ast>", mode="exec"), self._namespace)
+        self._nodes.clear()
 
     def _run_function(self, task: WrappedTask):
         if task.is_feature:
@@ -103,29 +111,34 @@ class TaskRunner:
     def _get_args(self, task: WrappedTask):
         args_list = []
         for k in task.args:
-            arg = self._namespace.get(k)
-            if arg is None:
-                self._save_feature_result_to_namespace(task.task_name, k)
+            if isinstance(k, str):
                 arg = self._namespace.get(k)
-                args_list.append(arg)
+                if arg is None:
+                    self._save_feature_result_to_namespace(task.task_name, k)
+                    arg = self._namespace.get(k)
             else:
-                args_list.append(arg)
+                code = astor.to_source(k)
+                arg = eval(code, self._namespace)
+            args_list.append(arg)
         return args_list
 
-    def _save_feature_result_to_namespace(self, task_name_current: str, k: str):
+    def _save_feature_result_to_namespace(self, task_name_current: str = None, k: str = None):
         feature = self._features.get(k)
         if feature is None:
-            task_name_dependent, tasks_sorted = self._get_task_name(k)
-            raise ValueError(
-                f"Dependency error: {tasks_sorted}, `{task_name_current}` should be after `{task_name_dependent}`")
-
-        if isinstance(feature, list):
-            feature, output_keys = feature
-            results = feature.result()
-            self._namespace.update({k: v for k, v in zip(output_keys, results)})
+            if task_name_current is None:
+                self._namespace[k] = None
+            else:
+                task_name_dependent, tasks_sorted = self._get_task_name(k)
+                raise ValueError(
+                    f"Dependency error: {tasks_sorted}, `{task_name_current}` should be after `{task_name_dependent}`")
         else:
-            # TODO: Can't pickle <function> for ProcessPool.
-            self._namespace[k] = feature.result()
+            if isinstance(feature, list):
+                feature, output_keys = feature
+                results = feature.result()
+                self._namespace.update({k: v for k, v in zip(output_keys, results)})
+            else:
+                # TODO: Can't pickle <function> for ProcessPool.
+                self._namespace[k] = feature.result()
 
     def _get_task_name(self, arg_key: str):
         tasks = [self._tasks[task_key] for task_key in self._task_sorted]
