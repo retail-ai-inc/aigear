@@ -107,8 +107,6 @@ class ModelManager(Constraints):
         if version is None:
             logger.info(f"[MM-Load] No models available: {model_name}")
             return None
-        print(model_name)
-        print(version)
         model_meta = self.db.get_meta(model_name, version, ModelMeta)
         model_path = model_meta.path
         if model_path is None:
