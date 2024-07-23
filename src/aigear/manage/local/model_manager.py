@@ -4,14 +4,13 @@ import cloudpickle
 from pathlib import Path
 from tabulate import tabulate
 from typing import (
-    List,
     Optional,
     Any,
 )
-from ..common.logger import logger
+from aigear.common.logger import logger
 from .constraints import Constraints
 from .db_models import ModelMeta
-from .init_db import init_meta_db
+from .db_service import DBService
 
 
 class ModelManager(Constraints):
@@ -27,7 +26,7 @@ class ModelManager(Constraints):
         if model_dir is None:
             model_dir = Path.cwd() / "models"
         model_dir.mkdir(parents=True, exist_ok=True)
-        self.session = init_meta_db(model_dir)
+        self.db = DBService(model_dir)
 
         self.models_dir: Path = Path(model_dir)
         self._headers = [
@@ -35,7 +34,6 @@ class ModelManager(Constraints):
             "author", "description", "path",
             "created_at", "updated_at",
         ]
-        self._init_version = "0.0.1"
 
     def save(
         self,
@@ -65,7 +63,7 @@ class ModelManager(Constraints):
         models_subdir.mkdir(parents=True, exist_ok=True)
 
         if version is None:
-            version = self._get_next_version(model_name)
+            version = self.db.get_next_version(model_name, ModelMeta)
         model_path = models_subdir / f"{model_name}_{version}.pkl"
         if model_path.exists():
             logger.info(f"[MM-Save] Model already exists {model_name}/{model_name}_{version}.pkl")
@@ -74,13 +72,17 @@ class ModelManager(Constraints):
         with open(model_path, "wb") as pickle_file:
             cloudpickle.dump(model, pickle_file)
 
-        self._add_model_meta(
-            model_name=model_name,
-            version=version,
+        model_meta = ModelMeta(
             author=author,
             description=description,
+            name=model_name,
+            version=version,
             framework=framework,
-            model_path=model_path.__str__(),
+            path=model_path.__str__(),
+        )
+        self.db.add_meta(
+            db_mate=model_meta,
+            db_model=ModelMeta
         )
         logger.info(f"[MM-Save] Model saved at {model_name}/{model_name}_{version}.pkl")
 
@@ -101,12 +103,14 @@ class ModelManager(Constraints):
             Model: The loaded model instance.
         """
         if version is None:
-            version = self._get_latest_version(model_name)
+            version = self.db.get_latest_version(model_name, ModelMeta)
         if version is None:
             logger.info(f"[MM-Load] No models available: {model_name}")
             return None
-
-        model_path = self._get_model_path(model_name, version)
+        print(model_name)
+        print(version)
+        model_meta = self.db.get_meta(model_name, version, ModelMeta)
+        model_path = model_meta.path
         if model_path is None:
             logger.info(f"[MM-Load] Model {model_name} not found in the registry")
             return None
@@ -132,19 +136,17 @@ class ModelManager(Constraints):
         Returns:
 
         """
+        model_metas = self.db.get_metas(
+            name=model_name,
+            db_model=ModelMeta,
+        )
         model_meta_list = []
-        with self.session.begin() as session:
-            if model_name is None:
-                model_metas: List[ModelMeta] = session.query(ModelMeta).all()
-            else:
-                model_metas: List[ModelMeta] = session.query(ModelMeta).filter_by(name=model_name).all()
-
-            for model_meta in model_metas:
-                model_meta_list.append([
-                    model_meta.name, model_meta.version, model_meta.framework,
-                    model_meta.author, model_meta.description, model_meta.path,
-                    model_meta.created_at, model_meta.updated_at,
-                ])
+        for model_meta in model_metas:
+            model_meta_list.append([
+                model_meta.name, model_meta.version, model_meta.framework,
+                model_meta.author, model_meta.description, model_meta.path,
+                model_meta.created_at, model_meta.updated_at,
+            ])
 
         if model_meta_list:
             models_table = tabulate(model_meta_list, headers=self._headers, tablefmt="grid")
@@ -177,7 +179,10 @@ class ModelManager(Constraints):
 
         """
         if version is None:
-            version = self._get_next_version(model_name)
+            version = self.db.get_next_version(
+                name=model_name,
+                db_model=ModelMeta,
+            )
         model_subdir_path = self.models_dir / model_name
         model_subdir_path.mkdir(parents=True, exist_ok=True)
 
@@ -197,13 +202,18 @@ class ModelManager(Constraints):
 
         if source_file.exists():
             shutil.copy(source_file, target_file)
-            self._add_model_meta(
-                model_name=model_name,
-                version=version,
+
+            model_meta = ModelMeta(
                 author=author,
                 description=description,
+                name=model_name,
+                version=version,
                 framework=framework,
-                model_path=target_file.__str__(),
+                path=target_file.__str__(),
+            )
+            self.db.add_meta(
+                db_mate=model_meta,
+                db_model=ModelMeta
             )
             logger.info(f"[MM-Register] Model uploaded to {model_name}/{target_file_name}")
         else:
@@ -224,12 +234,16 @@ class ModelManager(Constraints):
             pathlib.Path: The path of the model.
         """
         if version is None:
-            version = self._get_latest_version(model_name)
+            version = self.db.get_latest_version(
+                name=model_name,
+                db_model=ModelMeta,
+            )
         if version is None:
             logger.info(f"[MM-Path] No models available: {model_name}")
             return None
 
-        model_path = self._get_model_path(model_name, version)
+        model_meta = self.db.get_meta(model_name, version, ModelMeta)
+        model_path = model_meta.path
         if model_path is None:
             logger.info(f"[MM-Path] Model {model_name} not found in the registry")
             return None
@@ -257,13 +271,17 @@ class ModelManager(Constraints):
             model_folder = self.models_dir / model_name
             if model_folder.exists():
                 shutil.rmtree(model_folder)
-                self._delete_model_meta(model_name)
+                self.db.delete_meta(
+                    name=model_name,
+                    db_model=ModelMeta,
+                )
                 logger.info(f"[MM-Del] All versions of the {model_name} model have been deleted.")
             else:
                 logger.info(f"[MM-Del] Model {model_name} does not exist.")
             return None
 
-        model_path = self._get_model_path(model_name, version)
+        model_meta = self.db.get_meta(model_name, version, ModelMeta)
+        model_path = model_meta.path
         if model_path is None:
             logger.info(f"[MM-Path] Model {model_name}_{version} not found in the registry")
             return None
@@ -271,84 +289,14 @@ class ModelManager(Constraints):
         model_path = Path(model_path)
         if model_path.exists():
             model_path.unlink()
-            self._delete_model_meta(model_name, version)
+            self.db.delete_meta(
+                name=model_name,
+                version=version,
+                db_model=ModelMeta,
+            )
             logger.info(f"[MM-Del] Model already deleted: {model_path}.")
         else:
             logger.info(f"[MM-Del] Model does not exist: {model_path}.")
 
-    def _get_model_path(
-        self,
-        model_name: str,
-        version: str,
-    ):
-        model_path = None
-        with self.session.begin() as session:
-            model_meta: ModelMeta = session.query(ModelMeta).filter_by(name=model_name, version=version).order_by(
-                ModelMeta.id.desc()).first()
-            if model_meta is not None:
-                model_path = model_meta.path
-        return model_path
-
-    def _get_latest_version(
-        self,
-        model_name: str,
-    ):
-        version = None
-        with self.session.begin() as session:
-            model_meta: ModelMeta = session.query(ModelMeta).filter_by(name=model_name).order_by(
-                ModelMeta.id.desc()).first()
-            if model_meta is not None:
-                version = model_meta.version
-        return version
-
-    def _get_next_version(
-        self,
-        model_name: str,
-    ):
-        latest_version = self._get_latest_version(model_name)
-        if latest_version is None:
-            latest_version = "0.0.0"
-        major, minor, patch = map(int, latest_version.split('.'))
-        patch += 1
-        return f"{major}.{minor}.{patch}"
-
-    def _add_model_meta(
-        self,
-        model_name: str,
-        version: str,
-        model_path: str,
-        author: Optional[str] = None,
-        description: Optional[str] = None,
-        framework: Optional[str] = None,
-    ):
-        model_meta = ModelMeta(
-            author=author,
-            description=description,
-            name=model_name,
-            version=version,
-            framework=framework,
-            path=model_path,
-        )
-        with self.session.begin() as session:
-            meta_from_db = session.query(ModelMeta).filter_by(name=model_name, version=version).first()
-            if not meta_from_db:
-                session.add(model_meta)
-
-    def _delete_model_meta(
-        self,
-        model_name: str,
-        version: Optional[str] = None,
-    ):
-        if version is None:
-            with self.session.begin() as session:
-                meta_from_db = session.query(ModelMeta).filter_by(name=model_name).all()
-                for meta in meta_from_db:
-                    session.delete(meta)
-        else:
-            with self.session.begin() as session:
-                meta_from_db = session.query(ModelMeta).filter_by(name=model_name, version=version).all()
-                for meta in meta_from_db:
-                    session.delete(meta)
-
-    def __del__(self):
-        self.session.close_all()
+    # def rename(self):
+    #     pass

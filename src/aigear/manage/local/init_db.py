@@ -6,7 +6,7 @@ Base = declarative_base()
 
 
 def init_meta_db(path):
-    engine = create_engine(f'sqlite:///{path}/model_meta.db')
+    engine = create_engine(f'sqlite:///{path}/meta.db')
     Base.metadata.create_all(engine)
     session = sessionmaker(bind=engine)
     return session

@@ -41,7 +41,7 @@ class WorkFlow:
         self.description = description or inspect.getdoc(fn)
         self.tags = tags
         self._flow_file = inspect.getsourcefile(self.fn)
-        if not version:
+        if version is None:
             try:
                 version = file_hash(self._flow_file)
             except (FileNotFoundError, TypeError, OSError):
