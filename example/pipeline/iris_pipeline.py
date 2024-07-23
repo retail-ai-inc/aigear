@@ -69,7 +69,6 @@ if __name__ == '__main__':
     cpu_count_train = 1
     cpu_count_service = 2
 
-
     current_directory = os.getcwd()
     volumes = {
         current_directory: {'bind': "/pipeline", 'mode': 'rw'}

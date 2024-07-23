@@ -40,6 +40,7 @@ Issues = "https://github.com/retail-ai-inc/aigear/issues"
 [project.optional-dependencies]
 common = [
     "tabulate >= 0.9",
+    "cloudpickle >= 2.0.0",
 ]
 docker = [
     "docker >= 6.13",

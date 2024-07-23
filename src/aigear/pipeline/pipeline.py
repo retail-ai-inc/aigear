@@ -6,6 +6,7 @@ from typing import (
     Optional,
     Literal,
     Any,
+    List,
 )
 from ..common import (
     logger,
@@ -18,6 +19,7 @@ from ..deploy.docker.builder import ImageBuilder
 from ..deploy.docker.container import run_or_restart_container
 from ..deploy.docker.utilities import flow_path_in_workdir
 from ..microservices.grpc.service import main
+from ..manage.local import PipelineManager
 
 
 class WorkFlow:
@@ -25,8 +27,9 @@ class WorkFlow:
         self,
         fn: callable = None,
         name: str = None,
+        author: Optional[str] = None,
         description: str = None,
-        tags: set[str] = None,
+        tags: Optional[List[str]] = None,
         version: str = None,
     ):
         self.state = None
@@ -38,15 +41,11 @@ class WorkFlow:
 
         self.fn = fn
         self.name = name or fn.__name__.replace("_", "-")
+        self.author = author
         self.description = description or inspect.getdoc(fn)
         self.tags = tags
-        self._flow_file = inspect.getsourcefile(self.fn)
-        if not version:
-            try:
-                version = file_hash(self._flow_file)
-            except (FileNotFoundError, TypeError, OSError):
-                version = stable_hash(self.name)
         self.version = version
+        self._flow_file = inspect.getsourcefile(self.fn)
 
     def deploy(
         self,
@@ -125,12 +124,23 @@ class WorkFlow:
             end_time = time.time()
             run_time = str(round(end_time - start_time, 3))
             logger.info(f"The total running time of the pipeline: {run_time}s")
-        except Exception as e:
+        except Exception:
             logger.error(f"Pipeline '{self.name}' failed running: \n{traceback.format_exc()}")
         finally:
             self.state = state
             logger.info('\n' + state.state)
         return outputs
+
+    def register(self):
+        pipline_manager = PipelineManager()
+        pipline_manager.register(
+            pipeline_name=self.name,
+            version=self.version,
+            author=self.author,
+            description=self.description,
+            tags=self.tags,
+        )
+        return self
 
     def __call__(
         self,

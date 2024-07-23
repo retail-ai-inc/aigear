@@ -197,7 +197,8 @@ def topological_sort(tasks, dependencies):
     if len(order) == len(tasks):
         return order
     else:
-        raise ValueError("There exists a cycle in the dependencies")
+        raise ValueError(
+            "There exists a cycle in the dependencies, Assignment variables and function names cannot be duplicated.")
 
 
 class WrappedTask:
