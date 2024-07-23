@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 
 
 class Constraints(ABC):
-    def save(
+    def pickle_save(
         self,
         model: object,
         model_name: str,
@@ -10,7 +10,7 @@ class Constraints(ABC):
     ):
         pass
 
-    def load(
+    def pickle_load(
         self,
         model_name: str,
         version: str = None

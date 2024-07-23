@@ -35,7 +35,7 @@ class ModelManager(Constraints):
             "created_at", "updated_at",
         ]
 
-    def save(
+    def pickle_save(
         self,
         model: Any,
         model_name: str,
@@ -88,7 +88,7 @@ class ModelManager(Constraints):
 
         return model_path
 
-    def load(
+    def pickle_load(
         self,
         model_name: str,
         version: Optional[str] = None

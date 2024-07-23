@@ -1,23 +1,38 @@
 import cloudpickle
-import os
+import pickle
 
 
-class SaveModel:
+class PickleModel:
     def __init__(self):
-        self.folder_name = ""
-
-    def save_location(self):
-        if not os.path.exists(folder_name):
-            os.makedirs(folder_name)
+        # Used to save sklearn models and other models
+        self.framework = "pickle"
 
     @staticmethod
-    def save(model=None, model_file=None):
-        if model_file == None:
-            pass
-        with open(model_file, "wb") as pickle_file:
-            cloudpickle.dump(model, pickle_file)
+    def save(obj, file=None, protocol=None):
+        if file is None:
+            raise ValueError("The save path cannot be empty.")
+        with open(file, "wb") as pickle_file:
+            cloudpickle.dump(
+                obj,
+                pickle_file,
+                protocol
+            )
 
     @staticmethod
-    def load(model_file=None):
-        with open(model_file, "rb") as pickle_file:
-            self._model = pickle.load(pickle_file)
+    def load(
+        file,
+        *,
+        fix_imports=True,
+        encoding="ASCII",
+        errors="strict",
+        buffers=None
+    ):
+        with open(file, "rb") as pickle_file:
+            model = pickle.load(
+                pickle_file,
+                fix_imports=fix_imports,
+                encoding=encoding,
+                errors=errors,
+                buffers=buffers,
+            )
+        return model

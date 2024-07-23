@@ -5,10 +5,10 @@ from haversine import haversine
 import pandas as pd
 import numpy as np
 import json
-import cloudpickle
 from rankfm.rankfm import RankFM
 from rankfm.evaluation import hit_rate, reciprocal_rank, discounted_cumulative_gain, precision, recall
 from aigear.pipeline import workflow, task
+from aigear.manage.local import ModelManager
 
 
 @delayed
@@ -23,7 +23,7 @@ def get_schema(purchase_history):
 
 @task
 def read_purchase_history(pur_history_path):
-    purchase_history = dd.read_json(pur_history_path, lines=True)  # nrows=10000
+    purchase_history = dd.read_json(pur_history_path, lines=True, nrows=10000)  # nrows=10000
 
     purchase_history['Items'] = purchase_history['Items'].apply(
         lambda x: json.loads(x.replace("'", '"')),
@@ -336,9 +336,9 @@ def model_evaluation(model, valid_data, recnum):
 
 
 @task
-def save_model(model, model_file):
-    with open(model_file, "wb") as pickle_file:
-        cloudpickle.dump(model, pickle_file)
+def manage_model(model, model_name):
+    model_manager = ModelManager()
+    model_manager.pickle_save(model, model_name)
 
 
 @workflow
@@ -348,7 +348,7 @@ def fm_pipeline():
     user_attrib_path = r'D:\git_work\Taiyo_pipeline_code\data\UserAttributes.zip'
     store_list_path = r'D:\git_work\Taiyo_pipeline_code\data\storeList.csv'
     item_categories_path = r'D:\git_work\Taiyo_pipeline_code\data\ItemCategories.zip'
-    model_file = r"model.pkl"
+    model_name = "FM"
     recnum = 9
 
     pur_history = read_purchase_history(pur_history_path)
@@ -365,7 +365,7 @@ def fm_pipeline():
 
     model_evaluation(model, valid_data, recnum)
 
-    save_model(model, model_file)
+    manage_model(model, model_name)
 
 
 if __name__ == '__main__':
