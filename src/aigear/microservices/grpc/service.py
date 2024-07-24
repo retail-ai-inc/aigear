@@ -1,17 +1,18 @@
 from concurrent import futures
-import grpc
-import json
-from aigear.proto import grpc_pb2, grpc_pb2_grpc
 from grpc_health.v1 import health
 from grpc_health.v1 import health_pb2_grpc
 from google.protobuf import struct_pb2
 from google.protobuf.json_format import MessageToDict
 from sentry_sdk import init as sentry_init
 from sentry_sdk.integrations.grpc.server import ServerInterceptor
-from aigear.grpc_package import grpc_ml_module, grpc_log, grpc_features
 import multiprocessing
+import grpc
+import json
 import sys
 import os
+from .proto import grpc_pb2, grpc_pb2_grpc
+from .grpc_package import grpc_ml_module, grpc_log
+from .grpc_package import grpc_features
 
 # logger setting
 logger = grpc_log.GrpcLog().grpc_log()
@@ -92,21 +93,21 @@ def check_env_variables(env_variables: dict):
     return run_or_not
 
 
-def main():
+def main(default_tag=""):
     sys.path.append(os.getcwd())
-    tag = grpc_features.get_argument()
+    args = grpc_features.get_argument(default_tag)
     # Check Arg parameters
-    if tag == "":
+    if args.tag == "":
         logger.error("Miss tag code in command!")
 
     # Get environment variables
-    env_variables = get_env_variables(tag)
+    env_variables = get_env_variables(args.tag)
 
     # install ml package and load ml module
-    ml_module_instance = grpc_ml_module.MLModule(tag)
+    ml_module_instance = grpc_ml_module.MLModule(args.tag)
     model_class = ml_module_instance.load_module()
     if model_class is None:
-        logger.error("Model file not found!!!!!!")
+        logger.error("Model file not found.")
     else:
         logger.error(f"gRPC load module: {ml_module_instance.ml_module_path}")
 
