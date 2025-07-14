@@ -19,7 +19,7 @@ def init_logger():
     logger_instance = logging.getLogger(__name__)
     handler = logging.StreamHandler(sys.stdout)
     # formatter = JsonFormatter()
-    formatter = logging.Formatter('%(process)d - %(asctime)s - %(levelname)s - %(message)s')
+    formatter = logging.Formatter('aigear-%(process)d - %(asctime)s - %(levelname)s - %(message)s')
     handler.setFormatter(formatter)
     logger_instance.addHandler(handler)
     logger_instance.setLevel(logging.INFO)
