@@ -1,0 +1,25 @@
+options:
+  machineType: 'E2_HIGHCPU_8'
+
+steps:
+
+# $_ENVIRONMENT = staging or production
+- name: gcr.io/cloud-builders/gcloud
+  args:
+    - kms
+    - decrypt
+    - --ciphertext-file=kms/$_ENVIRONMENT/$_ENVIRONMENT-env.bin
+    - --plaintext-file=env.json
+    - --location=$_KMS_LOCATION
+    - --keyring=$_PLATFORM-$_ENVIRONMENT-config
+    - --key=$_PIPELINES_VERSION-pipelines
+
+- name: 'gcr.io/cloud-builders/docker'
+  entrypoint: 'bash'
+  args: [ 
+          '-c',
+          'docker build -f Dockerfile -t asia-northeast1-docker.pkg.dev/$PROJECT_ID/$_PLATFORM/$_PIPELINES_VERSION:latest .'
+        ]
+
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['push', 'asia-northeast1-docker.pkg.dev/$PROJECT_ID/$_PLATFORM/$_PIPELINES_VERSION:latest']

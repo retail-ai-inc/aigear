@@ -1,0 +1,25 @@
+services:
+  pipeline-version:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /{project_name}
+    ports:
+      - 50001:50051
+    command:  |
+      sh -c "
+      /opt/venv/{project_name}/bin/python main.py --version {pipeline_version} --step {step_1} &
+      /opt/venv/{project_name}/bin/python main.py --version {pipeline_version} --step {step_2} & 
+      /opt/venv/{project_name}/bin/python main.py --version {pipeline_version} --step {step_3} & 
+      /opt/venv/{project_name}/bin/python main.py --version {pipeline_version} --step {step_4} & 
+      tail -f /dev/null
+      "
+    volumes:
+      - ./.config/gcloud:/root/.config/gcloud:r
+      - .:/{project_name}:rw
+    networks:
+      - backend
+
+networks:
+  backend:
+    external: true
