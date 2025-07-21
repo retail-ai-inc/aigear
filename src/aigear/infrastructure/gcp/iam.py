@@ -1,5 +1,5 @@
-from ...common.logger import logger
-from ...common.sh import run_sh
+import logging
+from common.sh import run_sh
 
 
 def check_iam(project_id: str):
@@ -15,9 +15,9 @@ def check_iam(project_id: str):
     if "roles/owner" in event:
         is_owner = True
     elif event == "":
-        logger.info("The currently logged in GCP account does not have owner privileges.")
+        logging.info("The currently logged in GCP account does not have owner privileges.")
     else:
-        logger.info(event)
+        logging.info(event)
     return is_owner
 
 class ServiceAccounts:
@@ -45,9 +45,9 @@ class ServiceAccounts:
             command.append(f"--display-name={self.display_name}")
         event = run_sh(command)
         if event == "":
-            logger.info("The currently logged in GCP account does not have owner privileges.")
+            logging.info("The currently logged in GCP account does not have owner privileges.")
         else:
-            logger.info(event)
+            logging.info(event)
 
     def add_iam_policy_binding(self, roles: list):
         sa_email=f"{self.account_name}@{self.project_id}.iam.gserviceaccount.com"
@@ -67,6 +67,6 @@ class ServiceAccounts:
             ]
             event = run_sh(command)
             if event.returncode == 0:
-                print(f"✅Successfully granted: {role}")
+                logging.info(f"✅Successfully granted: {role}")
             else:
-                print(f"❌Failed: {event.stderr}")
+                logging.error(f"❌Failed: {event.stderr}")
