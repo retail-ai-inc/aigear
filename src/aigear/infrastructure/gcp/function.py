@@ -1,6 +1,6 @@
 from pathlib import Path
-from ...common.logger import logger
-from ...common import run_sh
+import logging
+from common import run_sh
 
 
 class CloudFunction:
@@ -15,7 +15,7 @@ class CloudFunction:
         self.region = region
         self.entry_point = entry_point
         self.topic_name = topic_name
-        self.source_path = Path(__file__).resolve().parent / "function_config"
+        self.source_path = Path(__file__).resolve().parent / "function"
     
     def deploy(self):
         command = [
@@ -29,9 +29,9 @@ class CloudFunction:
             f"--source={self.source_path}",
         ]
         event = run_sh(command)
-        logger.info(event)
+        logging.info(event)
         if "ERROR" in event:
-            logger.info("Error occurred while creating cloud function.")
+            logging.info("Error occurred while creating cloud function.")
     
     def logs(self, limit=5):
         command = [
@@ -42,7 +42,7 @@ class CloudFunction:
             self.function_name,
         ]
         event = run_sh(command)
-        logger.info(event)
+        logging.info(event)
     
     def describe(self):
         is_exist = False
@@ -54,11 +54,11 @@ class CloudFunction:
         event = run_sh(command)
         if "ACTIVE" in event:
             is_exist = True
-            logger.info(f"Find resources: {event}")
+            logging.info(f"Find resources: {event}")
         elif "ERROR" in event and "not found" in event:
-            logger.info(f"NOT_FOUND: Resource not found: {event}")
+            logging.info(f"NOT_FOUND: Resource not found: {event}")
         else:
-            logger.info(event)
+            logging.info(event)
         return is_exist
     
     def list(self):
@@ -69,7 +69,7 @@ class CloudFunction:
             f"--filter={self.function_name}",
         ]
         event = run_sh(command)
-        logger.info(f"\n{event}")
+        logging.info(f"\n{event}")
     
     def delete(self):
         command = [
@@ -79,4 +79,13 @@ class CloudFunction:
             f"--region={self.region}",
         ]
         event = run_sh(command, "yes\n")
-        logger.info(f"\n{event}")
+        logging.info(f"\n{event}")
+
+
+if __name__=="__main__":
+    cloud_function = CloudFunction(
+        function_name="test_function",
+        region="asia-northeast1",
+        entry_point="cronjobProcessPubSub",
+        topic_name="",
+    )
