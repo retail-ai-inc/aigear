@@ -34,6 +34,7 @@ def generate_schema(
         output_model_type=output_model_type,
         class_name=class_name,
     )
+    return None
 
 
 def generate_schema_for_json(
@@ -60,3 +61,4 @@ def generate_schema_for_json(
         output_model_type=output_model_type,
         class_name=class_name,
     )
+    return None
