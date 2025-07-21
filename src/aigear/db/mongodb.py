@@ -2,7 +2,7 @@ from pymongo import MongoClient
 from pymongoarrow.monkey import patch_all
 import logging
 import weakref
-from aigear.secretmanager import SecretManager
+from ..common.secretmanager import SecretManager
 
 patch_all()
 
@@ -28,6 +28,7 @@ class MDBClient:
             return db
         else:
             logging.info("Please check if the mongodb is configured correctly.")
+            return None
 
     def close(self):
         if self.client is not None:
