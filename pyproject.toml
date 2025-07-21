@@ -53,9 +53,8 @@ msgrpc = [
 ]
 
 [project.scripts]
-aigear-msgrpc = "aigear.microservices.grpc.service:main"
 aigear-init = "aigear.cli.project_cli:project_init"
-aigear-workflow = "aigear.cli.workflow:run_workflow"
+aigear-workflow = "aigear.cli.task_running:task_run"
 
 [tool.setuptools.packages.find]
 where = ["src"]
