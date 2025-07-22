@@ -2,6 +2,13 @@ from pathlib import Path
 import shutil
 
 
+class GCPInfra:
+    def __init__(self):
+        pass
+
+    def init(self):
+        pass
+
 class Project:
     def __init__(self, name: str = "template_project"):
         """

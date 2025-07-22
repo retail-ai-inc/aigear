@@ -1,5 +1,5 @@
-import logging
-from ...common.sh import run_sh
+from aigear import aigear_logger
+from aigear.common import run_sh
 
 
 class Bucket:
@@ -20,7 +20,7 @@ class Bucket:
             "--uniform-bucket-level-access",
         ]
         event = run_sh(command)
-        logging.info(event)
+        aigear_logger.info(event)
 
     def describe(self):
         is_exist = False
@@ -29,7 +29,7 @@ class Bucket:
             self.bucket,
         ]
         event = run_sh(command)
-        logging.info(event)
+        aigear_logger.info(event)
         if self.bucket in event and "ERROR" not in event:
             is_exist = True
         return is_exist
@@ -40,7 +40,7 @@ class Bucket:
             self.bucket,
         ]
         event = run_sh(command)
-        logging.info(f"\n{event}")
+        aigear_logger.info(f"\n{event}")
 
     def delete(self):
         command = [
@@ -48,7 +48,7 @@ class Bucket:
             self.bucket,
         ]
         event = run_sh(command)
-        logging.info(event)
+        aigear_logger.info(event)
 
 
 class ManagedFolders:
@@ -62,7 +62,7 @@ class ManagedFolders:
             folder,
         ]
         event = run_sh(command)
-        logging.info(event)
+        aigear_logger.info(event)
 
     def describe(self, folder_name):
         is_exist = False
@@ -72,7 +72,7 @@ class ManagedFolders:
             folder,
         ]
         event = run_sh(command)
-        logging.info(event)
+        aigear_logger.info(event)
         if folder in event and "ERROR" not in event:
             is_exist = True
         return is_exist
@@ -83,7 +83,7 @@ class ManagedFolders:
             self.bucket,
         ]
         event = run_sh(command)
-        logging.info(f"\n{event}")
+        aigear_logger.info(f"\n{event}")
 
     def delete(self, folder_name):
         folder = f"{self.bucket}/{folder_name}"
@@ -92,4 +92,4 @@ class ManagedFolders:
             folder,
         ]
         event = run_sh(command)
-        logging.info(event)
+        aigear_logger.info(event)

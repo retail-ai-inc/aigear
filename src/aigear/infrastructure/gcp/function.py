@@ -1,6 +1,6 @@
 from pathlib import Path
-import logging
-from common import run_sh
+from aigear import aigear_logger
+from aigear.common import run_sh
 
 
 class CloudFunction:
@@ -29,9 +29,9 @@ class CloudFunction:
             f"--source={self.source_path}",
         ]
         event = run_sh(command)
-        logging.info(event)
+        aigear_logger.info(event)
         if "ERROR" in event:
-            logging.info("Error occurred while creating cloud function.")
+            aigear_logger.error("Error occurred while creating cloud function.")
     
     def logs(self, limit=5):
         command = [
@@ -42,7 +42,7 @@ class CloudFunction:
             self.function_name,
         ]
         event = run_sh(command)
-        logging.info(event)
+        aigear_logger.info(event)
     
     def describe(self):
         is_exist = False
@@ -54,11 +54,11 @@ class CloudFunction:
         event = run_sh(command)
         if "ACTIVE" in event:
             is_exist = True
-            logging.info(f"Find resources: {event}")
+            aigear_logger.info(f"Find resources: {event}")
         elif "ERROR" in event and "not found" in event:
-            logging.info(f"NOT_FOUND: Resource not found: {event}")
+            aigear_logger.info(f"NOT_FOUND: Resource not found: {event}")
         else:
-            logging.info(event)
+            aigear_logger.info(event)
         return is_exist
     
     def list(self):
@@ -69,7 +69,7 @@ class CloudFunction:
             f"--filter={self.function_name}",
         ]
         event = run_sh(command)
-        logging.info(f"\n{event}")
+        aigear_logger.info(f"\n{event}")
     
     def delete(self):
         command = [
@@ -79,7 +79,7 @@ class CloudFunction:
             f"--region={self.region}",
         ]
         event = run_sh(command, "yes\n")
-        logging.info(f"\n{event}")
+        aigear_logger.info(f"\n{event}")
 
 
 if __name__=="__main__":

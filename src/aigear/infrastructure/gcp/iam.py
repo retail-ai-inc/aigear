@@ -1,5 +1,5 @@
-import logging
-from common.sh import run_sh
+from aigear import aigear_logger
+from aigear.common import run_sh
 
 
 def check_iam(project_id: str):
@@ -15,9 +15,9 @@ def check_iam(project_id: str):
     if "roles/owner" in event:
         is_owner = True
     elif event == "":
-        logging.info("The currently logged in GCP account does not have owner privileges.")
+        aigear_logger.info("The currently logged in GCP account does not have owner privileges.")
     else:
-        logging.info(event)
+        aigear_logger.info(event)
     return is_owner
 
 class ServiceAccounts:
@@ -45,17 +45,19 @@ class ServiceAccounts:
             command.append(f"--display-name={self.display_name}")
         event = run_sh(command)
         if event == "":
-            logging.info("The currently logged in GCP account does not have owner privileges.")
+            aigear_logger.info("The currently logged in GCP account does not have owner privileges.")
         else:
-            logging.info(event)
+            aigear_logger.info(event)
 
     def add_iam_policy_binding(self, roles: list):
         sa_email=f"{self.account_name}@{self.project_id}.iam.gserviceaccount.com"
 
         roles = [
             "roles/storage.admin",
-            "roles/logging.logWriter",
-            "roles/monitoring.metricWriter"
+            "roles/compute.admin",
+            "roles/pubsub.admin",
+            "roles/artifactregistry.reader"
+            "roles/secretmanager.secretAccessor"
         ]
 
         for role in roles:
@@ -67,6 +69,6 @@ class ServiceAccounts:
             ]
             event = run_sh(command)
             if event.returncode == 0:
-                logging.info(f"✅Successfully granted: {role}")
+                aigear_logger.info(f"✅Successfully granted: {role}")
             else:
-                logging.error(f"❌Failed: {event.stderr}")
+                aigear_logger.error(f"❌Failed: {event.stderr}")

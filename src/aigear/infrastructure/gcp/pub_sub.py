@@ -1,5 +1,5 @@
-import logging
-from aigear.common.sh import run_sh
+from aigear import aigear_logger
+from aigear.common import run_sh
 
 
 class PubSub:
@@ -11,7 +11,7 @@ class PubSub:
             "gcloud", "pubsub", "topics", "create", self.topic_name
         ]
         event = run_sh(command)
-        logging.info(event)
+        aigear_logger.info(event)
 
     def describe(self):
         is_exist = False
@@ -21,11 +21,11 @@ class PubSub:
         event = run_sh(command)
         if "name: projects" in event:
             is_exist = True
-            logging.info(f"Find resources: {event}")
+            aigear_logger.info(f"Find resources: {event}")
         elif "NOT_FOUND" in event:
-            logging.info(f"NOT_FOUND: Resource not found (resource={self.topic_name})")
+            aigear_logger.info(f"NOT_FOUND: Resource not found (resource={self.topic_name})")
         else:
-            logging.info(event)
+            aigear_logger.info(event)
         return is_exist
 
     def delete(self):
@@ -33,14 +33,14 @@ class PubSub:
             "gcloud", "pubsub", "topics", "delete", self.topic_name
         ]
         event = run_sh(command)
-        logging.info(event)
+        aigear_logger.info(event)
 
     def list(self):
         command = [
             "gcloud", "pubsub", "topics", "list", f"--filter=name.scope(topic):{self.topic_name}"
         ]
         event = run_sh(command)
-        logging.info(event)
+        aigear_logger.info(event)
 
     def publish(self, message):
         command = [
@@ -48,7 +48,7 @@ class PubSub:
             f"--message={message}",
         ]
         event = run_sh(command)
-        logging.info(event)
+        aigear_logger.info(event)
 
 
 class Subscriptions:
@@ -62,7 +62,7 @@ class Subscriptions:
             f"--topic={self.topic_name}",
         ]
         event = run_sh(command)
-        logging.info(event)
+        aigear_logger.info(event)
 
     def describe(self):
         is_exist = False
@@ -72,11 +72,11 @@ class Subscriptions:
         event = run_sh(command)
         if "name: projects" in event:
             is_exist = True
-            logging.info(f"Find resources: {event}")
+            aigear_logger.info(f"Find resources: {event}")
         elif "NOT_FOUND" in event:
-            logging.info(f"NOT_FOUND: Resource not found (resource={self.sub_name})")
+            aigear_logger.info(f"NOT_FOUND: Resource not found (resource={self.sub_name})")
         else:
-            logging.info(event)
+            aigear_logger.info(event)
         return is_exist
 
     def delete(self):
@@ -84,7 +84,7 @@ class Subscriptions:
             "gcloud", "pubsub", "subscriptions", "delete", self.sub_name
         ]
         event = run_sh(command)
-        logging.info(event)
+        aigear_logger.info(event)
 
     @staticmethod
     def list():
@@ -92,7 +92,7 @@ class Subscriptions:
             "gcloud", "pubsub", "subscriptions", "list"
         ]
         event = run_sh(command)
-        logging.info(event)
+        aigear_logger.info(event)
 
     def pull(self):
         command = [
@@ -101,8 +101,11 @@ class Subscriptions:
             "message.messageId,message.publishTime)"
         ]
         event = run_sh(command)
-        logging.info(event)
+        aigear_logger.info(event)
 
 if __name__=="__main__":
     pubsub = PubSub(topic_name="medovik-pipelines-pubsub")
-    pubsub.list()
+    is_exist = pubsub.describe()
+    print(is_exist)
+    if not is_exist:
+        pubsub.create()

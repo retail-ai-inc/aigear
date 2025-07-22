@@ -18,7 +18,7 @@ class JsonFormatter(logging.Formatter):
 class Logging:
     def __init__(
         self,
-        log_name: str = 'medovik_logging',
+        log_name: str = None,
         project_id: str = None
     ):
         self.client = None
