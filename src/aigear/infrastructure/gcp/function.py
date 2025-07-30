@@ -10,12 +10,14 @@ class CloudFunction:
         region,
         entry_point,
         topic_name,
+        project_id,
     ):
         self.function_name = function_name
         self.region = region
         self.entry_point = entry_point
         self.topic_name = topic_name
         self.source_path = Path(__file__).resolve().parent / "function"
+        self.project_id = project_id
     
     def deploy(self):
         command = [
@@ -27,6 +29,7 @@ class CloudFunction:
             f"--entry-point={self.entry_point}",
             f"--trigger-topic={self.topic_name}",
             f"--source={self.source_path}",
+            f"--project={self.project_id}",
         ]
         event = run_sh(command)
         aigear_logger.info(event)
@@ -40,6 +43,7 @@ class CloudFunction:
             f"--region={self.region}",
             f"--limit={limit}",
             self.function_name,
+            f"--project={self.project_id}",
         ]
         event = run_sh(command)
         aigear_logger.info(event)
@@ -50,8 +54,10 @@ class CloudFunction:
             "gcloud", "functions", "describe",
             self.function_name,
             f"--region={self.region}",
+            f"--project={self.project_id}",
         ]
         event = run_sh(command)
+        aigear_logger.info(event)
         if "ACTIVE" in event:
             is_exist = True
             aigear_logger.info(f"Find resources: {event}")
@@ -65,8 +71,9 @@ class CloudFunction:
         command = [
             "gcloud", "functions", "list",
             f"--regions={self.region}",
-            "--v2",
-            f"--filter={self.function_name}",
+            # "--v2",
+            # f"--filter={self.function_name}",
+            f"--project={self.project_id}",
         ]
         event = run_sh(command)
         aigear_logger.info(f"\n{event}")
@@ -77,6 +84,7 @@ class CloudFunction:
             self.function_name,
             "--gen2",
             f"--region={self.region}",
+            f"--project={self.project_id}",
         ]
         event = run_sh(command, "yes\n")
         aigear_logger.info(f"\n{event}")
@@ -84,8 +92,12 @@ class CloudFunction:
 
 if __name__=="__main__":
     cloud_function = CloudFunction(
-        function_name="test_function",
+        function_name="medovik-pipeline-run",
         region="asia-northeast1",
         entry_point="cronjobProcessPubSub",
-        topic_name="",
+        topic_name = "ml-test-pubsub",
+        project_id="ssc-ape-staging"
     )
+    # cloud_function_exist = cloud_function.describe()
+    # print("cloud_function: ", cloud_function_exist)
+    cloud_function.list()
