@@ -9,15 +9,17 @@ class Bucket:
             project_id: str,
             location: str,
     ):
-        self.bucket = f"gs://{bucket_name}-{project_id}"
+        self.bucket_gs = f"gs://{bucket_name}"
         self.location = location
+        self.project_id = project_id
 
     def create(self):
         command = [
             "gcloud", "storage", "buckets", "create",
-            self.bucket,
+            self.bucket_gs,
             f"--location={self.location}",
             "--uniform-bucket-level-access",
+            f"--project={self.project_id}",
         ]
         event = run_sh(command)
         aigear_logger.info(event)
@@ -26,18 +28,20 @@ class Bucket:
         is_exist = False
         command = [
             "gcloud", "storage", "buckets", "describe",
-            self.bucket,
+            self.bucket_gs,
+            f"--project={self.project_id}",
         ]
         event = run_sh(command)
         aigear_logger.info(event)
-        if self.bucket in event and "ERROR" not in event:
+        if self.bucket_gs in event and "ERROR" not in event:
             is_exist = True
         return is_exist
 
     def list(self):
         command = [
             "gcloud", "storage", "buckets", "list",
-            self.bucket,
+            self.bucket_gs,
+            f"--project={self.project_id}",
         ]
         event = run_sh(command)
         aigear_logger.info(f"\n{event}")
@@ -45,51 +49,21 @@ class Bucket:
     def delete(self):
         command = [
             "gcloud", "storage", "rm", "-r",
-            self.bucket,
+            self.bucket_gs,
+            f"--project={self.project_id}",
         ]
         event = run_sh(command)
         aigear_logger.info(event)
 
 
-class ManagedFolders:
-    def __init__(self, bucket_name, project_id):
-        self.bucket = f"gs://{bucket_name}-{project_id}"
-
-    def create(self, folder_name):
-        folder = f"{self.bucket}/{folder_name}"
-        command = [
-            "gcloud", "storage", "managed-folders", "create",
-            folder,
-        ]
-        event = run_sh(command)
-        aigear_logger.info(event)
-
-    def describe(self, folder_name):
-        is_exist = False
-        folder = f"{self.bucket}/{folder_name}"
-        command = [
-            "gcloud", "storage", "managed-folders", "describe",
-            folder,
-        ]
-        event = run_sh(command)
-        aigear_logger.info(event)
-        if folder in event and "ERROR" not in event:
-            is_exist = True
-        return is_exist
-
-    def list(self):
-        command = [
-            "gcloud", "storage", "managed-folders", "list",
-            self.bucket,
-        ]
-        event = run_sh(command)
-        aigear_logger.info(f"\n{event}")
-
-    def delete(self, folder_name):
-        folder = f"{self.bucket}/{folder_name}"
-        command = [
-            "gcloud", "storage", "managed-folders", "delete",
-            folder,
-        ]
-        event = run_sh(command)
-        aigear_logger.info(event)
+if __name__=="__main__":
+    project_id = "ssc-ape-staging"
+    bucket_name = "medovik-ape-staging"
+    location = "asia-northeast1"
+    bucket = Bucket(
+        bucket_name=bucket_name,
+        project_id=project_id,
+        location=location,
+    )
+    bucket_exist = bucket.describe()
+    print("bucket: ", bucket_exist)
