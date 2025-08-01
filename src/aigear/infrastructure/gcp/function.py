@@ -11,6 +11,7 @@ class CloudFunction:
         entry_point,
         topic_name,
         project_id,
+        service_account
     ):
         self.function_name = function_name
         self.region = region
@@ -18,6 +19,7 @@ class CloudFunction:
         self.topic_name = topic_name
         self.source_path = Path(__file__).resolve().parent / "function"
         self.project_id = project_id
+        self.service_account = service_account
     
     def deploy(self):
         command = [
@@ -30,49 +32,36 @@ class CloudFunction:
             f"--trigger-topic={self.topic_name}",
             f"--source={self.source_path}",
             f"--project={self.project_id}",
+            f"--service-account={self.service_account}"
         ]
         event = run_sh(command)
         aigear_logger.info(event)
         if "ERROR" in event:
             aigear_logger.error("Error occurred while creating cloud function.")
     
-    def logs(self, limit=5):
-        command = [
-            "gcloud", "functions", "logs", "read",
-            "--gen2",
-            f"--region={self.region}",
-            f"--limit={limit}",
-            self.function_name,
-            f"--project={self.project_id}",
-        ]
-        event = run_sh(command)
-        aigear_logger.info(event)
-    
     def describe(self):
         is_exist = False
         command = [
-            "gcloud", "functions", "describe",
+            "gcloud", "run", "services", "describe",
             self.function_name,
             f"--region={self.region}",
             f"--project={self.project_id}",
         ]
         event = run_sh(command)
-        aigear_logger.info(event)
-        if "ACTIVE" in event:
+        if f"Service {self.function_name} in region {self.region}" in event:
             is_exist = True
             aigear_logger.info(f"Find resources: {event}")
-        elif "ERROR" in event and "not found" in event:
-            aigear_logger.info(f"NOT_FOUND: Resource not found: {event}")
+        elif "ERROR" in event and "Cannot find service" in event:
+            aigear_logger.info(f"Resource not found: {event}")
         else:
             aigear_logger.info(event)
         return is_exist
     
     def list(self):
         command = [
-            "gcloud", "functions", "list",
-            f"--regions={self.region}",
-            # "--v2",
-            # f"--filter={self.function_name}",
+            "gcloud", "run", "services", "list",
+            f"--region={self.region}",
+            f"--filter={self.function_name}",
             f"--project={self.project_id}",
         ]
         event = run_sh(command)
@@ -80,9 +69,8 @@ class CloudFunction:
     
     def delete(self):
         command = [
-            "gcloud", "functions", "delete",
+            "gcloud", "run", "services", "delete",
             self.function_name,
-            "--gen2",
             f"--region={self.region}",
             f"--project={self.project_id}",
         ]
@@ -92,12 +80,14 @@ class CloudFunction:
 
 if __name__=="__main__":
     cloud_function = CloudFunction(
-        function_name="medovik-pipeline-run",
+        function_name="ml-test-run",
         region="asia-northeast1",
         entry_point="cronjobProcessPubSub",
         topic_name = "ml-test-pubsub",
-        project_id="ssc-ape-staging"
+        project_id="ssc-ape-staging",
+        service_account="ml-test@ssc-ape-staging.iam.gserviceaccount.com"
     )
-    # cloud_function_exist = cloud_function.describe()
-    # print("cloud_function: ", cloud_function_exist)
-    cloud_function.list()
+    cloud_function_exist = cloud_function.describe()
+    print("cloud_function: ", cloud_function_exist)
+    if not cloud_function_exist:
+        cloud_function.deploy()
