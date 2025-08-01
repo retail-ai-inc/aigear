@@ -12,7 +12,8 @@ def run_sh(
             text=True,
             capture_output=True,
             shell=True,
-            timeout=10
+            timeout=10,
+            encoding="utf-8"
         )
         stderr = result.stderr
         if stderr:
