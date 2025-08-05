@@ -27,7 +27,6 @@ class ServiceAccounts:
                 command.append(f"--description={self.description}")
             if self.display_name:
                 command.append(f"--display-name={self.display_name}")
-            print(command)
             event = run_sh(command)
             if event == "":
                 aigear_logger.info("The currently logged in GCP account does not have owner privileges.")
