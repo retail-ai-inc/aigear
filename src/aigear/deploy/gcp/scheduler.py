@@ -123,22 +123,22 @@ class Scheduler:
 if __name__ == "__main__":
     message = [
         {
-            "vmName": "coopiwate-ape3-fetch-data-vm",
-            "diskSizeGb": "20",
-            "dockerImage": "asia-northeast1-docker.pkg.dev/ssc-ape-staging/medovik/ape3",
+            "vm_name": "coopiwate-ape3-fetch-data-vm",
+            "disk_size_gb": "20",
+            "docker_image": "asia-northeast1-docker.pkg.dev/ssc-ape-staging/medovik/ape3",
             "spec": "e2-standard-2",
-            "onHostMaintenance": "MIGRATE",
-            "pipelineVersion": "coopiwate_ape3",
-            "pipelineStep": "ape3.coopiwate.data.fetch_data"
+            "on_host_maintenance": "MIGRATE",
+            "pipeline_version": "coopiwate_ape3",
+            "pipeline_step": "ape3.coopiwate.data.fetch_data"
         },
         {
-            "vmName": "coopiwate-ape3-preprocessing-vm",
-            "diskSizeGb": "40",
-            "dockerImage": "asia-northeast1-docker.pkg.dev/ssc-ape-staging/medovik/ape3",
+            "vm_name": "coopiwate-ape3-preprocessing-vm",
+            "disk_size_gb": "40",
+            "docker_image": "asia-northeast1-docker.pkg.dev/ssc-ape-staging/medovik/ape3",
             "spec": "e2-highmem-8",
-            "onHostMaintenance": "MIGRATE",
-            "pipelineVersion": "coopiwate_ape3",
-            "pipelineStep": "ape3.coopiwate.feature.preprocessing"
+            "on_host_maintenance": "MIGRATE",
+            "pipeline_version": "coopiwate_ape3",
+            "pipeline_step": "ape3.coopiwate.feature.preprocessing"
         }
     ]
     scheduler = Scheduler(

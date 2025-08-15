@@ -8,8 +8,8 @@ const Buffer = require('safe-buffer').Buffer;
 const Compute = require('@google-cloud/compute');
 const compute = new Compute();
 // Change this const value to your project
-const projectId = 'ssc-ape-staging';
-const zone = 'asia-northeast1-a';
+const projectId = 'ssc-ape-staging'; ////
+const zone = 'asia-northeast1-a';    ////
 
 //Build environment and clean up
 const commonCommand = 'cd /var\ngcloud auth configure-docker asia-northeast1-docker.pkg.dev --quiet\nsudo docker pull ${dockerImage}\nsudo docker run ${dockerImage} ${pipelineCommand}\ndocker_exit_code=$?\n[ ${docker_exit_code} -eq "0" ] && gcloud pubsub topics publish medovik-pipelines-pubsub --message \'createVMDate\' || gcloud pubsub topics publish medovik-pipelines-pubsub --message "Exit code: ${docker_exit_code}"\ngcp_zone=$(curl -H Metadata-Flavor:Google http://metadata.google.internal/computeMetadata/v1/instance/zone -s | cut -d/ -f4)\nsleep 300\nhostname_result=$(hostname)\nextracted_name=$(echo ${hostname_result} | cut -d. -f1)\ngcloud compute instances delete ${extracted_name} --zone ${gcp_zone}';
@@ -106,7 +106,7 @@ functions.cloudEvent('cronjobProcessPubSub', cloudEvent => {
   if(cronjobInfo.length == 0) {
     return;
   }
-  console.log(`vmName is ${cronjobInfo[0].vmName}`);
+  console.log(`vmName is ${cronjobInfo[0].vm_name}`);
   console.log(`command is ${cronjobInfo[0].command}`);
   console.log(`cronjobInfo.spec is ${cronjobInfo[0].spec}`);
 
@@ -118,16 +118,16 @@ functions.cloudEvent('cronjobProcessPubSub', cloudEvent => {
   vmConfig.machineType = machineTypeSpec;
 
   // VM and hard disk name
-  vmConfig.name = cronjobInfo[0].vmName;
-  vmConfig.disks[0].deviceName = cronjobInfo[0].vmName;
-  const diskSizeGb = cronjobInfo[0].diskSizeGb ? cronjobInfo[0].diskSizeGb : '20';
+  vmConfig.name = cronjobInfo[0].vm_name;
+  vmConfig.disks[0].deviceName = cronjobInfo[0].vm_name;
+  const diskSizeGb = cronjobInfo[0].disk_size_gb ? cronjobInfo[0].disk_size_gb : '20';
   vmConfig.disks[0].initializeParams.diskSizeGb = diskSizeGb;
-  vmConfig.scheduling.onHostMaintenance = cronjobInfo[0].onHostMaintenance;
-  const vmName = cronjobInfo[0].vmName + Date.now();
-  const dockerImage = cronjobInfo[0].dockerImage;
+  vmConfig.scheduling.onHostMaintenance = cronjobInfo[0].on_host_maintenance;
+  const vmName = cronjobInfo[0].vm_name + Date.now();
+  const dockerImage = cronjobInfo[0].docker_image;
 
   // pipeline step in commonCommand
-  const pipelineCommand = '/opt/venv/medovik/bin/python /medovik/main.py --version ' + cronjobInfo[0].pipelineVersion + ' --step ' + cronjobInfo[0].pipelineStep
+  const pipelineCommand = '/opt/venv/medovik/bin/python /medovik/main.py --version ' + cronjobInfo[0].pipeline_version + ' --step ' + cronjobInfo[0].pipeline_step
 
   console.log(JSON.stringify(cronjobInfo));
   cronjobInfo.shift()
