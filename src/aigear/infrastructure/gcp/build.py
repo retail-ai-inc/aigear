@@ -41,6 +41,20 @@ class CloudBuild:
         event = run_sh(command)
         aigear_logger.info(event)
 
+    def describe(self):
+        is_exist = False
+        command = [
+            "gcloud", "builds", "triggers", "list",
+            f"--filter={self.trigger_name}",
+            f"--region={self.region}",
+            f"--project={self.project_id}",
+        ]
+        event = run_sh(command)
+        aigear_logger.info(event)
+        if self.trigger_name in event and "ERROR" not in event:
+            is_exist = True
+        return is_exist
+
 
 if __name__ == "__main__":
     trigger_name = "ml-test"
@@ -48,7 +62,7 @@ if __name__ == "__main__":
     repository = "retail-ai-inc/medovik"
     repo_owner = "retail-ai-inc"
     repo_name = "medovik"
-    branch_pattern = "^master$"
+    branch_pattern = "master"
     build_config = "/cloudbuild/cloudbuild.yaml"
     region = "global"
     project_id = "ssc-ape-staging"

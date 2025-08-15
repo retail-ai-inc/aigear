@@ -4,10 +4,10 @@ from aigear.common import run_sh
 
 class Bucket:
     def __init__(
-            self,
-            bucket_name: str,
-            project_id: str,
-            location: str,
+        self,
+        bucket_name: str,
+        location: str,
+        project_id: str,
     ):
         self.bucket_gs = f"gs://{bucket_name}"
         self.location = location
@@ -56,7 +56,7 @@ class Bucket:
         aigear_logger.info(event)
 
 
-if __name__=="__main__":
+if __name__ == "__main__":
     project_id = "ssc-ape-staging"
     bucket_name = "medovik-ape-staging"
     location = "asia-northeast1"

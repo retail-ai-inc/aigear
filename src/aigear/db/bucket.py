@@ -2,7 +2,7 @@ import os
 import weakref
 from pathlib import Path
 from google.cloud import storage
-from .schema.bucket_schema import BucketABC
+from aigear.common.schema.bucket_schema import BucketABC
 
 
 class BucketClient(BucketABC):

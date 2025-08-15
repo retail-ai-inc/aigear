@@ -62,3 +62,20 @@ def generate_schema_for_json(
         class_name=class_name,
     )
     return None
+
+if __name__=="__main__":
+    with open("./env.json", "r", encoding="utf-8") as f:
+        cfg = json.load(f)
+
+    output_path = os.path.join(os.getcwd(), "./schema/config_schema.py")
+    generate_schema_for_json(
+        json_data=cfg["aigear"],
+        input_file_type=InputFileType.Json,
+        output=output_path,
+        output_model_type=DataModelType.PydanticBaseModel,
+        class_name="Config",
+        forced_generate=True
+    )
+
+    from aigear.common.schema.config_schema import Config
+    Config(**cfg["aigear"])

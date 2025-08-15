@@ -2,11 +2,10 @@ import json
 import os
 from typing import Optional
 import logging
-from .schema.config_schema import Config
+from aigear.common.schema.config_schema import Config
 
 
-def read_config() -> Optional[Config]:
-    env_path = os.path.join(os.getcwd(), "env.json")
+def read_config(env_path) -> Optional[Config]:
     if not os.path.exists(env_path):
         logging.error(f"Configuration file {env_path} not found.")
         return None
