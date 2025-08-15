@@ -54,7 +54,9 @@ msgrpc = [
 
 [project.scripts]
 aigear-init = "aigear.cli.project_cli:project_init"
+gcp-infra-init = "aigear.cli.gcp_cli:gcp_infra_init"
 aigear-workflow = "aigear.cli.task_running:task_run"
+aigear-scheduler = "aigear.cli.task_running:task_run"
 
 [tool.setuptools.packages.find]
 where = ["src"]
