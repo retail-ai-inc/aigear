@@ -6,6 +6,7 @@ This directory contains the Google Cloud Platform Cloud Build integration for ai
 
 - **Automated Cloud Build**: Build Docker images using Google Cloud Build
 - **GCS Integration**: Upload source code to Google Cloud Storage
+- **GitHub Integration**: Build directly from GitHub repositories (public/private)
 - **Build Management**: Monitor and manage Cloud Build operations
 - **Configuration Generation**: Create and validate cloudbuild.yaml files
 - **Error Handling**: Comprehensive error handling and logging
@@ -44,172 +45,89 @@ export GOOGLE_CLOUD_PROJECT="your-project-id"
 
 ## Usage
 
-### Basic Example
+### Build from GitHub (recommended)
+
+Build an image directly from a GitHub repository. For private repos, configure access (e.g., GitHub App, deploy key, or token via Cloud Build secret) and adapt the git clone step.
 
 ```python
 from aigear.deploy.gcp import CloudBuildBuilder
-from pathlib import Path
 
-# Initialize builder
 builder = CloudBuildBuilder()
 
-# Build from GCS source
+build_id = builder.build_from_github(
+    repo_url="https://github.com/your-org/your-repo.git",
+    image_name="your-app",
+    branch="main",                 # or commit_sha="<sha>"
+    context_dir=".",               # subdirectory within repo used as build context
+    dockerfile="Dockerfile",       # path relative to context_dir
+    timeout_minutes=15,
+    tags=["latest", "v1.0.0"],
+    build_args={"ENV": "prod"},
+)
+```
+
+Notes:
+- For private repositories, add an auth step before cloning (e.g., configure `git` to use a token from Secret Manager) or set up a GitHub App connection.
+- Alternatively, use Cloud Build GitHub App triggers for first-class GitHub integration.
+
+### Build from GCS
+
+```python
+from aigear.deploy.gcp import CloudBuildBuilder
+
+builder = CloudBuildBuilder()
 build_id = builder.build_from_gcs(
     gcs_source="gs://your-bucket/source.tar.gz",
     image_name="my-app",
-    dockerfile="Dockerfile",
-    timeout_minutes=15,
-    tags=["latest", "v1.0.0"]
 )
-
-print(f"Build completed: {build_id}")
 ```
 
-### Upload and Build
+### Upload local directory to GCS and build
 
 ```python
 from aigear.deploy.gcp import (
-    CloudBuildBuilder,
-    upload_source_to_gcs,
-    get_gcs_bucket_name,
-    get_project_id
+  CloudBuildBuilder, upload_source_to_gcs, get_gcs_bucket_name, get_project_id
 )
 from pathlib import Path
 
-# Get project and bucket
 project_id = get_project_id()
 bucket_name = get_gcs_bucket_name(project_id)
+gcs_uri = upload_source_to_gcs(Path("."), bucket_name)
 
-# Upload source code
-source_path = Path(".")
-gcs_uri = upload_source_to_gcs(
-    source_path=source_path,
-    bucket_name=bucket_name,
-    object_name="source.tar.gz"
-)
-
-# Build from uploaded source
 builder = CloudBuildBuilder()
-build_id = builder.build_from_gcs(
-    gcs_source=gcs_uri,
-    image_name="my-app"
-)
+build_id = builder.build_from_gcs(gcs_source=gcs_uri, image_name="my-app")
 ```
 
-### Create Configuration File
+### Create cloudbuild.yaml
 
 ```python
 from aigear.deploy.gcp import create_cloudbuild_yaml, validate_cloudbuild_config
 from pathlib import Path
 
-# Create cloudbuild.yaml
 config_path = Path("cloudbuild.yaml")
-create_cloudbuild_yaml(
-    output_path=config_path,
-    image_name="my-app",
-    dockerfile="Dockerfile",
-    substitutions={
-        "VERSION": "1.0.0",
-        "ENVIRONMENT": "production"
-    }
-)
-
-# Validate configuration
-is_valid = validate_cloudbuild_config(config_path)
+create_cloudbuild_yaml(output_path=config_path, image_name="my-app")
+assert validate_cloudbuild_config(config_path)
 ```
 
-### Monitor Builds
+### List and inspect builds
 
 ```python
 from aigear.deploy.gcp import CloudBuildBuilder
 
 builder = CloudBuildBuilder()
-
-# List recent builds
-builds = builder.list_builds(page_size=10)
-for build in builds:
-    print(f"{build.id}: {build.status}")
-
-# Get specific build status
-build_status = builder.get_build_status("build-id")
-print(f"Status: {build_status.status}")
+for b in builder.list_builds(page_size=10):
+    print(b.id, b.status)
 ```
 
-## Configuration
+## Permissions
 
-### Environment Variables
-
-- `GOOGLE_CLOUD_PROJECT`: Your Google Cloud project ID
-- `GOOGLE_APPLICATION_CREDENTIALS`: Path to service account key file
-
-### Build Options
-
-- `timeout_minutes`: Build timeout (default: 10)
-- `machine_type`: Cloud Build machine type (default: E2_HIGHCPU_8)
-- `tags`: Additional image tags
-- `substitutions`: Build substitutions for variables
-
-## Error Handling
-
-The module provides specific error classes:
-
-- `CloudBuildError`: General Cloud Build errors
-- `CloudBuildConfigError`: Configuration errors
-- `CloudBuildAuthenticationError`: Authentication errors
-- `CloudBuildTimeoutError`: Build timeout errors
-
-## Running the Example
-
-```bash
-# Run the example script
-python cloudbuild_example.py
-```
-
-## File Structure
-
-```
-gcp/
-├── __init__.py              # Module exports
-├── builder.py               # Main CloudBuildBuilder class
-├── client.py                # Authentication and client setup
-├── errors.py                # Error classes
-├── utilities.py             # Utility functions
-├── cloudbuild_example.py    # Usage examples
-├── requirements.txt         # Dependencies
-└── README.md               # This file
-```
-
-## Integration with aigear
-
-This Cloud Build integration is designed to work seamlessly with the existing aigear framework:
-
-- Follows the same error handling patterns as other aigear modules
-- Uses the common logger for consistent logging
-- Integrates with the existing deployment architecture
-- Supports the same configuration patterns
+- Cloud Build Service Account
+- Storage Object Admin (for GCS operations)
+- Container Registry/Artifact Registry permissions to push images
+- If cloning private GitHub repos: Secret Manager Accessor (for tokens) or GitHub App integration
 
 ## Troubleshooting
 
-### Common Issues
-
-1. **Authentication Errors**: Ensure you have proper Google Cloud authentication set up
-2. **Project Not Found**: Set the `GOOGLE_CLOUD_PROJECT` environment variable
-3. **API Not Enabled**: Enable the required Google Cloud APIs
-4. **Permission Errors**: Ensure your service account has the necessary permissions
-
-### Required Permissions
-
-Your service account needs the following roles:
-- Cloud Build Service Account
-- Storage Object Admin (for GCS operations)
-- Container Registry Service Agent (for image pushing)
-
-## Contributing
-
-When contributing to this module:
-
-1. Follow the existing code style and patterns
-2. Add appropriate error handling
-3. Include logging for important operations
-4. Update this README for new features
-5. Add tests for new functionality 
+- Ensure `google-cloud-build`, `google-auth` are installed.
+- For private repos, verify that credentials are available to the build steps.
+- Use Cloud Build logs to diagnose git clone issues or docker build failures. 

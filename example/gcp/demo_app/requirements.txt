@@ -1,0 +1,2 @@
+flask==2.3.2
+gunicorn==21.2.0
