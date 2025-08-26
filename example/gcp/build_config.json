@@ -1,0 +1,24 @@
+{
+  "gcp_project_id": "ssc-ape-staging",
+  "github": {
+    "repo_url": "https://github.com/GoogleCloudPlatform/cloud-builders-community.git",
+    "branch": "master",
+    "context_dir": ".",
+    "dockerfile": "Dockerfile"
+  },
+  "registry": {
+    "region": "asia-northeast1",
+    "repository": "medovik-ape33",
+    "image_name": "medovik-ape33",
+    "image_tag": "latest"
+  },
+  "build": {
+    "timeout_minutes": 15,
+    "machine_type": "E2_HIGHCPU_8",
+    "check_interval": 30,
+    "substitutions": {},
+    "build_args": {
+      "BUILDPLATFORM": "linux/amd64"
+    }
+  }
+}
