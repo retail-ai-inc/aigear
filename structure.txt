@@ -1,0 +1,114 @@
+.
+├── .DS_Store
+├── .gitignore
+├── LICENSE
+├── README.md
+├── example
+│   ├── fm
+│   │   ├── pipeline.py
+│   │   └── requirements.txt
+│   ├── microservices
+│   │   ├── Dockerfile
+│   │   ├── aigear-0.0.1-py3-none-any.whl
+│   │   ├── demo1
+│   │   │   └── Iris.py
+│   │   ├── demo2
+│   │   │   └── Iris.py
+│   │   ├── docker-compose.yml
+│   │   ├── env.json
+│   │   ├── model_generation.py
+│   │   ├── model_service_test.py
+│   │   └── requirements.txt
+│   └── pipeline
+│       ├── Dockerfile
+│       ├── aigear-0.0.1-py3-none-any.whl
+│       ├── demo
+│       │   └── Iris.py
+│       ├── env.json
+│       ├── iris_pipeline.py
+│       ├── model_service_test.py
+│       └── requirements.txt
+├── pyproject.toml
+├── src
+│   ├── .DS_Store
+│   └── aigear
+│       ├── .DS_Store
+│       ├── __init__.py
+│       ├── _version.py
+│       ├── cicd
+│       │   └── __init__.py
+│       ├── cli
+│       │   ├── __init__.py
+│       │   ├── project_cli.py
+│       │   └── workflow.py
+│       ├── common
+│       │   ├── __init__.py
+│       │   ├── callable.py
+│       │   ├── errors.py
+│       │   ├── hashing.py
+│       │   ├── lazy_load.py
+│       │   ├── logger.py
+│       │   └── state.py
+│       ├── constant.py
+│       ├── deploy
+│       │   ├── .DS_Store
+│       │   ├── __init__.py
+│       │   ├── docker
+│       │   │   ├── Dockerfile_template
+│       │   │   ├── __init__.py
+│       │   │   ├── builder.py
+│       │   │   ├── client.py
+│       │   │   ├── container.py
+│       │   │   ├── define_dockerfile.py
+│       │   │   ├── errors.py
+│       │   │   └── utilities.py
+│       │   └── gcp
+│       │       ├── __init__.py
+│       │       ├── pubsub.py
+│       │       └── test.py
+│       ├── frameworks
+│       │   └── __init__.py
+│       ├── manage
+│       │   ├── __init__.py
+│       │   └── local
+│       │       ├── __init__.py
+│       │       ├── constraints.py
+│       │       ├── db_models.py
+│       │       ├── db_service.py
+│       │       ├── init_db.py
+│       │       ├── model_manager.py
+│       │       └── pipeline_manager.py
+│       ├── microservices
+│       │   ├── __init__.py
+│       │   └── grpc
+│       │       ├── __init__.py
+│       │       ├── client.py
+│       │       ├── grpc_package
+│       │       │   ├── __init__.py
+│       │       │   ├── grpc_features.py
+│       │       │   ├── grpc_log.py
+│       │       │   └── grpc_ml_module.py
+│       │       ├── proto
+│       │       │   ├── __init__.py
+│       │       │   ├── grpc.proto
+│       │       │   ├── grpc_pb2.py
+│       │       │   ├── grpc_pb2_grpc.py
+│       │       │   └── proto_generate_code.sh
+│       │       └── service.py
+│       ├── pipeline
+│       │   ├── __init__.py
+│       │   ├── executor.py
+│       │   ├── pipeline.py
+│       │   └── task.py
+│       ├── project.py
+│       ├── reader
+│       │   ├── __init__.py
+│       │   └── help.py
+│       ├── saver
+│       │   ├── __init__.py
+│       │   └── cloudpickle.py
+│       └── train
+│           └── __init__.py
+└── structure.txt
+
+27 directories, 85 files
