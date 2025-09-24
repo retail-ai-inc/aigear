@@ -1,4 +1,3 @@
-from aigear import aigear_logger
 from aigear import aigear_config
 from aigear.infrastructure.gcp.bucket import Bucket
 from aigear.infrastructure.gcp.build import CloudBuild
@@ -8,7 +7,10 @@ from aigear.infrastructure.gcp.pub_sub import PubSub, Subscriptions
 from aigear.infrastructure.gcp.constant import (
     entry_point_of_cloud_fuction,
 )
+from aigear.common.logger import Logging
 
+
+logger = Logging(log_name=__name__).console_logging()
 
 class Infra:
     def __init__(self):
@@ -38,7 +40,7 @@ class Infra:
             function_name=aigear_config.gcp.cloud_function.function_name,
             region=aigear_config.gcp.cloud_function.region,
             entry_point=entry_point_of_cloud_fuction,
-            topic_name = aigear_config.gcp.pub_sub.topic_name,
+            topic_name=aigear_config.gcp.pub_sub.topic_name,
             project_id=aigear_config.gcp.gcp_project_id,
             service_account=self.service_account
         )
@@ -59,51 +61,53 @@ class Infra:
     def create(self):
         service_accounts_exist = self.service_accounts.describe()
         if not service_accounts_exist:
-            aigear_logger.info(f"Service accounts({aigear_config.gcp.iam.account_name}) not found, will be created.")
+            logger.info(f"Service accounts({aigear_config.gcp.iam.account_name}) not found, will be created.")
             self.service_accounts.create()
         else:
-            aigear_logger.info(f"Service accounts({aigear_config.gcp.iam.account_name}) already exists.")
+            logger.info(f"Service accounts({aigear_config.gcp.iam.account_name}) already exists.")
 
         pubsub_exist = self.pubsub.describe()
         if not pubsub_exist:
-            aigear_logger.info(f"PubSub({aigear_config.gcp.pub_sub.topic_name}) not found, will be created.")
+            logger.info(f"PubSub({aigear_config.gcp.pub_sub.topic_name}) not found, will be created.")
             self.pubsub.create()
         else:
-            aigear_logger.info(f"PubSub({aigear_config.gcp.pub_sub.topic_name}) already exists.")
+            logger.info(f"PubSub({aigear_config.gcp.pub_sub.topic_name}) already exists.")
 
         subscriptions_exist = self.subscriptions.describe()
         if not subscriptions_exist:
-            aigear_logger.info(f"Subscriptions({aigear_config.gcp.pub_sub.sub_name}) not found, will be created.")
+            logger.info(f"Subscriptions({aigear_config.gcp.pub_sub.sub_name}) not found, will be created.")
             self.subscriptions.create()
         else:
-            aigear_logger.info(f"Subscriptions({aigear_config.gcp.pub_sub.sub_name}) already exists.")
+            logger.info(f"Subscriptions({aigear_config.gcp.pub_sub.sub_name}) already exists.")
 
         cloud_build_exist = self.cloud_build.describe()
         if not cloud_build_exist:
-            aigear_logger.info(f"Cloud build({aigear_config.gcp.cloud_build.trigger_name}) not found, will be created.")
+            logger.info(f"Cloud build({aigear_config.gcp.cloud_build.trigger_name}) not found, will be created.")
             self.cloud_build.create()
         else:
-            aigear_logger.info(f"Cloud build({aigear_config.gcp.cloud_build.trigger_name}) already exists.")
+            logger.info(f"Cloud build({aigear_config.gcp.cloud_build.trigger_name}) already exists.")
 
         cloud_function_exist = self.cloud_function.describe()
         if not cloud_function_exist:
-            aigear_logger.info(f"Cloud function({aigear_config.gcp.cloud_function.function_name}) not found, will be created.")
+            logger.info(
+                f"Cloud function({aigear_config.gcp.cloud_function.function_name}) not found, will be created.")
             self.cloud_function.deploy()
         else:
-            aigear_logger.info(f"Cloud function({aigear_config.gcp.cloud_function.function_name}) already exists.")
+            logger.info(f"Cloud function({aigear_config.gcp.cloud_function.function_name}) already exists.")
 
         model_bucket_exist = self.model_bucket.describe()
         if not model_bucket_exist:
-            aigear_logger.info(
+            logger.info(
                 f"Model bucket({aigear_config.gcp.bucket.bucket_name}) not found, will be created.")
             self.model_bucket.create()
         else:
-            aigear_logger.info(f"Model bucket({aigear_config.gcp.bucket.bucket_name}) already exists.")
+            logger.info(f"Model bucket({aigear_config.gcp.bucket.bucket_name}) already exists.")
 
         release_model_bucket_exist = self.release_model_bucket.describe()
         if not release_model_bucket_exist:
-            aigear_logger.info(
+            logger.info(
                 f"Release model bucket({aigear_config.gcp.bucket.bucket_name_for_release}) not found, will be created.")
             self.release_model_bucket.create()
         else:
-            aigear_logger.info(f"Release model bucket({aigear_config.gcp.bucket.bucket_name_for_release}) already exists.")
+            logger.info(
+                f"Release model bucket({aigear_config.gcp.bucket.bucket_name_for_release}) already exists.")
