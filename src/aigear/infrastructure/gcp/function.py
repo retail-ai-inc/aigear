@@ -1,7 +1,9 @@
 from pathlib import Path
-from aigear import aigear_logger
 from aigear.common import run_sh
+from aigear.common.logger import Logging
 
+
+logger = Logging(log_name=__name__).console_logging()
 
 class CloudFunction:
     def __init__(
@@ -20,7 +22,7 @@ class CloudFunction:
         self.source_path = Path(__file__).resolve().parent / "function"
         self.project_id = project_id
         self.service_account = service_account
-    
+
     def deploy(self):
         command = [
             "gcloud", "functions", "deploy",
@@ -35,10 +37,10 @@ class CloudFunction:
             f"--service-account={self.service_account}"
         ]
         event = run_sh(command)
-        aigear_logger.info(event)
+        logger.info(event)
         if "ERROR" in event:
-            aigear_logger.error("Error occurred while creating cloud function.")
-    
+            logger.error("Error occurred while creating cloud function.")
+
     def describe(self):
         is_exist = False
         command = [
@@ -50,13 +52,13 @@ class CloudFunction:
         event = run_sh(command)
         if f"Service {self.function_name} in region {self.region}" in event:
             is_exist = True
-            aigear_logger.info(f"Find resources: {event}")
+            logger.info(f"Find resources: {event}")
         elif "ERROR" in event and "Cannot find service" in event:
-            aigear_logger.info(f"Resource not found: {event}")
+            logger.info(f"Resource not found: {event}")
         else:
-            aigear_logger.info(event)
+            logger.info(event)
         return is_exist
-    
+
     def list(self):
         command = [
             "gcloud", "run", "services", "list",
@@ -65,8 +67,8 @@ class CloudFunction:
             f"--project={self.project_id}",
         ]
         event = run_sh(command)
-        aigear_logger.info(f"\n{event}")
-    
+        logger.info(f"\n{event}")
+
     def delete(self):
         command = [
             "gcloud", "run", "services", "delete",
@@ -75,15 +77,14 @@ class CloudFunction:
             f"--project={self.project_id}",
         ]
         event = run_sh(command, "yes\n")
-        aigear_logger.info(f"\n{event}")
+        logger.info(f"\n{event}")
 
-
-if __name__=="__main__":
+if __name__ == "__main__":
     cloud_function = CloudFunction(
         function_name="ml-test-run",
         region="asia-northeast1",
         entry_point="cronjobProcessPubSub",
-        topic_name = "ml-test-pubsub",
+        topic_name="ml-test-pubsub",
         project_id="ssc-ape-staging",
         service_account="ml-test@ssc-ape-staging.iam.gserviceaccount.com"
     )
