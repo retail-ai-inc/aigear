@@ -1,6 +1,8 @@
-from aigear import aigear_logger
 from aigear.common import run_sh
+from aigear.common.logger import Logging
 
+
+logger = Logging(log_name=__name__).console_logging()
 
 class PubSub:
     def __init__(
@@ -18,7 +20,7 @@ class PubSub:
             f"--project={self.project_id}",
         ]
         event = run_sh(command)
-        aigear_logger.info(event)
+        logger.info(event)
 
     def describe(self):
         is_exist = False
@@ -30,11 +32,11 @@ class PubSub:
         event = run_sh(command)
         if "name: projects" in event:
             is_exist = True
-            aigear_logger.info(f"Find resources: {event}")
+            logger.info(f"Find resources: {event}")
         elif "NOT_FOUND" in event:
-            aigear_logger.info(f"NOT_FOUND: Resource not found (resource={self.topic_name})")
+            logger.info(f"NOT_FOUND: Resource not found (resource={self.topic_name})")
         else:
-            aigear_logger.info(event)
+            logger.info(event)
         return is_exist
 
     def delete(self):
@@ -44,7 +46,7 @@ class PubSub:
             f"--project={self.project_id}",
         ]
         event = run_sh(command)
-        aigear_logger.info(event)
+        logger.info(event)
 
     def list(self):
         command = [
@@ -53,7 +55,7 @@ class PubSub:
             f"--project={self.project_id}",
         ]
         event = run_sh(command)
-        aigear_logger.info(event)
+        logger.info(event)
 
     def publish(self, message):
         command = [
@@ -62,8 +64,7 @@ class PubSub:
             f"--project={self.project_id}",
         ]
         event = run_sh(command)
-        aigear_logger.info(event)
-
+        logger.info(event)
 
 class Subscriptions:
     def __init__(
@@ -83,7 +84,7 @@ class Subscriptions:
             f"--project={self.project_id}",
         ]
         event = run_sh(command)
-        aigear_logger.info(event)
+        logger.info(event)
 
     def describe(self):
         is_exist = False
@@ -94,11 +95,11 @@ class Subscriptions:
         event = run_sh(command)
         if "name: projects" in event:
             is_exist = True
-            aigear_logger.info(f"Find resources: {event}")
+            logger.info(f"Find resources: {event}")
         elif "NOT_FOUND" in event:
-            aigear_logger.info(f"NOT_FOUND: Resource not found (resource={self.sub_name})")
+            logger.info(f"NOT_FOUND: Resource not found (resource={self.sub_name})")
         else:
-            aigear_logger.info(event)
+            logger.info(event)
         return is_exist
 
     def delete(self):
@@ -107,7 +108,7 @@ class Subscriptions:
             f"--project={self.project_id}",
         ]
         event = run_sh(command)
-        aigear_logger.info(event)
+        logger.info(event)
 
     def list(self):
         command = [
@@ -115,7 +116,7 @@ class Subscriptions:
             f"--project={self.project_id}",
         ]
         event = run_sh(command)
-        aigear_logger.info(event)
+        logger.info(event)
 
     def pull(self):
         command = [
@@ -125,9 +126,9 @@ class Subscriptions:
             f"--project={self.project_id}",
         ]
         event = run_sh(command)
-        aigear_logger.info(event)
+        logger.info(event)
 
-if __name__=="__main__":
+if __name__ == "__main__":
     project_id = "ssc-ape-staging"
     topic_name = "ml-test-pubsub"
     sub_name = f"{topic_name}-subscriptions"
