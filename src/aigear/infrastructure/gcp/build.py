@@ -1,5 +1,8 @@
-from aigear import aigear_logger
 from aigear.common import run_sh
+from aigear.common.logger import Logging
+
+
+logger = Logging(log_name=__name__).console_logging()
 
 
 class CloudBuild:
@@ -39,7 +42,7 @@ class CloudBuild:
             f"--project={self.project_id}",
         ]
         event = run_sh(command)
-        aigear_logger.info(event)
+        logger.info(event)
 
     def describe(self):
         is_exist = False
@@ -50,7 +53,7 @@ class CloudBuild:
             f"--project={self.project_id}",
         ]
         event = run_sh(command)
-        aigear_logger.info(event)
+        logger.info(event)
         if self.trigger_name in event and "ERROR" not in event:
             is_exist = True
         return is_exist
