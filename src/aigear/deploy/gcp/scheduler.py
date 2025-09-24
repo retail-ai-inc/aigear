@@ -1,7 +1,9 @@
 import json
-from aigear import aigear_logger
 from aigear.common import run_sh
+from aigear.common.logger import Logging
 
+
+logger = Logging(log_name=__name__).console_logging()
 
 class Scheduler:
     def __init__(
@@ -32,9 +34,9 @@ class Scheduler:
             "--time-zone", self.time_zone,
         ]
         event = run_sh(command)
-        aigear_logger.info(event)
+        logger.info(event)
         if "ERROR" in event:
-            aigear_logger.info("Error occurred while creating cloud function.")
+            logger.info("Error occurred while creating cloud function.")
 
     def delete(self):
         command = [
@@ -43,7 +45,7 @@ class Scheduler:
             "--location", self.location,
         ]
         event = run_sh(command, "yes\n")
-        aigear_logger.info(event)
+        logger.info(event)
 
     def describe(self):
         is_exist = False
@@ -53,7 +55,7 @@ class Scheduler:
             "--location", self.location,
         ]
         event = run_sh(command)
-        aigear_logger.info(event)
+        logger.info(event)
         if "ENABLED" in event:
             is_exist = True
         return is_exist
@@ -65,7 +67,7 @@ class Scheduler:
             f"--filter={self.name}",
         ]
         event = run_sh(command)
-        aigear_logger.info(f"\n{event}")
+        logger.info(f"\n{event}")
 
     def run(self):
         command = [
@@ -75,9 +77,9 @@ class Scheduler:
         ]
         event = run_sh(command)
         if event:
-            aigear_logger.info(event)
+            logger.info(event)
         else:
-            aigear_logger.info("Running successfully, executing job.")
+            logger.info("Running successfully, executing job.")
 
     def pause(self):
         command = [
@@ -86,7 +88,7 @@ class Scheduler:
             "--location", self.location,
         ]
         event = run_sh(command)
-        aigear_logger.info(event)
+        logger.info(event)
 
     def resume(self):
         command = [
@@ -95,7 +97,7 @@ class Scheduler:
             "--location", self.location,
         ]
         event = run_sh(command)
-        aigear_logger.info(event)
+        logger.info(event)
 
     @staticmethod
     def update(
@@ -115,9 +117,9 @@ class Scheduler:
             "--message-body", message_body,
         ]
         event = run_sh(command)
-        aigear_logger.info(event)
+        logger.info(event)
         if "ERROR" in event:
-            aigear_logger.info("Error occurred while creating cloud function.")
+            logger.info("Error occurred while creating cloud function.")
 
 
 if __name__ == "__main__":
@@ -151,5 +153,5 @@ if __name__ == "__main__":
     )
     is_exist = scheduler.describe()
     print(is_exist)
-    if not is_exist:
-        scheduler.create()
+    # if not is_exist:
+    #     scheduler.create()
