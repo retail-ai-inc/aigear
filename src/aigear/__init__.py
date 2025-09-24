@@ -8,6 +8,9 @@ from .common import (
 )
 from aigear.infrastructure import Infra
 from aigear.deploy.gcp import Scheduler
+from aigear.common import AigearConfig
+
+AigearConfig.load()
 
 __all__ = [
     "Logging",
