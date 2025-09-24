@@ -1,6 +1,8 @@
-from aigear import aigear_logger
 from aigear.common import run_sh
+from aigear.common.logger import Logging
 
+
+logger = Logging(log_name=__name__).console_logging()
 
 class Bucket:
     def __init__(
@@ -22,7 +24,7 @@ class Bucket:
             f"--project={self.project_id}",
         ]
         event = run_sh(command)
-        aigear_logger.info(event)
+        logger.info(event)
 
     def describe(self):
         is_exist = False
@@ -32,7 +34,7 @@ class Bucket:
             f"--project={self.project_id}",
         ]
         event = run_sh(command)
-        aigear_logger.info(event)
+        logger.info(event)
         if self.bucket_gs in event and "ERROR" not in event:
             is_exist = True
         return is_exist
@@ -44,7 +46,7 @@ class Bucket:
             f"--project={self.project_id}",
         ]
         event = run_sh(command)
-        aigear_logger.info(f"\n{event}")
+        logger.info(f"\n{event}")
 
     def delete(self):
         command = [
@@ -53,8 +55,7 @@ class Bucket:
             f"--project={self.project_id}",
         ]
         event = run_sh(command)
-        aigear_logger.info(event)
-
+        logger.info(event)
 
 if __name__ == "__main__":
     project_id = "ssc-ape-staging"
