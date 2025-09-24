@@ -29,8 +29,8 @@ class Project:
         (project_path / "cloudbuild").mkdir(exist_ok=True)
         (project_path / "docs").mkdir(exist_ok=True)
         (project_path / "kms").mkdir(exist_ok=True)
-        (project_path / "scr").mkdir(exist_ok=True)
-        (project_path / "scr" / "pipelines").mkdir(exist_ok=True)
+        (project_path / "src").mkdir(exist_ok=True)
+        (project_path / "src" / "pipelines").mkdir(exist_ok=True)
 
         (project_path / ".gitignore").touch(exist_ok=True)
         (project_path / "docker-compose.yml").touch(exist_ok=True)

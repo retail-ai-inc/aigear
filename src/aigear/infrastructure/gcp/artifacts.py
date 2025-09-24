@@ -54,4 +54,3 @@ if __name__ == "__main__":
     )
     repository_exist = repositories.describe()
     print("repository: ", repository_exist)
-    
