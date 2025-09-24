@@ -1,6 +1,8 @@
-from aigear import aigear_logger
 from aigear.common import run_sh
+from aigear.common.logger import Logging
 
+
+logger = Logging(log_name=__name__).console_logging()
 
 class ServiceAccounts:
     def __init__(
@@ -29,9 +31,9 @@ class ServiceAccounts:
                 command.append(f"--display-name={self.display_name}")
             event = run_sh(command)
             if event == "":
-                aigear_logger.info("The currently logged in GCP account does not have owner privileges.")
+                logger.info("The currently logged in GCP account does not have owner privileges.")
             else:
-                aigear_logger.info(event)
+                logger.info(event)
 
     def delete(self):
         command = [
@@ -41,9 +43,9 @@ class ServiceAccounts:
         ]
         event = run_sh(command)
         if event == "":
-            aigear_logger.info("The currently logged in GCP account does not have owner privileges.")
+            logger.info("The currently logged in GCP account does not have owner privileges.")
         else:
-            aigear_logger.info(event)
+            logger.info(event)
 
     def add_iam_policy_binding(self, roles: list):
         for role in roles:
@@ -54,9 +56,9 @@ class ServiceAccounts:
             ]
             event = run_sh(command)
             if "Updated IAM policy" in event:
-                aigear_logger.info(f"✅Successfully granted: {role}")
+                logger.info(f"✅Successfully granted: {role}")
             else:
-                aigear_logger.error(f"❌Failed: {event}")
+                logger.error(f"❌Failed: {event}")
 
     def describe(self):
         is_exist = False
@@ -66,11 +68,11 @@ class ServiceAccounts:
         event = run_sh(command)
         if "name: projects" in event:
             is_exist = True
-            aigear_logger.info(f"Find resources: {event}")
+            logger.info(f"Find resources: {event}")
         elif "NOT_FOUND" in event:
-            aigear_logger.info(f"NOT_FOUND: Resource not found (resource={self.sa_email})")
+            logger.info(f"NOT_FOUND: Resource not found (resource={self.sa_email})")
         else:
-            aigear_logger.info(event)
+            logger.info(event)
         return is_exist
 
     def check_iam(self):
@@ -86,11 +88,10 @@ class ServiceAccounts:
         if "roles/owner" in event:
             is_owner = True
         elif event == "":
-            aigear_logger.info("The currently logged in GCP account does not have owner privileges.")
+            logger.info("The currently logged in GCP account does not have owner privileges.")
         else:
-            aigear_logger.info(event)
+            logger.info(event)
         return is_owner
-
 
 if __name__ == "__main__":
     roles = [
