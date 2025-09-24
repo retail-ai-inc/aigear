@@ -9,7 +9,7 @@ def get_argument():
     parser.add_argument("--name", default="template_project",
                         help="Project name.")
     args = parser.parse_args()
-    return args.tag
+    return args
 
 
 def project_init():
