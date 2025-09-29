@@ -15,6 +15,18 @@ Aigear requires Python 3.8 or later. To install the latest or upgrade to the lat
 pip install -U aigear
 ```
 
+For enhanced logging functionality, install optional dependencies:
+```bash
+# Core logging enhancement (recommended)
+pip install psutil cloudpickle
+
+# Full logging features including cloud integration
+pip install psutil pydantic google-cloud-logging scikit-learn
+
+# Or use the automated installer
+python install_deps.py
+```
+
 With just two decorators(`@task` and `@workflow`), you can create a pipeline.
 Please refer to `/aigear/example/pipeline`.
 
