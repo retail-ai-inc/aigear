@@ -1,9 +1,16 @@
 import json
 from aigear.common import run_sh
-from aigear.common.logger import Logging
+from aigear.common import create_stage_logger, PipelineStage
 
 
-logger = Logging(log_name=__name__).console_logging()
+# Use deployment stage logger
+deployment_logger = create_stage_logger(
+    stage=PipelineStage.DEPLOYMENT,
+    module_name=__name__,
+    cpu_count=2,
+    memory_limit="2GB",
+    enable_cloud_logging=True
+)
 
 class Scheduler:
     def __init__(
@@ -23,81 +30,98 @@ class Scheduler:
         self.time_zone = time_zone
 
     def create(self):
-        message_body = json.dumps(self.message)
-        command = [
-            "gcloud", "scheduler", "jobs", "create", "pubsub",
-            self.name,
-            "--location", self.location,
-            "--schedule", self.schedule,
-            "--topic", self.topic_name,
-            "--message-body", message_body,
-            "--time-zone", self.time_zone,
-        ]
-        event = run_sh(command)
-        logger.info(event)
-        if "ERROR" in event:
-            logger.info("Error occurred while creating cloud function.")
+        with deployment_logger.stage_context() as logger:
+            logger.info(f"Creating scheduler job: {self.name}")
+            message_body = json.dumps(self.message)
+            command = [
+                "gcloud", "scheduler", "jobs", "create", "pubsub",
+                self.name,
+                "--location", self.location,
+                "--schedule", self.schedule,
+                "--topic", self.topic_name,
+                "--message-body", message_body,
+                "--time-zone", self.time_zone,
+            ]
+            event = run_sh(command)
+            logger.info(f"Scheduler creation result: {event}")
+            if "ERROR" in event:
+                logger.error("Error occurred while creating scheduler job.")
 
     def delete(self):
-        command = [
-            "gcloud", "scheduler", "jobs", "delete",
-            self.name,
-            "--location", self.location,
-        ]
-        event = run_sh(command, "yes\n")
-        logger.info(event)
+        with deployment_logger.stage_context() as logger:
+            logger.warning(f"Deleting scheduler job: {self.name}")
+            command = [
+                "gcloud", "scheduler", "jobs", "delete",
+                self.name,
+                "--location", self.location,
+            ]
+            event = run_sh(command, "yes\n")
+            logger.info(f"Scheduler deletion result: {event}")
 
     def describe(self):
-        is_exist = False
-        command = [
-            "gcloud", "scheduler", "jobs", "describe",
-            self.name,
-            "--location", self.location,
-        ]
-        event = run_sh(command)
-        logger.info(event)
-        if "ENABLED" in event:
-            is_exist = True
-        return is_exist
+        with deployment_logger.stage_context() as logger:
+            logger.info(f"Checking scheduler job: {self.name}")
+            is_exist = False
+            command = [
+                "gcloud", "scheduler", "jobs", "describe",
+                self.name,
+                "--location", self.location,
+            ]
+            event = run_sh(command)
+            logger.info(f"Scheduler describe result: {event}")
+            if "ENABLED" in event:
+                is_exist = True
+                logger.info(f"Scheduler job {self.name} is enabled")
+            else:
+                logger.warning(f"Scheduler job {self.name} is not enabled or doesn't exist")
+            return is_exist
 
     def list(self):
-        command = [
-            "gcloud", "scheduler", "jobs", "list",
-            "--location", self.location,
-            f"--filter={self.name}",
-        ]
-        event = run_sh(command)
-        logger.info(f"\n{event}")
+        with deployment_logger.stage_context() as logger:
+            logger.info(f"Listing scheduler jobs for: {self.name}")
+            command = [
+                "gcloud", "scheduler", "jobs", "list",
+                "--location", self.location,
+                f"--filter={self.name}",
+            ]
+            event = run_sh(command)
+            logger.info(f"Scheduler list result:\n{event}")
 
     def run(self):
-        command = [
-            "gcloud", "scheduler", "jobs", "run",
-            self.name,
-            "--location", self.location,
-        ]
-        event = run_sh(command)
-        if event:
-            logger.info(event)
-        else:
-            logger.info("Running successfully, executing job.")
+        with deployment_logger.stage_context() as logger:
+            logger.info(f"Running scheduler job: {self.name}")
+            command = [
+                "gcloud", "scheduler", "jobs", "run",
+                self.name,
+                "--location", self.location,
+            ]
+            event = run_sh(command)
+            if event:
+                logger.info(f"Scheduler run result: {event}")
+            else:
+                logger.info("Running successfully, executing job.")
 
     def pause(self):
-        command = [
-            "gcloud", "scheduler", "jobs", "pause",
-            self.name,
-            "--location", self.location,
-        ]
-        event = run_sh(command)
-        logger.info(event)
+        with deployment_logger.stage_context() as logger:
+            logger.info(f"Pausing scheduler job: {self.name}")
+            command = [
+                "gcloud", "scheduler", "jobs", "pause",
+                self.name,
+                "--location", self.location,
+            ]
+            event = run_sh(command)
+            logger.info(f"Scheduler pause result: {event}")
 
     def resume(self):
-        command = [
-            "gcloud", "scheduler", "jobs", "resume",
-            self.name,
-            "--location", self.location,
-        ]
-        event = run_sh(command)
-        logger.info(event)
+        with deployment_logger.stage_context() as logger:
+            logger.info(f"Resuming scheduler job: {self.name}")
+            command = [
+                "gcloud", "scheduler", "jobs", "resume",
+                self.name,
+                "--location", self.location,
+            ]
+            event = run_sh(command)
+            logger.info(f"Scheduler resume result: {event}")
 
     @staticmethod
     def update(
@@ -107,19 +131,22 @@ class Scheduler:
         topic_name,
         message,
     ):
-        message_body = json.dumps(message)
-        command = [
-            "gcloud", "scheduler", "jobs", "update", "pubsub",
-            name,
-            "--location", location,
-            "--schedule", schedule,
-            "--topic", topic_name,
-            "--message-body", message_body,
-        ]
-        event = run_sh(command)
-        logger.info(event)
-        if "ERROR" in event:
-            logger.info("Error occurred while creating cloud function.")
+        # Static methods require the creation of a separate logger instance
+        with deployment_logger.stage_context() as logger:
+            logger.info(f"Updating scheduler job: {name}")
+            message_body = json.dumps(message)
+            command = [
+                "gcloud", "scheduler", "jobs", "update", "pubsub",
+                name,
+                "--location", location,
+                "--schedule", schedule,
+                "--topic", topic_name,
+                "--message-body", message_body,
+            ]
+            event = run_sh(command)
+            logger.info(f"Scheduler update result: {event}")
+            if "ERROR" in event:
+                logger.error("Error occurred while updating scheduler job.")
 
 
 if __name__ == "__main__":

@@ -1,16 +1,30 @@
 import importlib
-import logging
 import argparse
 import os
+from ..common.stage_logger import create_stage_logger, PipelineStage
+
+# Use preprocessing stage logger for task execution
+task_logger = create_stage_logger(
+    stage=PipelineStage.PREPROCESSING,
+    module_name=__name__,
+    cpu_count=1,
+    memory_limit="1GB",
+    enable_cloud_logging=False
+)
 
 def run_step(pipeline_version, step):
-    os.makedirs(f'output/{pipeline_version}', exist_ok=True)
-    module_name = f"pipelines.{step}"
-    try:
-        module = importlib.import_module(module_name)
-        module.main(pipeline_version)
-    except Exception as e:
-        logging.error(f"Error while executing {module_name}: {e}")
+    with task_logger.stage_context() as logger:
+        logger.info(f"Starting pipeline step: {step} (version: {pipeline_version})")
+        os.makedirs(f'output/{pipeline_version}', exist_ok=True)
+        module_name = f"pipelines.{step}"
+        try:
+            logger.info(f"Loading module: {module_name}")
+            module = importlib.import_module(module_name)
+            module.main(pipeline_version)
+            logger.info(f"Pipeline step {step} completed successfully")
+        except Exception as e:
+            logger.error(f"Error while executing {module_name}: {e}")
+            raise
 
 def get_argument():
     parser = argparse.ArgumentParser(

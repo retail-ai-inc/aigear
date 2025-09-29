@@ -3,35 +3,71 @@ from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score
 from aigear.pipeline import workflow, task
+from aigear.common import create_stage_logger, PipelineStage
 import pickle
 import json
 import os
 
 
+# Create stage-aware loggers
+training_logger = create_stage_logger(
+    stage=PipelineStage.TRAINING,
+    module_name=__name__,
+    cpu_count=2,
+    memory_limit="2GB",
+    gpu_enabled=False
+)
+
+inference_logger = create_stage_logger(
+    stage=PipelineStage.INFERENCE,
+    module_name=__name__,
+    cpu_count=1,
+    memory_limit="1GB",
+    gpu_enabled=False
+)
+
+
 @task
 def load_data():
-    iris = load_iris()
-    return iris
+    with training_logger.stage_context() as logger:
+        logger.info("Loading Iris dataset")
+        iris = load_iris()
+        logger.info(f"Dataset loaded: {iris.data.shape[0]} samples, {iris.data.shape[1]} features")
+        return iris
 
 
 @task
 def split_dataset(iris):
-    x_train, x_test, y_train, y_test = train_test_split(iris.data, iris.target, test_size=0.2, random_state=42)
-    return x_train, x_test, y_train, y_test
+    with training_logger.stage_context() as logger:
+        logger.info("Splitting dataset into train/test")
+        x_train, x_test, y_train, y_test = train_test_split(iris.data, iris.target, test_size=0.2, random_state=42)
+        logger.info(f"Train set: {x_train.shape[0]} samples, Test set: {x_test.shape[0]} samples")
+        return x_train, x_test, y_train, y_test
 
 
 @task
 def fit_model(x_train, y_train):
-    clf = LogisticRegression(random_state=0, max_iter=1000, solver="lbfgs")
-    model = clf.fit(x_train, y_train)
-    return model
+    with training_logger.stage_context() as logger:
+        logger.info("Starting model training")
+        clf = LogisticRegression(random_state=0, max_iter=1000, solver="lbfgs")
+        model = clf.fit(x_train, y_train)
+        logger.info("Model training completed")
+        return model
 
 
 @task
 def evaluate(clf, x_test, y_test):
-    y_pred = clf.predict(x_test)
-    accuracy = accuracy_score(y_test, y_pred)
-    return y_pred, accuracy
+    with inference_logger.stage_context() as logger:
+        logger.info("Starting model evaluation")
+        y_pred = clf.predict(x_test)
+        accuracy = accuracy_score(y_test, y_pred)
+        logger.log_prediction(
+            latency_ms=1.0,  # 模拟预测时间
+            batch_size=len(x_test),
+            confidence=accuracy
+        )
+        logger.info(f"Model accuracy: {accuracy:.4f}")
+        return y_pred, accuracy
 
 
 @task

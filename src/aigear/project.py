@@ -1,5 +1,15 @@
 from pathlib import Path
 import shutil
+from .common.stage_logger import create_stage_logger, PipelineStage
+
+# Use deployment stage logger for project initialization
+project_logger = create_stage_logger(
+    stage=PipelineStage.DEPLOYMENT,
+    module_name=__name__,
+    cpu_count=1,
+    memory_limit="1GB",
+    enable_cloud_logging=False
+)
 
 
 class GCPInfra:
@@ -22,29 +32,41 @@ class Project:
         """
         Initialize a template according to the project name
         """
+        with project_logger.stage_context() as logger:
+            logger.info(f"Initializing project: {self.name}")
 
-        project_path = Path.cwd() / self.name
-        project_path.mkdir(parents=True, exist_ok=True)
+            project_path = Path.cwd() / self.name
+            project_path.mkdir(parents=True, exist_ok=True)
+            logger.info(f"Created project directory: {project_path}")
 
-        (project_path / "cloudbuild").mkdir(exist_ok=True)
-        (project_path / "docs").mkdir(exist_ok=True)
-        (project_path / "kms").mkdir(exist_ok=True)
-        (project_path / "src").mkdir(exist_ok=True)
-        (project_path / "src" / "pipelines").mkdir(exist_ok=True)
+            # Create directory structure
+            directories = ["cloudbuild", "docs", "kms", "src", "src/pipelines"]
+            for dir_name in directories:
+                (project_path / dir_name).mkdir(parents=True, exist_ok=True)
+            logger.info("Created project directory structure")
 
-        (project_path / ".gitignore").touch(exist_ok=True)
-        (project_path / "docker-compose.yml").touch(exist_ok=True)
-        (project_path / "Dockerfile").touch(exist_ok=True)
-        (project_path / "env.sample.json").touch(exist_ok=True)
-        (project_path / "README.md").touch(exist_ok=True)
-        (project_path / "requirements.txt").touch(exist_ok=True)
+            # Create files
+            files = [".gitignore", "docker-compose.yml", "Dockerfile",
+                    "env.sample.json", "README.md", "requirements.txt"]
+            for file_name in files:
+                (project_path / file_name).touch(exist_ok=True)
+            logger.info("Created project template files")
 
-        self._print_tree(project_path)
+            logger.info("Project structure:")
+            self._print_tree(project_path)
 
-        self._copy_file(project_path / "cloudbuild" / "cloudbuild.yaml")
-        self._copy_file(project_path / "docker-compose.yml")
-        self._copy_file(project_path / "Dockerfile")
-        self._copy_file(project_path / "env.sample.json")
+            # Copy template files
+            template_files = [
+                project_path / "cloudbuild" / "cloudbuild.yaml",
+                project_path / "docker-compose.yml",
+                project_path / "Dockerfile",
+                project_path / "env.sample.json"
+            ]
+            for file_path in template_files:
+                self._copy_file(file_path)
+            logger.info("Copied template files")
+
+            logger.info(f"Project {self.name} initialization completed")
 
     def _print_tree(self, path: Path, prefix=""):
         if path.is_dir():

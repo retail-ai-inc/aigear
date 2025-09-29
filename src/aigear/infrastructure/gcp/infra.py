@@ -7,10 +7,16 @@ from aigear.infrastructure.gcp.pub_sub import PubSub, Subscriptions
 from aigear.infrastructure.gcp.constant import (
     entry_point_of_cloud_fuction,
 )
-from aigear.common.logger import Logging
+from aigear.common.stage_logger import create_stage_logger, PipelineStage
 
-
-logger = Logging(log_name=__name__).console_logging()
+# Use deployment stage logger for infrastructure management
+deployment_logger = create_stage_logger(
+    stage=PipelineStage.DEPLOYMENT,
+    module_name=__name__,
+    cpu_count=2,
+    memory_limit="2GB",
+    enable_cloud_logging=True
+)
 
 class Infra:
     def __init__(self):
@@ -60,55 +66,60 @@ class Infra:
         )
 
     def create(self):
-        service_accounts_exist = self.service_accounts.describe()
-        if not service_accounts_exist:
-            logger.info(f"Service accounts({self.aigear_config.gcp.iam.account_name}) not found, will be created.")
-            self.service_accounts.create()
-        else:
-            logger.info(f"Service accounts({self.aigear_config.gcp.iam.account_name}) already exists.")
+        with deployment_logger.stage_context() as logger:
+            logger.info("Starting GCP infrastructure deployment")
 
-        pubsub_exist = self.pubsub.describe()
-        if not pubsub_exist:
-            logger.info(f"PubSub({self.aigear_config.gcp.pub_sub.topic_name}) not found, will be created.")
-            self.pubsub.create()
-        else:
-            logger.info(f"PubSub({self.aigear_config.gcp.pub_sub.topic_name}) already exists.")
+            service_accounts_exist = self.service_accounts.describe()
+            if not service_accounts_exist:
+                logger.info(f"Service accounts({self.aigear_config.gcp.iam.account_name}) not found, will be created.")
+                self.service_accounts.create()
+            else:
+                logger.info(f"Service accounts({self.aigear_config.gcp.iam.account_name}) already exists.")
 
-        subscriptions_exist = self.subscriptions.describe()
-        if not subscriptions_exist:
-            logger.info(f"Subscriptions({self.aigear_config.gcp.pub_sub.sub_name}) not found, will be created.")
-            self.subscriptions.create()
-        else:
-            logger.info(f"Subscriptions({self.aigear_config.gcp.pub_sub.sub_name}) already exists.")
+            pubsub_exist = self.pubsub.describe()
+            if not pubsub_exist:
+                logger.info(f"PubSub({self.aigear_config.gcp.pub_sub.topic_name}) not found, will be created.")
+                self.pubsub.create()
+            else:
+                logger.info(f"PubSub({self.aigear_config.gcp.pub_sub.topic_name}) already exists.")
 
-        cloud_build_exist = self.cloud_build.describe()
-        if not cloud_build_exist:
-            logger.info(f"Cloud build({self.aigear_config.gcp.cloud_build.trigger_name}) not found, will be created.")
-            self.cloud_build.create()
-        else:
-            logger.info(f"Cloud build({self.aigear_config.gcp.cloud_build.trigger_name}) already exists.")
+            subscriptions_exist = self.subscriptions.describe()
+            if not subscriptions_exist:
+                logger.info(f"Subscriptions({self.aigear_config.gcp.pub_sub.sub_name}) not found, will be created.")
+                self.subscriptions.create()
+            else:
+                logger.info(f"Subscriptions({self.aigear_config.gcp.pub_sub.sub_name}) already exists.")
 
-        cloud_function_exist = self.cloud_function.describe()
-        if not cloud_function_exist:
-            logger.info(
-                f"Cloud function({self.aigear_config.gcp.cloud_function.function_name}) not found, will be created.")
-            self.cloud_function.deploy()
-        else:
-            logger.info(f"Cloud function({self.aigear_config.gcp.cloud_function.function_name}) already exists.")
+            cloud_build_exist = self.cloud_build.describe()
+            if not cloud_build_exist:
+                logger.info(f"Cloud build({self.aigear_config.gcp.cloud_build.trigger_name}) not found, will be created.")
+                self.cloud_build.create()
+            else:
+                logger.info(f"Cloud build({self.aigear_config.gcp.cloud_build.trigger_name}) already exists.")
 
-        model_bucket_exist = self.model_bucket.describe()
-        if not model_bucket_exist:
-            logger.info(
-                f"Model bucket({self.aigear_config.gcp.bucket.bucket_name}) not found, will be created.")
-            self.model_bucket.create()
-        else:
-            logger.info(f"Model bucket({self.aigear_config.gcp.bucket.bucket_name}) already exists.")
+            cloud_function_exist = self.cloud_function.describe()
+            if not cloud_function_exist:
+                logger.info(
+                    f"Cloud function({self.aigear_config.gcp.cloud_function.function_name}) not found, will be created.")
+                self.cloud_function.deploy()
+            else:
+                logger.info(f"Cloud function({self.aigear_config.gcp.cloud_function.function_name}) already exists.")
 
-        release_model_bucket_exist = self.release_model_bucket.describe()
-        if not release_model_bucket_exist:
-            logger.info(
-                f"Release model bucket({self.aigear_config.gcp.bucket.bucket_name_for_release}) not found, will be created.")
-            self.release_model_bucket.create()
-        else:
-            logger.info(
-                f"Release model bucket({self.aigear_config.gcp.bucket.bucket_name_for_release}) already exists.")
+            model_bucket_exist = self.model_bucket.describe()
+            if not model_bucket_exist:
+                logger.info(
+                    f"Model bucket({self.aigear_config.gcp.bucket.bucket_name}) not found, will be created.")
+                self.model_bucket.create()
+            else:
+                logger.info(f"Model bucket({self.aigear_config.gcp.bucket.bucket_name}) already exists.")
+
+            release_model_bucket_exist = self.release_model_bucket.describe()
+            if not release_model_bucket_exist:
+                logger.info(
+                    f"Release model bucket({self.aigear_config.gcp.bucket.bucket_name_for_release}) not found, will be created.")
+                self.release_model_bucket.create()
+            else:
+                logger.info(
+                    f"Release model bucket({self.aigear_config.gcp.bucket.bucket_name_for_release}) already exists.")
+
+            logger.info("GCP infrastructure deployment completed")
