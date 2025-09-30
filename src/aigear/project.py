@@ -1,6 +1,6 @@
 from pathlib import Path
 import shutil
-from .common.stage_logger import create_stage_logger, PipelineStage
+from .common.logger import create_stage_logger, PipelineStage
 
 # Use deployment stage logger for project initialization
 project_logger = create_stage_logger(

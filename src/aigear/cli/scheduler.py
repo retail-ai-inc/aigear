@@ -3,7 +3,7 @@ import json
 import argparse
 from aigear.deploy.gcp import Scheduler
 from aigear.common.config import read_config
-from aigear.common.stage_logger import create_stage_logger, PipelineStage
+from aigear.common.logger import create_stage_logger, PipelineStage
 
 # Use deployment stage logger for scheduler CLI operations
 scheduler_cli_logger = create_stage_logger(

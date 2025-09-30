@@ -1,7 +1,7 @@
 import importlib
 import argparse
 import os
-from ..common.stage_logger import create_stage_logger, PipelineStage
+from ..common.logger import create_stage_logger, PipelineStage
 
 # Use preprocessing stage logger for task execution
 task_logger = create_stage_logger(

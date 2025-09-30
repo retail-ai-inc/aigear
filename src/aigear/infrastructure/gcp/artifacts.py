@@ -1,5 +1,5 @@
 from aigear.common import run_sh
-from aigear.common.stage_logger import create_stage_logger, PipelineStage
+from aigear.common.logger import create_stage_logger, PipelineStage
 
 
 # Use deployment stage logger

@@ -2,7 +2,7 @@ from pymongo import MongoClient
 from pymongoarrow.monkey import patch_all
 import weakref
 from ..common.secretmanager import SecretManager
-from ..common.stage_logger import create_stage_logger, PipelineStage
+from ..common.logger import create_stage_logger, PipelineStage
 
 patch_all()
 

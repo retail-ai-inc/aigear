@@ -1,5 +1,5 @@
 from google.cloud import secretmanager_v1
-from .stage_logger import create_stage_logger, PipelineStage
+from .logger import create_stage_logger, PipelineStage
 
 # Use preprocessing stage logger for secret management
 secret_logger = create_stage_logger(

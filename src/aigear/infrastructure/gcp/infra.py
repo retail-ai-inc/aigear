@@ -7,7 +7,7 @@ from aigear.infrastructure.gcp.pub_sub import PubSub, Subscriptions
 from aigear.infrastructure.gcp.constant import (
     entry_point_of_cloud_fuction,
 )
-from aigear.common.stage_logger import create_stage_logger, PipelineStage
+from aigear.common.logger import create_stage_logger, PipelineStage
 
 # Use deployment stage logger for infrastructure management
 deployment_logger = create_stage_logger(

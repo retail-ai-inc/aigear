@@ -2,7 +2,7 @@ import json
 import os
 from typing import Optional
 from aigear.common.schema.config_schema import Config
-from aigear.common.stage_logger import create_stage_logger, PipelineStage
+from aigear.common.logger import create_stage_logger, PipelineStage
 
 
 # Configuration module uses preprocessing stage logger (configuration usually used in initialization stage)
