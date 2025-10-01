@@ -64,7 +64,7 @@ def generate_schema_for_json(
     return None
 
 if __name__=="__main__":
-    with open("./env.json", "r", encoding="utf-8") as f:
+    with open("../../../env.json", "r", encoding="utf-8") as f:
         cfg = json.load(f)
 
     output_path = os.path.join(os.getcwd(), "./schema/config_schema.py")

@@ -15,7 +15,7 @@ def read_config(env_path) -> Optional[Config]:
     with open(env_path, "r", encoding="utf-8") as f:
         cfg = json.load(f)
 
-    return Config(**cfg)
+    return Config(**cfg["aigear"])
 
 class AigearConfig:
     _config = None
