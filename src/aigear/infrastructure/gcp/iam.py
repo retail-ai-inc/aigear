@@ -47,12 +47,21 @@ class ServiceAccounts:
         else:
             logger.info(event)
 
-    def add_iam_policy_binding(self, roles: list):
+    def add_iam_policy_binding(self):
+        roles = [
+            "roles/storage.admin",
+            "roles/compute.admin",
+            "roles/pubsub.admin",
+            "roles/artifactregistry.reader",
+            "roles/secretmanager.secretAccessor"
+        ]
+
         for role in roles:
             command = [
                 "gcloud", "projects", "add-iam-policy-binding", self.project_id,
                 f"--member=serviceAccount:{self.sa_email}",
                 f"--role={role}",
+                "--condition=None"
             ]
             event = run_sh(command)
             if "Updated IAM policy" in event:
@@ -94,15 +103,8 @@ class ServiceAccounts:
         return is_owner
 
 if __name__ == "__main__":
-    roles = [
-        "roles/storage.admin",
-        "roles/compute.admin",
-        "roles/pubsub.admin",
-        "roles/artifactregistry.reader",
-        "roles/secretmanager.secretAccessor"
-    ]
     service_accounts = ServiceAccounts(
         project_id="ssc-ape-staging",
-        account_name="ml-test",
+        account_name="test-pipelines",
     )
-    service_accounts.add_iam_policy_binding(roles)
+    service_accounts.add_iam_policy_binding()
