@@ -1,6 +1,8 @@
+import os
 import json
 from aigear.common import run_sh
 from aigear.common.logger import Logging
+from aigear.common.config import AigearConfig
 
 
 logger = Logging(log_name=__name__).console_logging()
@@ -121,6 +123,42 @@ class Scheduler:
         if "ERROR" in event:
             logger.info("Error occurred while creating cloud function.")
 
+def create_scheduler(pipeline_version, step_names):
+    def read_pipelines_config():
+        pipelines_config_path = os.path.join(os.getcwd(), "env.json")
+        with open(pipelines_config_path, "r", encoding="utf-8") as f:
+            pipelines_config = json.load(f)
+        return pipelines_config
+
+    aigear_config = AigearConfig.get_config()
+    pipelines_config = read_pipelines_config()
+    pipeline_config = pipelines_config.get("pipelines", {}).get(pipeline_version, {})
+
+    scheduler_messages = []
+    for step_name in step_names:
+        step_config = pipeline_config.get(step_name, {})
+        resources = step_config.get("resources", {})
+        task_run_parameters = step_config.get("task_run_parameters", {})
+        message = {**resources, **task_run_parameters}
+        scheduler_messages.append(message)
+
+    scheduler_config = pipeline_config.get("scheduler", {})
+    scheduler_name = scheduler_config.get("name")
+    scheduler_location = scheduler_config.get("location")
+    scheduler_schedule = scheduler_config.get("schedule")
+    scheduler_time_zone = scheduler_config.get("time_zone")
+    scheduler = Scheduler(
+        name=scheduler_name,
+        location=scheduler_location,
+        schedule=scheduler_schedule,
+        topic_name=aigear_config.gcp.pub_sub.topic_name,
+        message=scheduler_messages,
+        time_zone=scheduler_time_zone,
+    )
+    is_exist = scheduler.describe()
+    print(is_exist)
+    if not is_exist:
+        scheduler.create()
 
 if __name__ == "__main__":
     message = [

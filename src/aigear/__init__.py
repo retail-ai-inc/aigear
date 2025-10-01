@@ -7,10 +7,9 @@ from .common import (
     SecretManager,
 )
 from aigear.infrastructure import Infra
-from aigear.deploy.gcp import Scheduler
+from aigear.deploy.gcp.scheduler import create_scheduler
 from aigear.common import AigearConfig
 
-AigearConfig.load()
 
 __all__ = [
     "Logging",
