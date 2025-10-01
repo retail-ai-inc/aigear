@@ -20,14 +20,13 @@ class BucketClient(BucketABC):
         if hasattr(self, "bucket_client"):
             self.bucket_client.close()
 
-    def download(self, bucket_blob_name, local_blob_name, local_blob_path):
+    def download(self, bucket_blob_name, local_blob_path):
         if self.bucket_on:
-            folder = Path(local_blob_path)
-            folder.mkdir(parents=True, exist_ok=True)
+            download_path = Path(local_blob_path)
+            download_path.parent.mkdir(parents=True, exist_ok=True)
 
-            download_path = os.path.join(local_blob_path, local_blob_name)
             blob = self.bucket.blob(bucket_blob_name)
-            blob.download_to_filename(download_path)
+            blob.download_to_filename(local_blob_path)
 
     def upload(self, local_blob_name, bucket_blob_name):
         if self.bucket_on:
