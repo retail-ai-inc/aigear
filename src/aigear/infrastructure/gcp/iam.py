@@ -53,7 +53,8 @@ class ServiceAccounts:
             "roles/compute.admin",
             "roles/pubsub.admin",
             "roles/artifactregistry.reader",
-            "roles/secretmanager.secretAccessor"
+            "roles/secretmanager.secretAccessor",
+            "roles/editor"
         ]
 
         for role in roles:
