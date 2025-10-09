@@ -169,7 +169,7 @@ functions.cloudEvent('cronjobProcessPubSub', cloudEvent => {
   const vmName = cronjobInfo[0].vm_name + Date.now();
   const dockerImage = cronjobInfo[0].docker_image;
   // pipeline step in commonCommand
-  const pipelineCommand = '/opt/venv/medovik/bin/python /medovik/main.py --version ' + cronjobInfo[0].pipeline_version + ' --step ' + cronjobInfo[0].pipeline_step
+  const pipelineCommand = 'aigear-workflow --version ' + cronjobInfo[0].pipeline_version + ' --step ' + cronjobInfo[0].pipeline_step
 
   console.log(JSON.stringify(cronjobInfo));
   cronjobInfo.shift()
