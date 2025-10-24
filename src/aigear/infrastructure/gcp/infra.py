@@ -3,7 +3,7 @@ from aigear.infrastructure.gcp.bucket import Bucket
 from aigear.infrastructure.gcp.build import CloudBuild
 from aigear.infrastructure.gcp.function import CloudFunction
 from aigear.infrastructure.gcp.iam import ServiceAccounts
-from aigear.infrastructure.gcp.pub_sub import PubSub, Subscriptions
+from aigear.infrastructure.gcp.pub_sub import PubSub
 from aigear.infrastructure.gcp.artifacts import Artifacts
 from aigear.infrastructure.gcp.constant import (
     entry_point_of_cloud_fuction,
@@ -54,11 +54,6 @@ class Infra:
             topic_name=self.aigear_config.gcp.pub_sub.topic_name,
             project_id=self.aigear_config.gcp.gcp_project_id,
         )
-        self.subscriptions = Subscriptions(
-            sub_name=self.aigear_config.gcp.pub_sub.sub_name,
-            topic_name=self.aigear_config.gcp.pub_sub.topic_name,
-            project_id=self.aigear_config.gcp.gcp_project_id,
-        )
         self.artifacts = Artifacts(
             repository_name=self.aigear_config.gcp.artifacts.repository_name,
             location=self.aigear_config.gcp.location,
@@ -84,13 +79,6 @@ class Infra:
                 self.pubsub.create()
             else:
                 logger.info(f"PubSub({self.aigear_config.gcp.pub_sub.topic_name}) already exists.")
-
-            subscriptions_exist = self.subscriptions.describe()
-            if not subscriptions_exist:
-                logger.info(f"Subscriptions({self.aigear_config.gcp.pub_sub.sub_name}) not found, will be created.")
-                self.subscriptions.create()
-            else:
-                logger.info(f"Subscriptions({self.aigear_config.gcp.pub_sub.sub_name}) already exists.")
         else:
             logger.info(f"The pub_sub has been closed in the configuration.")
 

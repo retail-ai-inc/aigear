@@ -38,7 +38,6 @@ class Iam(BaseModel):
 class PubSub(BaseModel):
     on: bool
     topic_name: str
-    sub_name: str
 
 
 class Artifacts(BaseModel):
