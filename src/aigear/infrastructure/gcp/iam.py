@@ -49,12 +49,13 @@ class ServiceAccounts:
 
     def add_iam_policy_binding(self):
         roles = [
-            "roles/storage.admin",
-            "roles/compute.admin",
-            "roles/pubsub.admin",
+            "roles/compute.instanceAdmin.v1",
+            "roles/storage.objectViewer",
+            "roles/storage.objectCreator",
             "roles/artifactregistry.reader",
-            "roles/secretmanager.secretAccessor",
-            "roles/editor"
+            "roles/pubsub.publisher",
+            "roles/pubsub.subscriber",
+            "roles/run.invoker"
         ]
 
         for role in roles:
