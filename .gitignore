@@ -12,3 +12,4 @@ __pycache__
 aigear.egg-info
 build
 dist
+env.json

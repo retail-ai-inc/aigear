@@ -1,6 +1,0 @@
-FROM python:$python_version
-
-WORKDIR /app
-COPY . .
-
-RUN  $install_command
