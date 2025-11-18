@@ -5,6 +5,7 @@ from aigear.infrastructure.gcp.function import CloudFunction
 from aigear.infrastructure.gcp.iam import ServiceAccounts
 from aigear.infrastructure.gcp.pub_sub import PubSub
 from aigear.infrastructure.gcp.artifacts import Artifacts
+from aigear.infrastructure.gcp.pre_vm_image import PreVMImage
 from aigear.infrastructure.gcp.constant import (
     entry_point_of_cloud_fuction,
 )
@@ -58,6 +59,19 @@ class Infra:
             repository_name=self.aigear_config.gcp.artifacts.repository_name,
             location=self.aigear_config.gcp.location,
             project_id=self.aigear_config.gcp.gcp_project_id,
+        )
+        self.pre_vm_image = PreVMImage(
+            project_id=self.aigear_config.gcp.gcp_project_id,
+            zone=self.aigear_config.gcp.location,
+            machine_type=self.aigear_config.gcp.pre_vm_image.machine_type,
+            gpu_type=self.aigear_config.gcp.pre_vm_image.gpu_type,
+            gpu_count=self.aigear_config.gcp.pre_vm_image.gpu_count,
+            boot_disk_gb=self.aigear_config.gcp.pre_vm_image.boot_disk_gb,
+            dlvm_family=self.aigear_config.gcp.pre_vm_image.dlvm_family,
+            bake_vm=self.aigear_config.gcp.pre_vm_image.bake_vm,
+            custom_image_name=self.aigear_config.gcp.pre_vm_image.custom_image_name,
+            bake_timeout_sec=self.aigear_config.gcp.pre_vm_image.bake_timeout_sec,
+            bake_poll_interval_sec=self.aigear_config.gcp.pre_vm_image.bake_poll_interval_sec
         )
 
     def create(self):
@@ -134,3 +148,14 @@ class Infra:
                 logger.info(f"Cloud function({self.aigear_config.gcp.cloud_function.function_name}) already exists.")
         else:
             logger.info(f"The cloud_function has been closed in the configuration.")
+
+        if self.aigear_config.gcp.pre_vm_image.on:
+            pre_vm_image_exist = self.pre_vm_image.image_exists()
+            if not pre_vm_image_exist:
+                logger.info(
+                    f"Pre vm image ({self.aigear_config.gcp.pre_vm_image.custom_image_name}) not found, will be created.")
+                self.pre_vm_image.create_vm_image()
+            else:
+                logger.info(f"Pre vm image ({self.aigear_config.gcp.pre_vm_image.custom_image_name}) already exists.")
+        else:
+            logger.info(f"The pre_vm_image has been closed in the configuration.")
