@@ -1,11 +1,15 @@
 import subprocess
+import platform
 
 
 def run_sh(
     command: list,
     inputs: str = None,
 ):
-    use_shell = isinstance(command, str) or any(op in command for op in ["|", ">", "&&", ";"])
+    if platform.system() == "Windows":
+        use_shell = True
+    else:
+        use_shell = False
     try:
         result = subprocess.run(
             command,
