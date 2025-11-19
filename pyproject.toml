@@ -71,3 +71,18 @@ where = ["src"]
 include = [
     "aigear*",
 ]
+
+[tool.setuptools.package-data]
+"aigear" = [
+    "template/*",
+    "template/**/*",
+    "common/*",
+    "common/**/*",
+    "**/*.yaml",
+    "**/*.yml",
+    "**/*.json",
+    "**/*.toml",
+    "**/*.js",
+    "**/*.md",
+    "**/Dockerfile",
+]
