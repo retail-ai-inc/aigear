@@ -102,11 +102,12 @@ class Infra:
         )
 
     # ================================================================
-    # Preflight checks (gcloud login + project switch)
+    # Preflight checks: gcloud login + project switch
     # ================================================================
-    def _preflight(self):
+    def gcloud_login_check(self):
+        """Check gcloud CLI installation and authentication status."""
         logger.info("===================================================")
-        logger.info("             Aigear GCP Preflight Check            ")
+        logger.info("             Aigear GCP Login Check                ")
         logger.info("===================================================")
 
         # 1. check gcloud installed
@@ -129,7 +130,14 @@ class Infra:
         else:
             logger.info(f"Logged in as: {active[0]['account']}")
 
-        # 3. ensure project matches env.json
+        logger.info("Login check OK.\n")
+
+    def project_switch(self):
+        """Ensure gcloud project matches the configured project ID."""
+        logger.info("===================================================")
+        logger.info("             Aigear GCP Project Switch             ")
+        logger.info("===================================================")
+
         current_project = run_sh(["gcloud", "config", "get-value", "project"]).strip()
         if current_project != self.project_id:
             logger.info(f"Switching gcloud project -> {self.project_id}")
@@ -137,10 +145,10 @@ class Infra:
         else:
             logger.info(f"Project already set to {self.project_id}")
 
-        logger.info("Preflight OK.\n")
+        logger.info("Project switch OK.\n")
 
     # ================================================================
-    # Generic step wrapper for prettier logs
+    # Generic step wrapper for prettier logs (non-blocking on failure)
     # ================================================================
     def _step(self, title, fn):
         logger.info("\n---------------------------------------------------")
@@ -150,24 +158,31 @@ class Infra:
         try:
             fn()
             logger.info(f"✔ {title} SUCCESS")
+            return True
         except Exception as e:
             logger.error(f"✖ {title} FAILED")
             logger.error(f"Error details: {str(e)}")
             logger.error(f"Error type: {type(e).__name__}")
-            raise  # Re-raise to stop execution on critical failures
+            # Do not re-raise - continue with other infrastructure creation
+            return False
 
     # ================================================================
     # Public API called from CLI
     # ================================================================
     def create(self):
-        self._preflight()
+        self.gcloud_login_check()
+        self.project_switch()
+
+        failed_steps = []
 
         # IAM
         if self.aigear_config.gcp.iam.on:
-            self._step(
+            success = self._step(
                 f"Service Account ({self.aigear_config.gcp.iam.account_name})",
                 self._ensure_service_account
             )
+            if not success:
+                failed_steps.append(f"Service Account ({self.aigear_config.gcp.iam.account_name})")
         else:
             logger.info(
                 f"Service Account creation is disabled in the configuration file. "
@@ -176,14 +191,19 @@ class Infra:
 
         # Buckets
         if self.aigear_config.gcp.bucket.on:
-            self._step(
+            success = self._step(
                 f"Model Bucket ({self.aigear_config.gcp.bucket.bucket_name})",
                 self._ensure_model_bucket
             )
-            self._step(
+            if not success:
+                failed_steps.append(f"Model Bucket ({self.aigear_config.gcp.bucket.bucket_name})")
+
+            success = self._step(
                 f"Release Model Bucket ({self.aigear_config.gcp.bucket.bucket_name_for_release})",
                 self._ensure_release_bucket
             )
+            if not success:
+                failed_steps.append(f"Release Model Bucket ({self.aigear_config.gcp.bucket.bucket_name_for_release})")
         else:
             logger.info(
                 f"Bucket creation is disabled in the configuration file. "
@@ -193,10 +213,12 @@ class Infra:
 
         # Artifact Registry
         if self.aigear_config.gcp.artifacts.on:
-            self._step(
+            success = self._step(
                 f"Artifact Registry ({self.aigear_config.gcp.artifacts.repository_name})",
                 self._ensure_artifacts
             )
+            if not success:
+                failed_steps.append(f"Artifact Registry ({self.aigear_config.gcp.artifacts.repository_name})")
         else:
             logger.info(
                 f"Artifact Registry creation is disabled in the configuration file. "
@@ -205,10 +227,12 @@ class Infra:
 
         # Pub/Sub
         if self.aigear_config.gcp.pub_sub.on:
-            self._step(
+            success = self._step(
                 f"Pub/Sub Topic ({self.aigear_config.gcp.pub_sub.topic_name})",
                 self._ensure_pubsub
             )
+            if not success:
+                failed_steps.append(f"Pub/Sub Topic ({self.aigear_config.gcp.pub_sub.topic_name})")
         else:
             logger.info(
                 f"Pub/Sub creation is disabled in the configuration file. "
@@ -217,10 +241,12 @@ class Infra:
 
         # Cloud Build
         if self.aigear_config.gcp.cloud_build.on:
-            self._step(
+            success = self._step(
                 f"Cloud Build Trigger ({self.aigear_config.gcp.cloud_build.trigger_name})",
                 self._ensure_cloud_build
             )
+            if not success:
+                failed_steps.append(f"Cloud Build Trigger ({self.aigear_config.gcp.cloud_build.trigger_name})")
         else:
             logger.info(
                 f"Cloud Build creation is disabled in the configuration file. "
@@ -229,10 +255,12 @@ class Infra:
 
         # Cloud Function
         if self.aigear_config.gcp.cloud_function.on:
-            self._step(
+            success = self._step(
                 f"Cloud Function ({self.aigear_config.gcp.cloud_function.function_name})",
                 self._ensure_cloud_function
             )
+            if not success:
+                failed_steps.append(f"Cloud Function ({self.aigear_config.gcp.cloud_function.function_name})")
         else:
             logger.info(
                 f"Cloud Function deployment is disabled in the configuration file. "
@@ -241,19 +269,30 @@ class Infra:
 
         # Pre-VM Image
         if self.aigear_config.gcp.pre_vm_image.on:
-            self._step(
+            success = self._step(
                 f"Pre-VM Image ({self.aigear_config.gcp.pre_vm_image.custom_image_name})",
                 self._ensure_pre_vm_image
             )
+            if not success:
+                failed_steps.append(f"Pre-VM Image ({self.aigear_config.gcp.pre_vm_image.custom_image_name})")
         else:
             logger.info(
                 f"Pre-VM Image creation is disabled in the configuration file. "
                 f"Skipping custom VM image ({self.aigear_config.gcp.pre_vm_image.custom_image_name}) creation."
             )
 
+        # Summary
         logger.info("\n===================================================")
-        logger.info("            Aigear GCP Infra Init Complete         ")
-        logger.info("===================================================\n")
+        if failed_steps:
+            logger.warning("       Aigear GCP Infra Init Complete (with errors)")
+            logger.warning("===================================================")
+            logger.warning("The following steps failed:")
+            for step in failed_steps:
+                logger.warning(f"  - {step}")
+            logger.info("Please review the errors above and retry the failed steps.\n")
+        else:
+            logger.info("            Aigear GCP Infra Init Complete         ")
+            logger.info("===================================================\n")
 
     # ================================================================
     # Actual infra actions (use your existing classes)
