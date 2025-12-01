@@ -65,6 +65,7 @@ aigear-init = "aigear.cli.project_cli:project_init"
 gcp-infra-init = "aigear.cli.gcp_cli:gcp_infra_init"
 aigear-workflow = "aigear.cli.task_running:task_run"
 aigear-scheduler = "aigear.cli.scheduler:scheduler_init"
+artifacts-image-create = "aigear.cli.artifacts_image:artifacts_image_init"
 
 [tool.setuptools.packages.find]
 where = ["src"]
