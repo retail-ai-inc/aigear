@@ -1,5 +1,6 @@
 import subprocess
 import platform
+import sys
 
 
 def run_sh(
@@ -23,3 +24,25 @@ def run_sh(
         return (result.stdout or "") + (result.stderr or "")
     except subprocess.TimeoutExpired:
         return f"Error: Command({command}) execution timeout."
+
+def run_sh_stream(command: list, inputs: str = None):
+    use_shell = (platform.system() == "Windows")
+    proc = subprocess.Popen(
+        command,
+        shell=use_shell,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1
+    )
+
+    if inputs is not None:
+        proc.stdin.write(inputs)
+        proc.stdin.flush()
+
+    for line in proc.stdout:
+        print(line, end="")
+        sys.stdout.flush()
+
+    returncode = proc.wait()
+    return returncode
