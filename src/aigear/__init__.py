@@ -1,4 +1,4 @@
-from .project import Project
+from .generators import Project
 from ._version import __version__
 from .common import (
     Logging,
