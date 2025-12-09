@@ -58,7 +58,7 @@ def create_artifacts_image(dockerfile_path="."):
         logger.info(f"The image already exists in gcp artifacts: {artifacts_image}")
     else:
         logger.info("The image does not exist in gcp artifacts, it will be created.")
-        artifacts_image_instance.create_image()
+        artifacts_image_instance.create_image(dockerfile_path)
         artifacts_image_instance.obtain_permissions()
         artifacts_image_instance.push_image()
         logger.info("The image has been created.")
