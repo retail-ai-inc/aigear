@@ -60,16 +60,16 @@ class CloudBuild:
 
 
 if __name__ == "__main__":
-    trigger_name = "ml-test"
+    trigger_name = ""
     description = "The pipelines of Testing"
-    repository = "retail-ai-inc/medovik"
-    repo_owner = "retail-ai-inc"
-    repo_name = "medovik"
+    repository = "**/**"
+    repo_owner = "**"
+    repo_name = "**"
     branch_pattern = "master"
     build_config = "/cloudbuild/cloudbuild.yaml"
     region = "global"
-    project_id = "ssc-ape-staging"
-    substitutions = "_ENVIRONMENT=staging,_KMS_LOCATION=asia-northeast1,_PIPELINES_VERSION=ape3,_PLATFORM=medovik"
+    project_id = ""
+    substitutions = "_ENVIRONMENT=staging,_KMS_LOCATION=asia-northeast1"
     cloud_build = CloudBuild(
         trigger_name=trigger_name,
         description=description,

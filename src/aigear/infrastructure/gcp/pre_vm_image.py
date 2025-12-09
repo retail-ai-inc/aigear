@@ -287,7 +287,7 @@ class PreVMImage:
 
 if __name__ == "__main__":
     vm_image = PreVMImage(
-        project_id = "ssc-ape-staging",
+        project_id = "",
         zone= "asia-northeast1-a",
         machine_type="n1-standard-8",
         gpu_type="nvidia-tesla-t4",

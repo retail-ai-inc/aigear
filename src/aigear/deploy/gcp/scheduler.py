@@ -1,4 +1,3 @@
-import os
 import json
 from aigear.common import run_sh
 from aigear.common.logger import Logging
@@ -161,27 +160,27 @@ def create_scheduler(pipeline_version, step_names):
 if __name__ == "__main__":
     message = [
         {
-            "vm_name": "coopiwate-ape3-fetch-data-vm",
+            "vm_name": "",
             "disk_size_gb": "20",
             "spec": "e2-standard-2",
             "on_host_maintenance": "MIGRATE",
-            "pipeline_version": "coopiwate_ape3",
-            "pipeline_step": "ape3.coopiwate.data.fetch_data"
+            "pipeline_version": "",
+            "pipeline_step": "xxx.xxx.xxx"
         },
         {
-            "vm_name": "coopiwate-ape3-preprocessing-vm",
+            "vm_name": "",
             "disk_size_gb": "40",
             "spec": "e2-highmem-8",
             "on_host_maintenance": "MIGRATE",
-            "pipeline_version": "coopiwate_ape3",
-            "pipeline_step": "ape3.coopiwate.feature.preprocessing"
+            "pipeline_version": "",
+            "pipeline_step": "xxx.xxx.xxx"
         }
     ]
     scheduler = Scheduler(
         name="ml_test",
-        location="asia-northeast1",
+        location="",
         schedule="45 21 * * 0",
-        topic_name="medovik-pipelines-pubsub",
+        topic_name="pipelines-pubsub",
         message=message,
         time_zone="Asia/Tokyo",
     )

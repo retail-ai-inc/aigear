@@ -106,7 +106,7 @@ class ServiceAccounts:
 
 if __name__ == "__main__":
     service_accounts = ServiceAccounts(
-        project_id="ssc-ape-staging",
+        project_id="",
         account_name="test-pipelines",
     )
     service_accounts.add_iam_policy_binding()
