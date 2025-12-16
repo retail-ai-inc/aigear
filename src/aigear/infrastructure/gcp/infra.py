@@ -5,6 +5,8 @@ from aigear.infrastructure.gcp.function import CloudFunction
 from aigear.infrastructure.gcp.iam import ServiceAccounts
 from aigear.infrastructure.gcp.pub_sub import PubSub
 from aigear.infrastructure.gcp.artifacts import Artifacts
+from aigear.infrastructure.gcp.gke import GKECluster
+from aigear.infrastructure.gcp.gcs import GCSModelStorage
 from aigear.infrastructure.gcp.constant import (
     entry_point_of_cloud_fuction,
 )
@@ -59,6 +61,32 @@ class Infra:
             location=self.aigear_config.gcp.location,
             project_id=self.aigear_config.gcp.gcp_project_id,
         )
+
+        # GKE Cluster (optional, for gRPC service deployment)
+        self.gke_cluster = None
+        if hasattr(self.aigear_config.gcp, 'gke') and self.aigear_config.gcp.gke.on:
+            cluster_config = self.aigear_config.gcp.gke.cluster
+            self.gke_cluster = GKECluster(
+                cluster_name=cluster_config.name,
+                project_id=self.aigear_config.gcp.gcp_project_id,
+                region=self.aigear_config.gcp.location,
+                node_count=cluster_config.get('node_count', 3),
+                machine_type=cluster_config.get('machine_type', 'e2-standard-4'),
+                disk_size=cluster_config.get('disk_size', 100),
+                enable_autoscaling=cluster_config.get('enable_autoscaling', True),
+                min_nodes=cluster_config.get('min_nodes', 1),
+                max_nodes=cluster_config.get('max_nodes', 10),
+                enable_autopilot=cluster_config.get('enable_autopilot', False),
+            )
+
+        # GCS Model Storage (optional, for model file storage)
+        self.gcs_storage = None
+        if hasattr(self.aigear_config.gcp, 'gcs_models') and self.aigear_config.gcp.gcs_models.on:
+            self.gcs_storage = GCSModelStorage(
+                bucket_name=self.aigear_config.gcp.gcs_models.bucket_name,
+                project_id=self.aigear_config.gcp.gcp_project_id,
+                location=self.aigear_config.gcp.location,
+            )
 
     def create(self):
         if self.aigear_config.gcp.iam.on:
@@ -134,3 +162,108 @@ class Infra:
                 logger.info(f"Cloud function({self.aigear_config.gcp.cloud_function.function_name}) already exists.")
         else:
             logger.info(f"The cloud_function has been closed in the configuration.")
+
+        # GKE Cluster (optional)
+        if self.gke_cluster:
+            gke_exist = self.gke_cluster.describe()
+            if not gke_exist:
+                logger.info(f"GKE cluster({self.gke_cluster.cluster_name}) not found, will be created.")
+                logger.info("⏳ This may take 5-10 minutes...")
+                self.gke_cluster.create()
+            else:
+                logger.info(f"GKE cluster({self.gke_cluster.cluster_name}) already exists.")
+        else:
+            logger.info(f"The GKE cluster has been closed in the configuration.")
+
+        # GCS Model Storage (optional)
+        if self.gcs_storage:
+            gcs_exist = self.gcs_storage.bucket_exists()
+            if not gcs_exist:
+                logger.info(f"GCS model bucket({self.gcs_storage.bucket_name}) not found, will be created.")
+                self.gcs_storage.create_bucket()
+            else:
+                logger.info(f"GCS model bucket({self.gcs_storage.bucket_name}) already exists.")
+        else:
+            logger.info(f"The GCS model storage has been closed in the configuration.")
+
+    def deploy_grpc_to_gke(self, project_dir, companies=None, versions=None, use_cloud_build=False):
+        """
+        Deploy gRPC service to GKE
+
+        Args:
+            project_dir: Project directory path
+            companies: List of company codes (optional, will read from config if not provided)
+            versions: List of versions (optional, will read from config if not provided)
+            use_cloud_build: Use Cloud Build instead of local Docker
+
+        Returns:
+            True if successful, False otherwise
+        """
+        from pathlib import Path
+        from aigear.deploy.gcp.gke_deployer import GKEDeployer
+
+        if not self.gke_cluster:
+            logger.error("GKE cluster is not configured in env.json")
+            return False
+
+        logger.info("=" * 60)
+        logger.info("Deploying gRPC service to GKE")
+        logger.info("=" * 60)
+
+        # Get GKE configuration
+        gke_config = {}
+        if hasattr(self.aigear_config.gcp, 'gke'):
+            gke_config = {
+                'enabled': self.aigear_config.gcp.gke.on,
+                'cluster': self.aigear_config.gcp.gke.cluster.__dict__ if hasattr(self.aigear_config.gcp.gke, 'cluster') else {},
+                'deployment': self.aigear_config.gcp.gke.deployment.__dict__ if hasattr(self.aigear_config.gcp.gke, 'deployment') else {},
+                'service': self.aigear_config.gcp.gke.service.__dict__ if hasattr(self.aigear_config.gcp.gke, 'service') else {},
+                'image': self.aigear_config.gcp.gke.image.__dict__ if hasattr(self.aigear_config.gcp.gke, 'image') else {},
+            }
+
+        # Get project name
+        project_name = self.aigear_config.project_name
+
+        # Get companies and versions from config if not provided
+        if not companies or not versions:
+            # Try to read from grpc config
+            if hasattr(self.aigear_config, 'grpc'):
+                grpc_config = self.aigear_config.grpc
+                if hasattr(grpc_config, 'servers'):
+                    companies = companies or list(grpc_config.servers.keys())
+                    # Get versions from first server
+                    if companies and not versions:
+                        first_server = grpc_config.servers[companies[0]]
+                        if hasattr(first_server, 'modelPaths'):
+                            versions = list(first_server.modelPaths.keys())
+
+        if not companies or not versions:
+            logger.error("Companies and versions must be provided or configured in env.json")
+            return False
+
+        # Create deployer
+        deployer = GKEDeployer(
+            project_name=project_name,
+            project_id=self.aigear_config.gcp.gcp_project_id,
+            region=self.aigear_config.gcp.location,
+            companies=companies,
+            versions=versions,
+            project_dir=Path(project_dir),
+            gke_config=gke_config,
+        )
+
+        # Deploy
+        success = deployer.deploy(
+            skip_build=False,
+            skip_cluster_creation=True,  # Cluster already created in create()
+            use_cloud_build=use_cloud_build,
+        )
+
+        if success:
+            logger.info("=" * 60)
+            logger.info("✅ gRPC service deployed successfully to GKE!")
+            logger.info("=" * 60)
+        else:
+            logger.error("❌ Failed to deploy gRPC service to GKE")
+
+        return success

@@ -459,6 +459,58 @@ message MLResponse {
                 "tracesSampleRate": 1.0
             }
 
+        # Add GKE deployment configuration (optional)
+        config["gke"] = {
+            "enabled": False,
+            "cluster": {
+                "name": f"{self.project_name}-cluster",
+                "nodeCount": 3,
+                "machineType": "e2-standard-4",
+                "diskSize": 100,
+                "enableAutoscaling": True,
+                "minNodes": 1,
+                "maxNodes": 10,
+                "enableAutopilot": False
+            },
+            "deployment": {
+                "replicas": 2,
+                "resources": {
+                    "requests": {
+                        "cpu": "500m",
+                        "memory": "1Gi"
+                    },
+                    "limits": {
+                        "cpu": "2000m",
+                        "memory": "4Gi"
+                    }
+                },
+                "autoscaling": {
+                    "enabled": True,
+                    "minReplicas": 2,
+                    "maxReplicas": 10,
+                    "targetCPU": 70
+                }
+            },
+            "service": {
+                "type": "LoadBalancer",
+                "port": 50051
+            },
+            "image": {
+                "repository": "grpc-services",
+                "tag": "latest"
+            },
+            "modelStorage": {
+                "enabled": False,
+                "bucketName": f"{self.project_name}-models"
+            }
+        }
+
+        # Add GCP project configuration for deployment
+        config["gcp"] = {
+            "projectId": "",
+            "region": "asia-northeast1"
+        }
+
         return config
 
     def _build_model_paths(self, company: str, version: str) -> Dict:
@@ -1380,7 +1432,11 @@ COPY /service .
 COPY env.json .
 
 # Install system dependencies
-RUN apt-get update && apt-get -y install gcc && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get -y install gcc wget && rm -rf /var/lib/apt/lists/*
+
+# Install grpc_health_probe for Kubernetes health checks
+RUN wget -qO/bin/grpc_health_probe https://github.com/grpc-ecosystem/grpc-health-probe/releases/download/v0.4.19/grpc_health_probe-linux-amd64 && \\
+    chmod +x /bin/grpc_health_probe
 
 # Create virtual environment
 RUN uv venv /opt/venv --python {python_version}
