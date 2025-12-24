@@ -4,6 +4,7 @@ __pycache__
 .vscode
 .trunk
 .claude
+.docs
 
 # model
 *.mdl
