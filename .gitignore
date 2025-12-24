@@ -2,6 +2,7 @@
 __pycache__
 .idea
 .vscode
+.trunk
 
 # model
 *.mdl
@@ -13,3 +14,4 @@ aigear.egg-info
 build
 dist
 env.json
+.test_output
