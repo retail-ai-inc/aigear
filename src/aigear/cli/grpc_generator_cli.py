@@ -10,18 +10,16 @@ Usage:
 
 import argparse
 import sys
+import logging
 from pathlib import Path
-from ..project import GrpcServiceGenerator, ModelType, ServiceTemplate
-from ..common.logger import create_stage_logger, PipelineStage
+from ..generators.grpc_service_generator import GrpcServiceGenerator, ModelType, ServiceTemplate
 
-# Use DEPLOYMENT stage logger
-cli_logger = create_stage_logger(
-    stage=PipelineStage.DEPLOYMENT,
-    module_name=__name__,
-    cpu_count=1,
-    memory_limit="1GB",
-    enable_cloud_logging=False
+# Setup logger
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
 )
+cli_logger = logging.getLogger(__name__)
 
 
 def prompt_user_input(question: str, default: str = None) -> str:
@@ -101,8 +99,8 @@ def interactive_mode():
     # 2. Select template type
     template_choices = {
         "Simple service (single model)": ServiceTemplate.SIMPLE,
-        "Multi-version service (e.g. ALC3/ALC4)": ServiceTemplate.MULTI_VERSION,
-        "Multi-company service (e.g. Macaron)": ServiceTemplate.MULTI_COMPANY,
+        "Multi-version service": ServiceTemplate.MULTI_VERSION,
+        "Multi-company service": ServiceTemplate.MULTI_COMPANY,
     }
     template_name = prompt_choice(
         "🎨 Select service template type:",
@@ -165,26 +163,25 @@ def interactive_mode():
         return
 
     # 8. Generate project
-    with cli_logger.stage_context() as logger:
-        try:
-            generator = GrpcServiceGenerator(
-                project_name=project_name,
-                service_template=service_template,
-                model_types=model_types,
-                companies=companies,
-                versions=versions,
-                output_dir=output_dir
-            )
-            generator.generate()
-            logger.info("\n✨ Project generated successfully！")
-        except Exception as e:
-            logger.error(f"Generation failed: {str(e)}", exc_info=True)
-            sys.exit(1)
+    try:
+        generator = GrpcServiceGenerator(
+            project_name=project_name,
+            service_template=service_template,
+            model_types=model_types,
+            companies=companies,
+            versions=versions,
+            output_dir=output_dir
+        )
+        generator.generate()
+        cli_logger.info("\n✨ Project generated successfully！")
+    except Exception as e:
+        cli_logger.error(f"Generation failed: {str(e)}", exc_info=True)
+        sys.exit(1)
 
 
 def command_line_mode(args):
     """Command line mode"""
-    # Parse model types
+    # Parse model types (default to sklearn if not specified)
     model_type_map = {
         "sklearn": ModelType.SKLEARN,
         "pytorch": ModelType.PYTORCH,
@@ -193,32 +190,85 @@ def command_line_mode(args):
         "recbole": ModelType.RECBOLE,
         "custom": ModelType.CUSTOM,
     }
-    model_types = [model_type_map[m] for m in args.models]
+    model_types = [model_type_map[m] for m in (args.models or ["sklearn"])]
 
-    # Parse template type
+    # Parse template type (default to simple if not specified)
     template_map = {
         "simple": ServiceTemplate.SIMPLE,
         "multi_version": ServiceTemplate.MULTI_VERSION,
         "multi_company": ServiceTemplate.MULTI_COMPANY,
     }
-    service_template = template_map[args.template]
+    service_template = template_map[args.template or "simple"]
 
     # Generate project
-    with cli_logger.stage_context() as logger:
-        try:
-            generator = GrpcServiceGenerator(
-                project_name=args.name,
-                service_template=service_template,
-                model_types=model_types,
-                companies=args.companies,
-                versions=args.versions,
-                output_dir=Path(args.output)
-            )
-            generator.generate()
-            logger.info("\n✨ Project generated successfully！")
-        except Exception as e:
-            logger.error(f"Generation failed: {str(e)}", exc_info=True)
-            sys.exit(1)
+    try:
+        generator = GrpcServiceGenerator(
+            project_name=args.name,
+            service_template=service_template,
+            model_types=model_types,
+            companies=args.companies,
+            versions=args.versions,
+            output_dir=Path(args.output)
+        )
+        generator.generate()
+
+        # Print quick start guide
+        print("\n" + "=" * 70)
+        print("[SUCCESS] Project generated successfully!")
+        print("=" * 70)
+
+        project_path = Path(args.output) / args.name
+        print(f"\n[PROJECT] Location: {project_path.absolute()}")
+
+        print("\n[QUICK START GUIDE]")
+        print("-" * 70)
+
+        # Step 1: Navigate to project
+        print(f"\nStep 1: Navigate to project directory")
+        print(f"   cd {args.name}")
+
+        # Step 2: Setup environment
+        print(f"\nStep 2: Setup environment (choose one)")
+        print(f"   # Option A: Use setup script (recommended)")
+        print(f"   ./setup.sh          # Linux/Mac")
+        print(f"   setup.bat           # Windows")
+        print(f"")
+        print(f"   # Option B: Manual setup")
+        print(f"   cp env.sample.json env.json")
+        print(f"   pip install -r service/requirements.txt")
+
+        # Step 3: Compile proto files
+        print(f"\nStep 3: Compile proto files")
+        print(f"   cd service")
+        print(f"   python -m grpc_tools.protoc -I../proto --python_out=proto --grpc_python_out=proto ../proto/grpc.proto")
+
+        # Step 4: Run service
+        print(f"\nStep 4: Start gRPC service")
+        company = args.companies[0]
+        version = args.versions[0]
+        print(f"   python main.py --company {company} --version {version}")
+
+        # Step 5: Test service
+        print(f"\nStep 5: Test service (in another terminal)")
+        print(f"   cd {args.name}")
+        print(f"   python test_client.py")
+
+        # Additional info
+        print("\n" + "-" * 70)
+        print("[CONFIGURATION]")
+        print(f"   - Service template: {service_template.value}")
+        print(f"   - Model types: {', '.join([m.value for m in model_types])}")
+        print(f"   - Companies: {', '.join(args.companies)}")
+        print(f"   - Versions: {', '.join(args.versions)}")
+        print(f"   - Default port: 50051")
+
+        print("\n" + "=" * 70)
+        print("Happy coding!")
+        print("=" * 70 + "\n")
+
+    except Exception as e:
+        cli_logger.error(f"Generation failed: {str(e)}", exc_info=True)
+        sys.exit(1)
 
 
 def main():
@@ -291,7 +341,8 @@ Examples:
     args = parser.parse_args()
 
     # Determine interactive or command line mode
-    if args.name and args.template and args.models:
+    # If only --name is provided, use command line mode with defaults
+    if args.name:
         command_line_mode(args)
     else:
         interactive_mode()

@@ -59,6 +59,10 @@ gcp = [
     "google-cloud-secret-manager>=2.24.0",
     "google-cloud-storage>=3.2.0"
 ]
+k8s = [
+    "PyYAML>=6.0",
+    "kubernetes>=28.0.0"
+]
 
 [project.scripts]
 aigear-init = "aigear.cli.project_cli:project_init"
@@ -66,6 +70,7 @@ gcp-infra-init = "aigear.cli.gcp_cli:gcp_infra_init"
 aigear-workflow = "aigear.cli.task_running:task_run"
 aigear-scheduler = "aigear.cli.scheduler:scheduler_init"
 aigear-grpc = "aigear.cli.grpc_cli:main"
+aigear-deploy-grpc = "aigear.cli.gke_deploy_cli:deploy_grpc_to_gke"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -4,14 +4,8 @@ aigear-grpc CLI - gRPC Service Generation and Management Tool
 Provides command-line tools for generating and managing gRPC machine learning service projects.
 
 Usage:
-    # Create new project (ALC preset)
-    aigear-grpc create --name my_alc --preset alc --companies trial,aeon --versions alc3,alc4
-
-    # Create new project (Macaron preset)
-    aigear-grpc create --name my_macaron --preset macaron --companies trial,tec --versions ape3,ape4
-
-    # Create custom project
-    aigear-grpc create --name my_service --companies trial --versions v1
+    # Create gRPC service for a single pipeline
+    aigear-grpc create --name my_service --pipeline pipeline_v1
 """
 
 import argparse
@@ -29,159 +23,65 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# ==================== Preset Configurations ====================
+# ==================== Command Handler Functions ====================
 
-class ProjectPreset:
-    """Project preset configurations"""
+def create_project(args):
+    """Create new gRPC service project"""
+    try:
+        # Validate required parameters
+        if not args.pipeline:
+            logger.error("--pipeline is required")
+            sys.exit(1)
 
-    @staticmethod
-    def get_alc_preset(project_name: str, companies: List[str], versions: List[str]) -> dict:
-        """ALC preset configuration
-
-        Features:
-        - Multi-company, multi-version
-        - Classification models (scikit-learn + CatBoost)
-        - modelPaths configuration (multiple model files)
-        - Sentry + Health Check
-        - Multi-processing support
-        """
-        return {
-            'project_name': project_name,
-            'service_template': ServiceTemplate.MULTI_COMPANY,
-            'model_types': [ModelType.SKLEARN, ModelType.CATBOOST],
-            'companies': companies or ['trial', 'aeon'],
-            'versions': versions or ['alc3', 'alc4'],
-            'features': {
-                'sentry': True,
-                'health_check': True,
-                'keepalive': True,
-                'multi_processing': True,
-                'max_message_size': 52428800,  # 50MB
-                'base_class': 'BaseClassifier',
-            },
-            'model_files': {
-                'alc3': [
-                    'features_min_max_model',
-                    'scaler_model',
-                    'rfc_model',
-                    'catb_model',
-                    'default_threshold',
-                    'thresholds',
-                ],
-                'alc4': [
-                    'features_min_max_model',
-                    'regressor_model',
-                ]
-            }
+        # Parse model types
+        model_type_map = {
+            "sklearn": ModelType.SKLEARN,
+            "pytorch": ModelType.PYTORCH,
+            "catboost": ModelType.CATBOOST,
+            "rankfm": ModelType.RANKFM,
+            "recbole": ModelType.RECBOLE,
+            "custom": ModelType.CUSTOM,
         }
+        model_types = [model_type_map[m] for m in (args.models or ['sklearn'])]
 
-    @staticmethod
-    def get_macaron_preset(project_name: str, companies: List[str], versions: List[str]) -> dict:
-        """Macaron preset configuration
-
-        Features:
-        - Multi-company, multi-version
-        - Recommendation system (RankFM)
-        - modelPaths configuration
-        - Sentry + Health Check + KeepAlive
-        - Base class template (BaseRecommender)
-        """
-        return {
-            'project_name': project_name,
-            'service_template': ServiceTemplate.MULTI_COMPANY,
-            'model_types': [ModelType.RANKFM],
-            'companies': companies or ['trial', 'tec', 'demo'],
-            'versions': versions or ['ape3', 'ape4'],
+        # Pipeline-centric configuration
+        config = {
+            'project_name': args.name,
+            'service_template': ServiceTemplate.SIMPLE,  # Single pipeline = simple template
+            'model_types': model_types,
+            'pipeline': args.pipeline,
             'features': {
                 'sentry': True,
                 'health_check': True,
                 'keepalive': True,
                 'multi_processing': True,
                 'max_message_size': 52428800,
-                'base_class': 'BaseRecommender',
-                'template_variables': True,  # Support ${subsidiaryName}
-            },
-            'model_files': {
-                'default': ['model_file']
             }
         }
-
-
-# ={20} Command Handler Functions ={20}
-
-def create_project(args):
-    """Create new project"""
-    try:
-        # Parse companies and versions list
-        companies = args.companies.split(',') if args.companies else []
-        versions = args.versions.split(',') if args.versions else []
-
-        # Based on preset or custom configuration
-        if args.preset:
-            if args.preset == 'alc':
-                config = ProjectPreset.get_alc_preset(args.name, companies, versions)
-            elif args.preset == 'macaron':
-                config = ProjectPreset.get_macaron_preset(args.name, companies, versions)
-            else:
-                logger.error(f"Unknown preset: {args.preset}")
-                sys.exit(1)
-
-            logger.info(f"Using preset: {args.preset}")
-            logger.info(f"Companies: {', '.join(config['companies'])}")
-            logger.info(f"Versions: {', '.join(config['versions'])}")
-        else:
-            # Custom configuration
-            if not companies or not versions:
-                logger.error("Custom mode requires --companies and --versions")
-                sys.exit(1)
-
-            # Parse model types
-            model_type_map = {
-                "sklearn": ModelType.SKLEARN,
-                "pytorch": ModelType.PYTORCH,
-                "catboost": ModelType.CATBOOST,
-                "rankfm": ModelType.RANKFM,
-                "recbole": ModelType.RECBOLE,
-                "custom": ModelType.CUSTOM,
-            }
-            model_types = [model_type_map[m] for m in (args.models or ['sklearn'])]
-
-            config = {
-                'project_name': args.name,
-                'service_template': ServiceTemplate.MULTI_COMPANY,
-                'model_types': model_types,
-                'companies': companies,
-                'versions': versions,
-                'features': {
-                    'sentry': True,
-                    'health_check': True,
-                    'keepalive': True,
-                    'multi_processing': True,
-                    'max_message_size': 52428800,
-                }
-            }
 
         # Output directory
         output_dir = Path(args.output) if args.output else Path.cwd()
 
         # Generate project
-        logger.info(f"Generating project: {config['project_name']}")
+        logger.info(f"Generating gRPC service: {config['project_name']}")
+        logger.info(f"Pipeline: {args.pipeline}")
         logger.info(f"Output directory: {output_dir.absolute()}")
 
+        # Note: GrpcServiceGenerator needs to be updated to support pipeline-centric mode
+        # For now, we use companies=['demo'] and versions=['v1'] as placeholders
         generator = GrpcServiceGenerator(
             project_name=config['project_name'],
             service_template=config['service_template'],
             model_types=config['model_types'],
-            companies=config['companies'],
-            versions=config['versions'],
+            companies=[args.pipeline],  # Use pipeline name as company
+            versions=['v1'],  # Single version
             output_dir=output_dir,
-            features=config.get('features', {}),
-            model_files=config.get('model_files', {})
+            features=config.get('features', {})
         )
 
         generator.generate()
 
-        logger.info("\n✨ Project generated successfully！")
+        logger.info("\n✨ gRPC service generated successfully!")
         logger.info(f"📁 Project path: {output_dir / config['project_name']}")
 
     except Exception as e:
@@ -189,33 +89,27 @@ def create_project(args):
         sys.exit(1)
 
 
-# ={20} Main Function ={20}
+# ==================== Main Function ====================
 
 def main():
     """Main function"""
     parser = argparse.ArgumentParser(
         prog='aigear-grpc',
-        description="aigear-grpc - gRPC Machine learning service generation and management tool",
+        description="aigear-grpc - gRPC Machine learning service generation tool",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Create project using ALC preset
-  aigear-grpc create --name my_alc --preset alc
+  # Create gRPC service for a pipeline
+  aigear-grpc create --name my_service --pipeline pipeline_v1
 
-  # Use ALC preset, specify companies and versions
-  aigear-grpc create --name my_alc --preset alc --companies trial,aeon --versions alc3,alc4
-
-  # Use Macaron preset
-  aigear-grpc create --name my_macaron --preset macaron --companies trial,tec --versions ape3,ape4
-
-  # Custom project
-  aigear-grpc create --name my_service --companies trial,aeon --versions v1,v2 --models sklearn catboost
+  # Create with specific model types
+  aigear-grpc create --name my_service --pipeline pipeline_v1 --models sklearn catboost
         """
     )
 
     subparsers = parser.add_subparsers(dest='command', help='Available commands')
 
-    # ={20} create command ={20}
+    # ==================== create command ====================
     create_parser = subparsers.add_parser(
         'create',
         help='Create new gRPC service project',
@@ -230,22 +124,10 @@ Examples:
     )
 
     create_parser.add_argument(
-        '--preset',
+        '--pipeline',
         type=str,
-        choices=['alc', 'macaron'],
-        help='Use preset configuration (alc or macaron)'
-    )
-
-    create_parser.add_argument(
-        '--companies',
-        type=str,
-        help='Company code list (comma-separated, e.g.: trial,aeon,tec)'
-    )
-
-    create_parser.add_argument(
-        '--versions',
-        type=str,
-        help='Versions (comma-separated, e.g.: v1,v2 or alc3,alc4)'
+        required=True,
+        help='Pipeline name (e.g., pipeline_v1)'
     )
 
     create_parser.add_argument(
@@ -253,7 +135,7 @@ Examples:
         type=str,
         nargs='+',
         choices=['sklearn', 'pytorch', 'catboost', 'rankfm', 'recbole', 'custom'],
-        help='Model type list (only required for custom mode)'
+        help='Model type list (default: sklearn)'
     )
 
     create_parser.add_argument(

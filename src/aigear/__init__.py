@@ -1,4 +1,4 @@
-from .generators import Project
+from .generators import Project, GrpcServiceGenerator, ModelType, ServiceTemplate
 from ._version import __version__
 from .common import (
     Logging,
@@ -18,6 +18,9 @@ __all__ = [
     "SecretManager",
     "Infra",
     "Scheduler",
+    "GrpcServiceGenerator",
+    "ModelType",
+    "ServiceTemplate",
 ]
 
 __all__.extend(

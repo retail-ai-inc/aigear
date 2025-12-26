@@ -2,7 +2,7 @@
 gRPC Service Generator - Automatically generate gRPC ML service projects
 
 This module provides the ability to automatically generate gRPC services
-similar to ALC and Macaron style.
+for machine learning model deployment.
 
 Generated projects include:
 - Standard gRPC proto definitions
@@ -14,7 +14,6 @@ Generated projects include:
 Usage example:
     generator = GrpcServiceGenerator(
         project_name="my_service",
-        service_template=ServiceTemplate.MULTI_COMPANY,
         model_types=[ModelType.SKLEARN, ModelType.CATBOOST]
     )
     generator.generate()
@@ -23,6 +22,7 @@ Usage example:
 from pathlib import Path
 from typing import List, Dict, Optional
 from enum import Enum
+from datetime import datetime
 import shutil
 import json
 from jinja2 import Environment, FileSystemLoader, Template
@@ -48,9 +48,9 @@ class ModelType(Enum):
 
 class ServiceTemplate(Enum):
     """Service template types"""
-    SIMPLE = "simple"                       # Single model, single company
-    MULTI_VERSION = "multi_version"         # Single company, multiple versions (e.g., ALC3/ALC4)
-    MULTI_COMPANY = "multi_company"         # Multiple companies, multiple versions (e.g., Macaron)
+    SIMPLE = "simple"  # Single model service
+    MULTI_VERSION = "multi_version"  # Deprecated, kept for compatibility
+    MULTI_COMPANY = "multi_company"  # Deprecated, kept for compatibility
 
 
 class GrpcServiceGenerator:
@@ -91,33 +91,32 @@ class GrpcServiceGenerator:
     def __init__(
         self,
         project_name: str,
-        service_template: ServiceTemplate = ServiceTemplate.SIMPLE,
         model_types: Optional[List[ModelType]] = None,
-        companies: Optional[List[str]] = None,
-        versions: Optional[List[str]] = None,
         output_dir: Optional[Path] = None,
         features: Optional[Dict] = None,
-        model_files: Optional[Dict] = None
+        model_files: Optional[Dict] = None,
+        silent: bool = False
     ):
         """
-        Initialize gRPC Service Generator
+        Initialize gRPC Service Generator (Simple mode only)
 
         Args:
             project_name: Project name
-            service_template: Service template type
             model_types: Model type list (default: [SKLEARN])
-            companies: Company code list (for MULTI_COMPANY template)
-            versions: Version list (for MULTI_VERSION and MULTI_COMPANY templates)
             output_dir: Output directory (default: current directory)
             features: Feature configuration (sentry, health_check, keepalive, etc.)
             model_files: Model file configuration (for generating modelPaths)
+            silent: Suppress all output messages (default: False)
         """
         self.project_name = project_name
-        self.template_type = service_template
         self.model_types = model_types or [ModelType.SKLEARN]
-        self.companies = companies or ["demo"]
-        self.versions = versions or ["v1"]
         self.output_dir = output_dir or Path.cwd()
+        self.silent = silent
+
+        # Simple mode: fixed company and version
+        self.companies = ["demo"]
+        self.versions = ["v1"]
+        self.template_type = ServiceTemplate.SIMPLE
 
         # Feature configuration (new)
         self.features = features or {
@@ -144,86 +143,113 @@ class GrpcServiceGenerator:
 
     def generate(self):
         """Generate complete gRPC service project"""
-        generator_logger.info(f"Starting gRPC service project generation: {self.project_name}")
-        generator_logger.info(f"Template type: {self.template_type.value}")
-        generator_logger.info(f"Model types: {[m.value for m in self.model_types]}")
+        if not self.silent:
+            generator_logger.info(f"Starting gRPC service project generation: {self.project_name}")
+            generator_logger.info(f"Template type: {self.template_type.value}")
+            generator_logger.info(f"Model types: {[m.value for m in self.model_types]}")
 
         # 1. Create directory structure
         self._create_directory_structure()
-        generator_logger.info("✓ Directory structure created")
+        if not self.silent:
+            generator_logger.info("✓ Directory structure created")
 
         # 2. Generate proto files
         self._generate_proto()
-        generator_logger.info("✓ Proto files generated")
+        if not self.silent:
+            generator_logger.info("✓ Proto files generated")
 
         # 3. Generate main.py
         self._generate_main()
-        generator_logger.info("✓ main.py generated")
+        if not self.silent:
+            generator_logger.info("✓ main.py generated")
 
         # 4. Generate grpc_package
         self._generate_grpc_package()
-        generator_logger.info("✓ grpc_package generated")
+        if not self.silent:
+            generator_logger.info("✓ grpc_package generated")
 
         # 4.5. Generate config parser (new)
         self._generate_config_parser()
-        generator_logger.info("✓ Config parser generated")
+        if not self.silent:
+            generator_logger.info("✓ Config parser generated")
 
         # 4.6. Generate base classes (new)
         self._generate_base_classes()
-        generator_logger.info("✓ Base classes generated")
+        if not self.silent:
+            generator_logger.info("✓ Base classes generated")
 
         # 5. Generate model modules and examples
         self._generate_model_modules()
-        generator_logger.info("✓ Model modules generated")
+        if not self.silent:
+            generator_logger.info("✓ Model modules generated")
 
         # 6. Generate configuration files
         self._generate_config()
-        generator_logger.info("✓ Configuration files generated")
+        if not self.silent:
+            generator_logger.info("✓ Configuration files generated")
 
         # 7. Generate Docker files
         self._generate_docker_files()
-        generator_logger.info("✓ Docker files generated")
+        if not self.silent:
+            generator_logger.info("✓ Docker files generated")
 
         # 8. Generate requirements.txt
         self._generate_requirements()
-        generator_logger.info("✓ requirements.txt generated")
+        if not self.silent:
+            generator_logger.info("✓ requirements.txt generated")
 
         # 9. Generate README
         self._generate_readme()
-        generator_logger.info("✓ README.md generated")
+        if not self.silent:
+            generator_logger.info("✓ README.md generated")
 
         # 10. Generate test client (new)
         self._generate_test_client()
-        generator_logger.info("✓ Test client generated")
+        if not self.silent:
+            generator_logger.info("✓ Test client generated")
 
         # 11. Generate setup scripts (new)
         self._generate_setup_scripts()
-        generator_logger.info("✓ Setup scripts generated")
+        if not self.silent:
+            generator_logger.info("✓ Setup scripts generated")
+
+        # 11.5. Generate dummy models script (new)
+        self._generate_dummy_models_script()
+        if not self.silent:
+            generator_logger.info("✓ Dummy models script generated")
 
         # 12. Generate .gitignore (new)
         self._generate_gitignore()
-        generator_logger.info("✓ .gitignore generated")
+        if not self.silent:
+            generator_logger.info("✓ .gitignore generated")
 
         # 13. Create models directory structure (new)
         self._create_models_directory()
-        generator_logger.info("✓ Models directory created")
+        if not self.silent:
+            generator_logger.info("✓ Models directory created")
 
-        # 14. Print project structure
-        generator_logger.info("\nProject structure:")
-        self._print_tree(self.project_path)
+        # 13.5. Generate example models with manifest (new)
+        self._generate_example_models_with_manifest()
+        if not self.silent:
+            generator_logger.info("✓ Example models and manifest generated")
 
-        generator_logger.info(f"\n✨ Project generation completed!")
-        generator_logger.info(f"📁 Project path: {self.project_path}")
-        generator_logger.info(f"\n📝 Quick start:")
-        generator_logger.info(f"   cd {self.project_name}")
-        generator_logger.info(f"   ./setup.sh  (or setup.bat on Windows)")
-        generator_logger.info(f"\n📝 Or manual setup:")
-        generator_logger.info(f"   1. cd {self.project_name}")
-        generator_logger.info(f"   2. cp env.sample.json env.json")
-        generator_logger.info(f"   3. pip install -r service/requirements.txt")
-        generator_logger.info(f"   4. cd service && python -m grpc_tools.protoc -I../proto --python_out=proto --grpc_python_out=proto ../proto/grpc.proto")
-        generator_logger.info(f"   5. python main.py --company {self.companies[0]} --version {self.versions[0]}")
-        generator_logger.info(f"   6. (In another terminal) python ../test_client.py")
+        # 14. Print project structure (skip if silent)
+        if not self.silent:
+            generator_logger.info("\nProject structure:")
+            self._print_tree(self.project_path)
+
+            generator_logger.info(f"\n✨ Project generation completed!")
+            generator_logger.info(f"📁 Project path: {self.project_path}")
+            generator_logger.info(f"\n📝 Quick start:")
+            generator_logger.info(f"   cd {self.project_name}")
+            generator_logger.info(f"   ./setup.sh  (or setup.bat on Windows)")
+            generator_logger.info(f"\n📝 Or manual setup:")
+            generator_logger.info(f"   1. cd {self.project_name}")
+            generator_logger.info(f"   2. cp env.sample.json env.json")
+            generator_logger.info(f"   3. pip install -r service/requirements.txt")
+            generator_logger.info(f"   4. cd service && python -m grpc_tools.protoc -I../proto --python_out=proto --grpc_python_out=proto ../proto/grpc.proto")
+            generator_logger.info(f"   5. python main.py")
+            generator_logger.info(f"   6. (In another terminal) python ../test_client.py")
 
     def _create_directory_structure(self):
         """Create project directory structure"""
@@ -247,27 +273,10 @@ class GrpcServiceGenerator:
         models_dir.mkdir(exist_ok=True)
         (models_dir / "__init__.py").touch()
 
-        # Create different model directory structures based on template type
-        if self.template_type == ServiceTemplate.SIMPLE:
-            # Simple template: only one model directory
-            model_dir = models_dir / "model"
-            model_dir.mkdir(exist_ok=True)
-            (model_dir / "__init__.py").touch()
-
-        elif self.template_type == ServiceTemplate.MULTI_VERSION:
-            # Multi-version template: version1, version2, ...
-            for version in self.versions:
-                version_dir = models_dir / version
-                version_dir.mkdir(exist_ok=True)
-                (version_dir / "__init__.py").touch()
-
-        elif self.template_type == ServiceTemplate.MULTI_COMPANY:
-            # Multi-company template: company/version/
-            for company in self.companies:
-                for version in self.versions:
-                    company_version_dir = models_dir / company / version
-                    company_version_dir.mkdir(parents=True, exist_ok=True)
-                    (company_version_dir / "__init__.py").touch()
+        # Simple template: only one model directory
+        model_dir = models_dir / "model"
+        model_dir.mkdir(exist_ok=True)
+        (model_dir / "__init__.py").touch()
 
         # Other directories
         (self.project_path / "proto").mkdir(exist_ok=True)
@@ -298,9 +307,9 @@ message MLResponse {
 
     def _generate_main(self):
         """Generate main.py"""
-        # Check if multi-process support is needed
-        multi_company = self.template_type == ServiceTemplate.MULTI_COMPANY
-        multi_version = self.template_type in [ServiceTemplate.MULTI_VERSION, ServiceTemplate.MULTI_COMPANY]
+        # Simple mode: no multi-company or multi-version support
+        multi_company = False
+        multi_version = False
 
         main_template = self._get_main_template()
 
@@ -320,8 +329,8 @@ message MLResponse {
         # 1. grpc_ml_module.py - Model loader
         ml_module_template = self._get_ml_module_template()
         ml_module_content = ml_module_template.render(
-            multi_company=self.template_type == ServiceTemplate.MULTI_COMPANY,
-            multi_version=self.template_type in [ServiceTemplate.MULTI_VERSION, ServiceTemplate.MULTI_COMPANY]
+            multi_company=False,
+            multi_version=False
         )
         (grpc_package_dir / "grpc_ml_module.py").write_text(ml_module_content)
 
@@ -337,18 +346,8 @@ message MLResponse {
         """Generate model modules"""
         models_dir = self.project_path / "service" / "models_modules"
 
-        # Generate different model files based on template type
-        if self.template_type == ServiceTemplate.SIMPLE:
-            self._generate_simple_model(models_dir / "model")
-
-        elif self.template_type == ServiceTemplate.MULTI_VERSION:
-            for version in self.versions:
-                self._generate_simple_model(models_dir / version)
-
-        elif self.template_type == ServiceTemplate.MULTI_COMPANY:
-            for company in self.companies:
-                for version in self.versions:
-                    self._generate_simple_model(models_dir / company / version)
+        # Simple mode: only one model directory
+        self._generate_simple_model(models_dir / "model")
 
     def _generate_simple_model(self, model_dir: Path):
         """Generate simple model example"""
@@ -364,154 +363,246 @@ message MLResponse {
         (model_dir / "Model.py").write_text(model_content, encoding='utf-8')
 
     def _generate_config(self):
-        """Generate configuration files"""
-        config = self._build_config_structure()
+        """Generate or update unified configuration file (NEW: unified config management)"""
+        # Build gRPC configuration
+        grpc_config = self._build_config_structure()
 
-        config_file = self.project_path / "env.sample.json"
-        config_file.write_text(json.dumps(config, indent=2, ensure_ascii=False))
+        # Find project root directory by searching upward for existing config
+        project_root = self._find_project_root()
+
+        # Check if env.json or env.sample.json exists in project root
+        env_json = project_root / "env.json"
+        env_sample_json = project_root / "env.sample.json"
+
+        if env_json.exists():
+            # Update existing env.json
+            self._update_config_file(env_json, grpc_config)
+            if not self.silent:
+                generator_logger.info(f"✓ Updated existing configuration: {env_json}")
+        elif env_sample_json.exists():
+            # Update existing env.sample.json
+            self._update_config_file(env_sample_json, grpc_config)
+            if not self.silent:
+                generator_logger.info(f"✓ Updated existing configuration: {env_sample_json}")
+        else:
+            # Create new env.sample.json in project root
+            env_sample_json.write_text(json.dumps(grpc_config, indent=2, ensure_ascii=False))
+            if not self.silent:
+                generator_logger.info(f"✓ Created new configuration file: {env_sample_json}")
+
+    def _find_project_root(self) -> Path:
+        """
+        Find project root directory by searching upward
+
+        Search strategy:
+        1. Check if output_dir has env.json or env.sample.json -> use it
+        2. Search parent directories (up to 3 levels) for config files
+        3. Search for .git directory
+        4. Fallback to output_dir
+
+        Returns:
+            Path to project root directory
+        """
+        current_dir = self.output_dir
+
+        # Strategy 1: Check current output_dir
+        if (current_dir / "env.json").exists() or (current_dir / "env.sample.json").exists():
+            return current_dir
+
+        # Strategy 2: Search parent directories for config files
+        # Stop if we encounter a .git directory (project boundary)
+        for _ in range(3):
+            parent = current_dir.parent
+            if parent == current_dir:  # Reached filesystem root
+                break
+
+            # Stop if parent has .git directory (different project)
+            if (parent / ".git").exists():
+                if not self.silent:
+                    generator_logger.info(f"Stopped at project boundary (.git found in {parent})")
+                break
+
+            if (parent / "env.json").exists() or (parent / "env.sample.json").exists():
+                if not self.silent:
+                    generator_logger.info(f"Found project root with config: {parent}")
+                return parent
+
+            current_dir = parent
+
+        # Strategy 3: Check if output_dir itself has .git directory
+        # (Don't search upward to avoid crossing project boundaries)
+        if (self.output_dir / ".git").exists():
+            if not self.silent:
+                generator_logger.info(f"Found project root with .git: {self.output_dir}")
+            return self.output_dir
+
+        # Fallback: use output_dir
+        if not self.silent:
+            generator_logger.info(f"Using output_dir as project root: {self.output_dir}")
+        return self.output_dir
+
+    def _update_config_file(self, config_file: Path, grpc_config: Dict):
+        """
+        Update existing configuration file with gRPC config
+
+        Args:
+            config_file: Path to existing configuration file
+            grpc_config: New gRPC configuration to merge
+        """
+        # Load existing config
+        with open(config_file, 'r', encoding='utf-8') as f:
+            existing_config = json.load(f)
+
+        # Ensure grpc section exists
+        if 'grpc' not in existing_config:
+            existing_config['grpc'] = {}
+
+        # Merge gRPC configuration
+        # For multi-company mode: update grpc.servers
+        if 'servers' in grpc_config.get('grpc', {}):
+            if 'servers' not in existing_config['grpc']:
+                existing_config['grpc']['servers'] = {}
+            # Merge server configurations
+            existing_config['grpc']['servers'].update(grpc_config['grpc']['servers'])
+
+        # For simple mode: update grpc.server
+        if 'server' in grpc_config.get('grpc', {}):
+            existing_config['grpc']['server'] = grpc_config['grpc']['server']
+
+        # Update other grpc-level configurations (sentry, etc.)
+        for key in ['sentry', 'logging']:
+            if key in grpc_config.get('grpc', {}):
+                existing_config['grpc'][key] = grpc_config['grpc'][key]
+
+        # Write back
+        with open(config_file, 'w', encoding='utf-8') as f:
+            json.dump(existing_config, f, indent=2, ensure_ascii=False)
 
     def _build_config_structure(self) -> Dict:
-        """Build configuration structure (New standard: using modelPaths)"""
+        """Build configuration structure (v1.0.0 standard - pipeline independent grpc)"""
         config = {
-            "projectName": self.project_name,
+            "config_version": "1.0.0",
+            "config_schema": "aigear-pipeline",
+            "last_updated": datetime.now().isoformat(),
+            "project_name": self.project_name,
             "environment": "local",
-            "grpc": {
-                "servers": {}
-            }
+            "pipelines": {}
         }
 
-        # Build different configuration structures based on template type
-        if self.template_type == ServiceTemplate.SIMPLE:
-            model_paths = self._build_model_paths("demo", "v1")
+        # Build pipeline configurations
+        # Use companies as pipeline names
+        for i, pipeline_name in enumerate(self.companies):
+            port = 50051 + i
 
-            config["grpc"]["server"] = {
-                "serviceHost": "0.0.0.0",
-                "port": "50051",
-                "modelPaths": {
-                    "v1": model_paths
+            # Build model paths
+            model_paths = self._build_model_paths(pipeline_name, "v1")
+
+            config["pipelines"][pipeline_name] = {
+                "pipeline_parameter": {},
+                "fetch_store_list": {},
+                "fetch_data": {},
+                "preprocessing": {},
+                "training": {},
+                "release": {
+                    "on": True,
+                    "to_bucket": True,
+                    "bucket_path": f"models/releases/{pipeline_name}/"
                 },
-                "multiProcessing": {
-                    "on": self.features.get('multi_processing', False),
-                    "processCount": 2,
-                    "threadCount": 10
-                },
-                "grpcOptions": {
-                    "maxMessageSize": self.features.get('max_message_size', 52428800),
-                    "keepalive": {
-                        "time": 60,
-                        "timeout": 5
-                    } if self.features.get('keepalive', True) else {}
-                }
-            }
-
-        elif self.template_type == ServiceTemplate.MULTI_VERSION:
-            model_paths_dict = {}
-            for version in self.versions:
-                model_paths_dict[version] = self._build_model_paths("demo", version)
-
-            config["grpc"]["server"] = {
-                "serviceHost": "0.0.0.0",
-                "port": "50051",
-                "modelPaths": model_paths_dict,
-                "multiProcessing": {
-                    "on": self.features.get('multi_processing', False),
-                    "processCount": 2,
-                    "threadCount": 10
-                },
-                "grpcOptions": {
-                    "maxMessageSize": self.features.get('max_message_size', 52428800),
-                    "keepalive": {
-                        "time": 60,
-                        "timeout": 5
-                    } if self.features.get('keepalive', True) else {}
-                }
-            }
-
-        elif self.template_type == ServiceTemplate.MULTI_COMPANY:
-            for i, company in enumerate(self.companies):
-                model_paths_dict = {}
-                for version in self.versions:
-                    model_paths_dict[version] = self._build_model_paths(company, version)
-
-                config["grpc"]["servers"][company] = {
-                    "serviceHost": "0.0.0.0",
-                    "port": str(50051 + i),
-                    "modelPaths": model_paths_dict,
-                    "multiProcessing": {
-                        "on": self.features.get('multi_processing', True),
-                        "processCount": 2,
-                        "threadCount": 10
+                "grpc": {
+                    "server": {
+                        "serviceHost": "0.0.0.0",
+                        "port": str(port),
+                        "modelPaths": model_paths,
+                        "multiProcessing": {
+                            "on": self.features.get('multi_processing', False),
+                            "processCount": 2,
+                            "threadCount": 10
+                        },
+                        "grpcOptions": {
+                            "maxMessageSize": self.features.get('max_message_size', 52428800),
+                            "keepalive": {
+                                "time": 60,
+                                "timeout": 5
+                            } if self.features.get('keepalive', True) else {}
+                        }
                     },
-                    "grpcOptions": {
-                        "maxMessageSize": self.features.get('max_message_size', 52428800),
-                        "keepalive": {
-                            "time": 60,
-                            "timeout": 5
-                        } if self.features.get('keepalive', True) else {}
-                    }
-                }
-
-        # Add Sentry configuration
-        if self.features.get('sentry', True):
-            config["grpc"]["sentry"] = {
-                "on": False,
-                "dsn": "https://your-sentry-dsn@sentry.io/project-id",
-                "tracesSampleRate": 1.0
-            }
-
-        # Add GKE deployment configuration (optional)
-        config["gke"] = {
-            "enabled": False,
-            "cluster": {
-                "name": f"{self.project_name}-cluster",
-                "nodeCount": 3,
-                "machineType": "e2-standard-4",
-                "diskSize": 100,
-                "enableAutoscaling": True,
-                "minNodes": 1,
-                "maxNodes": 10,
-                "enableAutopilot": False
-            },
-            "deployment": {
-                "replicas": 2,
-                "resources": {
-                    "requests": {
-                        "cpu": "500m",
-                        "memory": "1Gi"
+                    "deployment": {
+                        "enabled": False,
+                        "gke": {
+                            "enabled": False,
+                            "cluster": {
+                                "name": f"{pipeline_name}-cluster",
+                                "location": "asia-east1",
+                                "node_count": 3,
+                                "machine_type": "e2-standard-4",
+                                "disk_size": 100,
+                                "enable_autoscaling": True,
+                                "min_nodes": 1,
+                                "max_nodes": 10,
+                                "enable_autopilot": False
+                            },
+                            "deployment": {
+                                "replicas": 2,
+                                "resources": {
+                                    "requests": {
+                                        "cpu": "500m",
+                                        "memory": "1Gi"
+                                    },
+                                    "limits": {
+                                        "cpu": "2000m",
+                                        "memory": "4Gi"
+                                    }
+                                },
+                                "autoscaling": {
+                                    "enabled": True,
+                                    "min_replicas": 2,
+                                    "max_replicas": 10,
+                                    "target_cpu": 70
+                                }
+                            },
+                            "service": {
+                                "type": "LoadBalancer",
+                                "port": port,
+                                "annotations": {}
+                            },
+                            "image": {
+                                "repository": f"{pipeline_name}-grpc",
+                                "tag": "latest",
+                                "pull_policy": "Always"
+                            }
+                        },
+                        "docker": {
+                            "enabled": True,
+                            "base_image": "python:3.9-slim",
+                            "working_dir": "/app",
+                            "expose_ports": [port]
+                        }
                     },
-                    "limits": {
-                        "cpu": "2000m",
-                        "memory": "4Gi"
-                    }
-                },
-                "autoscaling": {
-                    "enabled": True,
-                    "minReplicas": 2,
-                    "maxReplicas": 10,
-                    "targetCPU": 70
+                    "sentry": {
+                        "on": False,
+                        "dsn": "https://your-sentry-dsn@sentry.io/project-id",
+                        "tracesSampleRate": 1.0,
+                        "environment": "production",
+                        "release": "1.0.0"
+                    } if self.features.get('sentry', True) else {"on": False}
                 }
-            },
-            "service": {
-                "type": "LoadBalancer",
-                "port": 50051
-            },
-            "image": {
-                "repository": "grpc-services",
-                "tag": "latest"
-            },
-            "modelStorage": {
-                "enabled": False,
-                "bucketName": f"{self.project_name}-models"
             }
-        }
-
-        # Add GCP project configuration for deployment
-        config["gcp"] = {
-            "projectId": "",
-            "region": "asia-northeast1"
-        }
 
         return config
+
+    def _get_preset_name(self) -> str:
+        """
+        Get preset name based on model types
+
+        Returns:
+            str: Preset name (e.g., 'recommendation', 'custom')
+        """
+        # Check if using recommendation models
+        if ModelType.RANKFM in self.model_types or ModelType.RECBOLE in self.model_types:
+            return "recommendation"
+
+        # Default to custom
+        return "custom"
 
     def _build_model_paths(self, company: str, version: str) -> Dict:
         """
@@ -524,16 +615,69 @@ message MLResponse {
         Returns:
             Model file path dictionary
         """
-        # Use custom model_files configuration if available
+        # Check if custom model_files configuration is available
         if version in self.model_files:
-            file_list = self.model_files[version]
-        elif 'default' in self.model_files:
-            file_list = self.model_files['default']
-        else:
-            # Default configuration: single model file
-            file_list = ['model_file']
+            config = self.model_files[version]
 
-        # Generate path dictionary
+            # Mode 1: If config is a dict with full paths, use it directly
+            if isinstance(config, dict) and any(path.startswith('gs://') or path.startswith('/') for path in config.values()):
+                # Replace template variables if enabled
+                if self.features.get('template_variables', False):
+                    model_paths = {}
+                    for key, path in config.items():
+                        # Replace ${company} and ${version} placeholders
+                        path = path.replace('${company}', company)
+                        path = path.replace('${version}', version)
+                        model_paths[key] = path
+                    return model_paths
+                else:
+                    return config
+
+            # Mode 2: If config is a list of file names, generate paths
+            elif isinstance(config, list):
+                file_list = config
+            else:
+                # Fallback: treat as list
+                file_list = ['model_file']
+
+        elif 'default' in self.model_files:
+            config = self.model_files['default']
+
+            # Same logic for default configuration
+            if isinstance(config, dict) and any(path.startswith('gs://') or path.startswith('/') for path in config.values()):
+                if self.features.get('template_variables', False):
+                    model_paths = {}
+                    for key, path in config.items():
+                        path = path.replace('${company}', company)
+                        path = path.replace('${version}', version)
+                        model_paths[key] = path
+                    return model_paths
+                else:
+                    return config
+            elif isinstance(config, list):
+                file_list = config
+            else:
+                file_list = ['model_file']
+        else:
+            # Default configuration: Use Manifest mode (NEW)
+            # Check if manifest mode is enabled (default: True)
+            use_manifest = self.features.get('use_manifest', True)
+
+            if use_manifest:
+                # Return Manifest mode configuration
+                base_path = f"/models/{company}/{version}/"
+                if self.features.get('template_variables', False):
+                    base_path = f"/models/${{company}}/${{version}}/"
+
+                return {
+                    "mode": "manifest",
+                    "base_path": base_path
+                }
+            else:
+                # Fallback to explicit path mode (for backward compatibility)
+                file_list = ['model_file']
+
+        # Generate path dictionary from file list (only for explicit path mode)
         model_paths = {}
         for file_key in file_list:
             # Support template variables
@@ -663,7 +807,7 @@ cp env.sample.json env.json
 
 ```bash
 cd service
-python main.py --company {self.companies[0]} --version {self.versions[0]}
+python main.py
 ```
 
 #### Docker Run
@@ -882,38 +1026,37 @@ def _run_server(bind_address: str, model_instance, grpc_options: dict, use_sentr
         server.stop(0)
 
 
-def main(company: str{% if multi_version %}, version: str{% endif %}):
+def main():
     """Main function"""
     logger.info("=" * 60)
     logger.info("Starting gRPC ML Service")
-    logger.info(f"Company: {company}")
-    {% if multi_version %}
-    logger.info(f"Version: {version}")
-    {% endif %}
     logger.info("=" * 60)
 
     # Load configuration using ConfigParser
     config_parser = grpc_config.ConfigParser("env.json")
 
+    # Simple mode: get first pipeline configuration
+    pipelines = config_parser.config.get('pipelines', {})
+    if not pipelines:
+        logger.error("No pipeline configuration found in env.json!")
+        sys.exit(1)
+
+    # Get first pipeline name
+    pipeline_name = list(pipelines.keys())[0]
+    pipeline_config = pipelines[pipeline_name]
+
     # Get server configuration
-    server_config = config_parser.get_server_config(company)
+    server_config = pipeline_config.get('grpc', {}).get('server', {})
     service_host = server_config.get('serviceHost', '0.0.0.0')
     port = server_config.get('port', '50051')
 
     # Get model paths (modelPaths format)
-    {% if multi_version %}
-    model_paths = config_parser.get_model_paths(company, version)
-    {% else %}
-    # For single version, get the first available version
-    model_paths_config = server_config.get('modelPaths', {})
-    version = list(model_paths_config.keys())[0] if model_paths_config else 'v1'
-    model_paths = config_parser.get_model_paths(company, version)
-    {% endif %}
+    model_paths = server_config.get('modelPaths', {})
 
     logger.info(f"Model paths configuration: {model_paths}")
 
     # Get gRPC options
-    grpc_options = config_parser.get_grpc_options(company)
+    grpc_options = server_config.get('grpcOptions', {})
     grpc_options['threadCount'] = server_config.get('multiProcessing', {}).get('threadCount', 10)
 
     # Get multiprocessing configuration
@@ -922,7 +1065,7 @@ def main(company: str{% if multi_version %}, version: str{% endif %}):
     process_count = multi_processing_config.get('processCount', 1)
 
     # Get Sentry configuration
-    sentry_config = config_parser.get_sentry_config()
+    sentry_config = pipeline_config.get('grpc', {}).get('sentry', {})
     sentry_enabled = sentry_config.get('on', False)
 
     if sentry_enabled:
@@ -933,15 +1076,16 @@ def main(company: str{% if multi_version %}, version: str{% endif %}):
         )
         logger.info("Sentry enabled")
 
-    # Load model dynamically
-    ml_module_instance = grpc_ml_module.MLModule(company{% if multi_version %}, version{% endif %})
-    model_class = ml_module_instance.load_module()
+    # Simple mode: directly load the model class
+    # No dynamic loading based on company/version
+    from models_modules.model.Model import Model
+    model_class = Model
 
     if model_class is None:
         logger.error("Model class not found!")
         sys.exit(1)
 
-    logger.info(f"Model class loaded for: {ml_module_instance.company_code}/{ml_module_instance.version}")
+    logger.info(f"Model class loaded: {model_class.__name__}")
 
     # Initialize model with modelPaths (new standard)
     model_instance = model_class(model_paths)
@@ -989,24 +1133,8 @@ def main(company: str{% if multi_version %}, version: str{% endif %}):
 if __name__ == '__main__':
     logger = grpc_log.GrpcLog().grpc_log()
 
-    parser = argparse.ArgumentParser(description='gRPC ML Service')
-    parser.add_argument('--company', required=True, help='Company code')
-    {% if multi_version %}
-    parser.add_argument('--version', required=True, help='Model version')
-    {% endif %}
-    args = parser.parse_args()
-
-    # Check parameters
-    if not args.company:
-        logger.error("Missing company code!")
-        sys.exit(1)
-    {% if multi_version %}
-    if not args.version:
-        logger.error("Missing version!")
-        sys.exit(1)
-    {% endif %}
-
-    main(args.company{% if multi_version %}, args.version{% endif %})
+    # Simple mode: no command line arguments needed
+    main()
 '''
         return Template(template_str)
 
@@ -1186,8 +1314,8 @@ def get_argument():
             template_str = '''"""
 Model Implementation - Scikit-learn Model
 
-This is a working example with a simple demo model.
-Replace with your actual model implementation.
+This is a working example that uses the auto-generated example models.
+The example includes a LogisticRegression model and a StandardScaler.
 """
 
 import joblib
@@ -1201,7 +1329,7 @@ class DemoModel:
 
     def predict(self, X):
         """Return binary predictions (0 or 1)"""
-        np.random.seed(42)  # For reproducible results
+        np.random.seed(42)
         n_samples = len(X) if hasattr(X, '__len__') else 1
         return np.random.randint(0, 2, size=n_samples)
 
@@ -1209,113 +1337,120 @@ class DemoModel:
         """Return prediction probabilities"""
         np.random.seed(42)
         n_samples = len(X) if hasattr(X, '__len__') else 1
-        # Generate random probabilities that sum to 1
         probs = np.random.dirichlet(np.ones(2), size=n_samples)
         return probs
 
 
 class Model:
-    """Scikit-learn model wrapper with demo mode"""
+    """Scikit-learn model wrapper with multi-model support"""
 
     def __init__(self, model_paths):
         """
-        Initialize model
+        Initialize model with multiple model files
 
         Args:
             model_paths: Model file paths dictionary, for example:
-                         {"model_file": "/path/to/model.pkl"}
-                         or just a string path for single model
+                         {
+                             "example_model": "/path/to/example_model.pkl",
+                             "scaler": "/path/to/scaler.pkl"
+                         }
         """
-        # Handle both dict and string formats
-        if isinstance(model_paths, dict):
-            self.model_path = model_paths.get('model_file') or list(model_paths.values())[0]
-        else:
-            self.model_path = model_paths
-
+        self.model_paths = model_paths if isinstance(model_paths, dict) else {"model": model_paths}
         self.demo_mode = False
-        self.model = self.load_model()
+        self.models = self.load_models()
 
-    def load_model(self):
-        """Load model (with demo fallback)"""
-        if os.path.exists(self.model_path):
-            try:
-                model = joblib.load(self.model_path)
-                print(f"[OK] Model loaded successfully from {self.model_path}")
-                return model
-            except Exception as e:
-                print(f"[WARNING] Error loading model: {e}")
-                print("-> Falling back to demo mode")
-                self.demo_mode = True
-                return self._create_demo_model()
-        else:
-            print(f"[WARNING] Model file not found: {self.model_path}")
-            print("-> Using demo mode for testing")
+    def load_models(self):
+        """Load all models from paths dictionary"""
+        models = {}
+
+        print(f"[INFO] Loading {len(self.model_paths)} model files...")
+
+        for model_name, model_path in self.model_paths.items():
+            if os.path.exists(model_path):
+                try:
+                    model = joblib.load(model_path)
+                    models[model_name] = model
+                    print(f"[OK] Loaded '{model_name}' from {model_path}")
+                except Exception as e:
+                    print(f"[WARNING] Error loading '{model_name}': {e}")
+            else:
+                print(f"[WARNING] Model file not found: {model_path}")
+
+        # Check if we have the required models
+        if not models:
+            print("[WARNING] No models loaded - using demo mode")
             self.demo_mode = True
-            return self._create_demo_model()
+            models['demo'] = self._create_demo_model()
+
+        return models
 
     def _create_demo_model(self):
-        """
-        Create a simple demo model for testing
-
-        This is a mock model that simulates predictions without requiring
-        an actual trained model file.
-        """
+        """Create a simple demo model for testing"""
         return DemoModel()
 
     def predict(self, data: dict):
         """
-        Prediction method
+        Prediction method with preprocessing support
 
         Args:
             data: Input data dictionary, for example:
                   {
-                      "features": [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
-                  }
-                  or
-                  {
-                      "feature1": 1.0,
-                      "feature2": 2.0,
-                      "feature3": 3.0
+                      "features": [[1.0, 2.0, 3.0, 4.0, 5.0]]
                   }
 
         Returns:
-            Prediction result, for example:
-            {
-                "predictions": [0, 1],
-                "probabilities": [[0.9, 0.1], [0.3, 0.7]],
-                "demo_mode": True  # Only present in demo mode
-            }
+            Prediction result with predictions and probabilities
         """
         if self.demo_mode:
             print("[DEMO] Running in DEMO mode - using simulated predictions")
 
         # Extract features from input
         if 'features' in data:
-            # Input format: {"features": [[1, 2, 3], [4, 5, 6]]}
             features = np.array(data['features'])
         else:
-            # Input format: {"feature1": 1, "feature2": 2, ...}
-            # Convert dict to list
+            # Convert dict to feature array
             feature_values = [v for k, v in sorted(data.items()) if k.startswith('feature')]
             if not feature_values:
-                # If no 'feature' keys, use all numeric values
                 feature_values = [v for v in data.values() if isinstance(v, (int, float))]
             features = np.array([feature_values])
 
+        # Apply preprocessing if scaler is available
+        if 'scaler' in self.models and not self.demo_mode:
+            try:
+                features = self.models['scaler'].transform(features)
+                print("[INFO] Applied scaler preprocessing")
+            except Exception as e:
+                print(f"[WARNING] Scaler transform failed: {e}")
+
+        # Get the main model (example_model or first available)
+        if self.demo_mode:
+            model = self.models['demo']
+        elif 'example_model' in self.models:
+            model = self.models['example_model']
+        else:
+            model = list(self.models.values())[0]
+
         # Make predictions
-        predictions = self.model.predict(features)
-        probabilities = self.model.predict_proba(features)
+        predictions = model.predict(features)
+
+        # Get probabilities if available
+        if hasattr(model, 'predict_proba'):
+            probabilities = model.predict_proba(features)
+        else:
+            # Fallback: create dummy probabilities
+            probabilities = np.zeros((len(features), 2))
+            probabilities[np.arange(len(features)), predictions] = 1.0
 
         result = {
             "predictions": predictions.tolist(),
             "probabilities": probabilities.tolist(),
-            "n_samples": len(features)
+            "n_samples": len(features),
+            "models_loaded": list(self.models.keys())
         }
 
-        # Add demo mode indicator
         if self.demo_mode:
             result["demo_mode"] = True
-            result["message"] = "Using demo model - replace with actual model file for production"
+            result["message"] = "Using demo model - example models are available"
 
         return result
 '''
@@ -1454,10 +1589,8 @@ CMD ["/opt/venv/bin/python", "/service/main.py"]
 
     def _get_docker_compose_content(self) -> str:
         """Get docker-compose.yml content"""
-        services = []
-
-        if self.template_type == ServiceTemplate.SIMPLE:
-            services.append(f'''  {self.project_name}-grpc:
+        # Simple mode: single service
+        services_yaml = f'''  {self.project_name}-grpc:
     build:
       context: .
       dockerfile: Dockerfile-grpc
@@ -1468,54 +1601,9 @@ CMD ["/opt/venv/bin/python", "/service/main.py"]
       - ./service:/service
       - ./env.json:/service/env.json
       - ./models:/models  # Mount models directory
-    command: /opt/venv/bin/python /service/main.py --company demo --version v1
+    command: /opt/venv/bin/python /service/main.py
     networks:
-      - backend''')
-
-        elif self.template_type == ServiceTemplate.MULTI_VERSION:
-            for i, version in enumerate(self.versions):
-                port = 50051 + i
-                services.append(f'''  {self.project_name}-{version}-grpc:
-    build:
-      context: .
-      dockerfile: Dockerfile-grpc
-    working_dir: /service
-    ports:
-      - "{port}:{port}"
-    volumes:
-      - ./service:/service
-      - ./env.json:/service/env.json
-      - ./models:/models  # Mount models directory
-    command: /opt/venv/bin/python /service/main.py --company demo --version {version}
-    environment:
-      - PORT={port}
-    networks:
-      - backend''')
-
-        elif self.template_type == ServiceTemplate.MULTI_COMPANY:
-            # For multi-company mode, use the port from env.json config
-            for i, company in enumerate(self.companies):
-                company_port = str(50051 + i)
-                # Create one service per company (not per company-version combination)
-                # The company can handle multiple versions internally
-                services.append(f'''  {self.project_name}-{company}-grpc:
-    build:
-      context: .
-      dockerfile: Dockerfile-grpc
-    working_dir: /service
-    ports:
-      - "{company_port}:{company_port}"
-    volumes:
-      - ./service:/service
-      - ./env.json:/service/env.json
-      - ./models:/models  # Mount models directory
-    command: /opt/venv/bin/python /service/main.py --company {company} --version {self.versions[0]}
-    environment:
-      - PORT={company_port}
-    networks:
-      - backend''')
-
-        services_yaml = "\n\n".join(services)
+      - backend'''
 
         return f'''version: '3.8'
 
@@ -1557,8 +1645,43 @@ class ConfigParser:
         Args:
             config_path: Configuration file path
         """
-        self.config_path = Path(config_path)
+        self.config_path = self._find_config_file(config_path)
         self.config = self._load_config()
+
+    def _find_config_file(self, config_path: str) -> Path:
+        """
+        Find configuration file by searching current and parent directories
+
+        Args:
+            config_path: Configuration file path
+
+        Returns:
+            Path to configuration file
+
+        Raises:
+            FileNotFoundError: If configuration file not found
+        """
+        path = Path(config_path)
+
+        # If absolute path or exists in current directory, use it directly
+        if path.is_absolute() or path.exists():
+            return path
+
+        # Search in current directory and parent directories (up to 5 levels)
+        current_dir = Path.cwd()
+        for _ in range(5):
+            candidate = current_dir / config_path
+            if candidate.exists():
+                return candidate
+
+            # Move to parent directory
+            parent = current_dir.parent
+            if parent == current_dir:  # Reached root
+                break
+            current_dir = parent
+
+        # Not found, return original path (will raise error in _load_config)
+        return path
 
     def _load_config(self) -> Dict:
         """Load configuration file"""
@@ -1589,7 +1712,7 @@ class ConfigParser:
 
     def get_model_paths(self, company: str, version: str) -> Dict:
         """
-        Get model paths configuration
+        Get model paths configuration (supports Manifest mode)
 
         Args:
             company: Company code
@@ -1599,10 +1722,45 @@ class ConfigParser:
             Model paths dictionary (with template variables replaced)
         """
         server_config = self.get_server_config(company)
-        model_paths = server_config.get('modelPaths', {}).get(version, {})
+        model_paths_config = server_config.get('modelPaths', {}).get(version, {})
 
-        # Replace template variables
-        return self._replace_variables(model_paths, company, version)
+        # Check if Manifest mode
+        if isinstance(model_paths_config, dict) and model_paths_config.get('mode') == 'manifest':
+            # Manifest mode: load models from manifest.json
+            base_path = model_paths_config.get('base_path', '')
+
+            # Replace template variables in base_path
+            base_path = self._replace_variables(base_path, company, version)
+
+            # Import ManifestLoader
+            try:
+                import sys
+                from pathlib import Path
+
+                # Add grpc_package to path if needed
+                grpc_package_path = Path(__file__).parent
+                if str(grpc_package_path) not in sys.path:
+                    sys.path.insert(0, str(grpc_package_path))
+
+                from grpc_manifest_loader import ManifestLoader
+
+                # Load models from manifest
+                loader = ManifestLoader(base_path)
+                model_paths = loader.load()
+
+                print(f"[INFO] Loaded {len(model_paths)} models from manifest in {base_path}")
+                return model_paths
+
+            except ImportError as e:
+                print(f"[WARNING] ManifestLoader not available: {e}")
+                print(f"[WARNING] Falling back to empty model paths")
+                return {}
+            except Exception as e:
+                print(f"[ERROR] Failed to load manifest: {e}")
+                raise
+        else:
+            # Explicit path mode: return paths directly
+            return self._replace_variables(model_paths_config, company, version)
 
     def _replace_variables(self, value: Any, company: str, version: str) -> Any:
         """
@@ -1653,41 +1811,102 @@ class ConfigParser:
         base_dir.mkdir(exist_ok=True)
         (base_dir / "__init__.py").touch()
 
-        # 1. BaseClassifier - Base classifier class (ALC style)
+        # 1. BaseClassifier - Base classifier class
         base_classifier_content = '''"""
 BaseClassifier - Classifier Model Base Class
 
-For classification tasks with multiple model files (like ALC)
+For classification tasks with multiple model files
 
 Features:
 - Supports multiple model files (features_min_max, scaler, rfc_model, catb_model, etc.)
 - modelPaths dictionary format
 - Batch model loading
+- Manifest-based auto-discovery (NEW)
 """
 
 import joblib
 import os
-from typing import Dict
+from typing import Dict, Union
+from pathlib import Path
+import sys
+
+# Import ManifestLoader
+sys.path.insert(0, str(Path(__file__).parent.parent))
+try:
+    from grpc_manifest_loader import ManifestLoader, ManifestError
+except ImportError:
+    ManifestLoader = None
+    ManifestError = Exception
 
 
 class BaseClassifier:
     """Base classifier"""
 
-    def __init__(self, model_path_dict: Dict[str, str]):
+    def __init__(self, model_path_config: Union[Dict[str, str], Dict]):
         """
         Initialize classifier
 
         Args:
-            model_path_dict: Model file path dictionary
-                For example: {
+            model_path_config: Model configuration, supports two modes:
+
+            Mode 1 - Explicit paths (backward compatible):
+                {
                     "features_min_max_model": "/path/to/features_min_max.pkl",
                     "scaler_model": "/path/to/scaler.pkl",
-                    "rfc_model": "/path/to/rfc_model.pkl",
-                    ...
+                    "rfc_model": "/path/to/rfc_model.pkl"
+                }
+
+            Mode 2 - Manifest-based (NEW):
+                {
+                    "mode": "manifest",
+                    "base_path": "/models/trial/alc3/"
                 }
         """
-        self.model_path_dict = model_path_dict
+        self.model_path_config = model_path_config
+        self.model_path_dict = self._resolve_model_paths()
         self.models = self.load_models()
+
+    def _resolve_model_paths(self) -> Dict[str, str]:
+        """
+        Resolve model paths from configuration
+
+        Returns:
+            Model file path dictionary
+        """
+        # Check if manifest mode
+        if isinstance(self.model_path_config, dict) and self.model_path_config.get('mode') == 'manifest':
+            return self._load_from_manifest()
+        else:
+            # Explicit paths mode (backward compatible)
+            return self.model_path_config
+
+    def _load_from_manifest(self) -> Dict[str, str]:
+        """Load model paths from manifest.json"""
+        if ManifestLoader is None:
+            raise ImportError("ManifestLoader not available. Please check grpc_manifest_loader.py")
+
+        base_path = self.model_path_config.get('base_path')
+        if not base_path:
+            raise ValueError("'base_path' is required for manifest mode")
+
+        print(f"[INFO] Loading models from manifest in: {base_path}")
+
+        try:
+            loader = ManifestLoader(base_path)
+            model_paths = loader.load()
+
+            # Print metadata
+            metadata = loader.get_metadata()
+            print(f"[INFO] Manifest version: {metadata.get('model_version')}")
+            print(f"[INFO] Created at: {metadata.get('created_at')}")
+
+            return model_paths
+        except ManifestError as e:
+            print(f"[ERROR] Manifest error: {e}")
+            raise
+        except Exception as e:
+            print(f"[ERROR] Failed to load manifest: {e}")
+            raise
 
     def load_models(self) -> Dict:
         """Batch load model files"""
@@ -1721,39 +1940,104 @@ class BaseClassifier:
 
         (base_dir / "base_classifier.py").write_text(base_classifier_content, encoding='utf-8')
 
-        # 2. BaseRecommender - Base recommender class (Macaron style)
+        # 2. BaseRecommender - Base recommender class for recommendation systems
         base_recommender_content = '''"""
 BaseRecommender - Recommender System Model Base Class
 
-For recommendation tasks with single model file (like Macaron)
+For recommendation tasks with single model file
 
 Features:
 - Single model file
 - modelPaths dictionary format (model_file)
 - RankFM and other recommendation algorithm support
+- Manifest-based auto-discovery (NEW)
 """
 
 import pickle
-from typing import Dict
+from typing import Dict, Union
+from pathlib import Path
+import sys
 from sentry_sdk import capture_exception
+
+# Import ManifestLoader
+sys.path.insert(0, str(Path(__file__).parent.parent))
+try:
+    from grpc_manifest_loader import ManifestLoader, ManifestError
+except ImportError:
+    ManifestLoader = None
+    ManifestError = Exception
 
 
 class BaseRecommender:
     """Base recommender system"""
 
-    def __init__(self, model_paths: Dict[str, str]):
+    def __init__(self, model_path_config: Union[Dict[str, str], Dict]):
         """
         Initialize recommendation model
 
         Args:
-            model_paths: Model file path dictionary
-                For example: {"model_file": "/path/to/model.pkl"}
+            model_path_config: Model configuration, supports two modes:
+
+            Mode 1 - Explicit paths (backward compatible):
+                {"model_file": "/path/to/model.pkl"}
+
+            Mode 2 - Manifest-based (NEW):
+                {
+                    "mode": "manifest",
+                    "base_path": "/models/trial/ape4/"
+                }
         """
-        self.model_path = model_paths.get('model_file')
+        self.model_path_config = model_path_config
+        self.model_path_dict = self._resolve_model_paths()
+
+        # Get the main model file path
+        self.model_path = self.model_path_dict.get('model_file')
         if not self.model_path:
-            raise ValueError("Missing 'model_file' key in model_paths")
+            raise ValueError("Missing 'model_file' key in model paths")
 
         self.model = self.load_model()
+
+    def _resolve_model_paths(self) -> Dict[str, str]:
+        """
+        Resolve model paths from configuration
+
+        Returns:
+            Model file path dictionary
+        """
+        # Check if manifest mode
+        if isinstance(self.model_path_config, dict) and self.model_path_config.get('mode') == 'manifest':
+            return self._load_from_manifest()
+        else:
+            # Explicit paths mode (backward compatible)
+            return self.model_path_config
+
+    def _load_from_manifest(self) -> Dict[str, str]:
+        """Load model paths from manifest.json"""
+        if ManifestLoader is None:
+            raise ImportError("ManifestLoader not available. Please check grpc_manifest_loader.py")
+
+        base_path = self.model_path_config.get('base_path')
+        if not base_path:
+            raise ValueError("'base_path' is required for manifest mode")
+
+        print(f"[INFO] Loading models from manifest in: {base_path}")
+
+        try:
+            loader = ManifestLoader(base_path)
+            model_paths = loader.load()
+
+            # Print metadata
+            metadata = loader.get_metadata()
+            print(f"[INFO] Manifest version: {metadata.get('model_version')}")
+            print(f"[INFO] Created at: {metadata.get('created_at')}")
+
+            return model_paths
+        except ManifestError as e:
+            print(f"[ERROR] Manifest error: {e}")
+            raise
+        except Exception as e:
+            print(f"[ERROR] Failed to load manifest: {e}")
+            raise
 
     def load_model(self):
         """Load model"""
@@ -1801,11 +2085,8 @@ class BaseRecommender:
 
     def _generate_test_client(self):
         """Generate test client script"""
-        # Determine the port based on template type
-        if self.template_type == ServiceTemplate.MULTI_COMPANY:
-            port = "50051"  # First company's port
-        else:
-            port = "50051"
+        # Simple mode: fixed port
+        port = "50051"
 
         test_client_content = f'''"""
 Test Client for gRPC ML Service
@@ -1893,7 +2174,7 @@ if __name__ == '__main__':
 
     def _generate_setup_scripts(self):
         """Generate setup scripts for quick project initialization"""
-        
+
         # Generate setup.sh for Linux/Mac
         setup_sh_content = f'''#!/bin/bash
 # Quick setup script for {self.project_name}
@@ -1905,13 +2186,27 @@ echo "  {self.project_name} Setup"
 echo "=================================="
 echo ""
 
-# 1. Copy environment configuration
-echo "1. Copying environment configuration..."
-if [ ! -f env.json ]; then
-    cp env.sample.json env.json
-    echo "   ✓ env.json created"
+# 1. Find and copy environment configuration
+echo "1. Finding environment configuration..."
+# Search for env.json in parent directories (up to 4 levels)
+ENV_PATH=""
+for i in . .. ../.. ../../.. ../../../..; do
+    if [ -f "$i/env.sample.json" ]; then
+        ENV_PATH="$i"
+        break
+    fi
+done
+
+if [ -z "$ENV_PATH" ]; then
+    echo "   [WARNING] env.sample.json not found in parent directories"
+    echo "   Please ensure env.json exists in project root"
 else
-    echo "   ℹ env.json already exists, skipping"
+    if [ ! -f "$ENV_PATH/env.json" ]; then
+        cp "$ENV_PATH/env.sample.json" "$ENV_PATH/env.json"
+        echo "   * env.json created at $ENV_PATH"
+    else
+        echo "   i env.json already exists at $ENV_PATH"
+    fi
 fi
 
 # 2. Create models directory
@@ -1923,7 +2218,7 @@ echo "   ✓ models directory created"
 # 3. Install Python dependencies
 echo ""
 echo "3. Installing Python dependencies..."
-pip install -r service/requirements.txt
+pip install -r service\/requirements.txt
 echo "   ✓ Dependencies installed"
 
 # 4. Compile proto files
@@ -1945,7 +2240,7 @@ echo "=================================="
 echo ""
 echo "To start the service:"
 echo "  cd service"
-echo "  python main.py --company {self.companies[0]} --version {self.versions[0]}"
+echo "  python main.py"
 echo ""
 echo "To test the service (in another terminal):"
 echo "  python test_client.py"
@@ -1970,13 +2265,27 @@ echo   {self.project_name} Setup
 echo ==================================
 echo.
 
-REM 1. Copy environment configuration
-echo 1. Copying environment configuration...
-if not exist env.json (
-    copy env.sample.json env.json
-    echo    * env.json created
+REM 1. Find and copy environment configuration
+echo 1. Finding environment configuration...
+set ENV_PATH=
+for %%i in (. .. ..\.. ..\..\.. ..\..\..\..\..) do (
+    if exist "%%i\\env.sample.json" (
+        set ENV_PATH=%%i
+        goto :found
+    )
+)
+:found
+
+if "%ENV_PATH%"=="" (
+    echo    [WARNING] env.sample.json not found in parent directories
+    echo    Please ensure env.json exists in project root
 ) else (
-    echo    i env.json already exists, skipping
+    if not exist "%ENV_PATH%\\env.json" (
+        copy "%ENV_PATH%\\env.sample.json" "%ENV_PATH%\\env.json"
+        echo    * env.json created at %ENV_PATH%
+    ) else (
+        echo    i env.json already exists at %ENV_PATH%
+    )
 )
 
 REM 2. Create models directory
@@ -2010,7 +2319,7 @@ echo ==================================
 echo.
 echo To start the service:
 echo   cd service
-echo   python main.py --company {self.companies[0]} --version {self.versions[0]}
+echo   python main.py
 echo.
 echo To test the service (in another terminal):
 echo   python test_client.py
@@ -2020,6 +2329,94 @@ pause
         
         setup_bat_file = self.project_path / "setup.bat"
         setup_bat_file.write_text(setup_bat_content, encoding='utf-8')
+
+    def _generate_dummy_models_script(self):
+        """Generate script to create dummy model files for testing"""
+
+        # Build model paths list based on companies and versions
+        # Generate ALC-style model files (classification models)
+        model_paths_list = []
+        for company in self.companies:
+            for version in self.versions:
+                model_paths_list.append(f'        "models/{company}/{version}/features_min_max.pkl",')
+                model_paths_list.append(f'        "models/{company}/{version}/scaler.pkl",')
+                model_paths_list.append(f'        "models/{company}/{version}/catb_model.pkl",')
+
+        models_list = '\n'.join(model_paths_list)
+
+        script_content = f'''#!/usr/bin/env python3
+"""
+Generate dummy model files for testing
+
+This script creates simple pickle files that can be used for testing the gRPC service.
+"""
+
+import pickle
+from pathlib import Path
+
+
+class DummyModel:
+    """A simple dummy model for testing purposes"""
+
+    def __init__(self, model_name="dummy_model", version="v1"):
+        self.model_name = model_name
+        self.version = version
+        self.trained = True
+
+    def predict(self, data):
+        """Dummy predict method"""
+        return {{"prediction": "dummy_result", "confidence": 0.95}}
+
+    def __repr__(self):
+        return f"DummyModel(name={{self.model_name}}, version={{self.version}})"
+
+
+def generate_dummy_model(output_path: Path):
+    """Generate a dummy model file"""
+    # Create parent directories if they don't exist
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Create dummy model
+    model = DummyModel()
+
+    # Save as pickle file
+    with open(output_path, 'wb') as f:
+        pickle.dump(model, f)
+
+    print(f"[OK] Generated dummy model: {{output_path}}")
+
+
+def main():
+    """Generate all required dummy models based on env.json"""
+    print("=" * 50)
+    print("  Generating Dummy Model Files")
+    print("=" * 50)
+    print()
+
+    # Define model paths based on env.json configuration
+    models_to_generate = [
+{models_list}
+    ]
+
+    for model_path in models_to_generate:
+        output_path = Path(model_path)
+        generate_dummy_model(output_path)
+
+    print()
+    print("=" * 50)
+    print("  All dummy models generated successfully!")
+    print("=" * 50)
+    print()
+    print("Note: These are dummy models for testing only.")
+    print("Replace them with your actual trained models before deployment.")
+
+
+if __name__ == "__main__":
+    main()
+'''
+
+        script_file = self.project_path / "generate_dummy_models.py"
+        script_file.write_text(script_content, encoding='utf-8')
 
     def _generate_gitignore(self):
         """Generate .gitignore file"""
@@ -2087,59 +2484,192 @@ htmlcov/
         gitignore_file = self.project_path / ".gitignore"
         gitignore_file.write_text(gitignore_content, encoding='utf-8')
 
+    def _generate_example_models_with_manifest(self):
+        """
+        Generate example model files with manifest.json (NEW)
+
+        This method creates:
+        1. Simple sklearn models for testing
+        2. manifest.json for each model directory
+        3. Ensures models are compatible with Manifest mode
+        """
+        import pickle
+        import json
+        from datetime import datetime
+
+        if not self.silent:
+            generator_logger.info("Generating example models with manifest...")
+
+        # For each company and version, generate models
+        for company in self.companies:
+            for version in self.versions:
+                model_dir = self.project_path / "models" / company / version
+                model_dir.mkdir(parents=True, exist_ok=True)
+
+                # Generate example models
+                models_info = self._create_example_models(model_dir, company, version)
+
+                # Generate manifest.json
+                self._create_manifest_file(model_dir, version, models_info)
+
+                if not self.silent:
+                    generator_logger.info(f"  ✓ Generated models and manifest for {company}/{version}")
+
+    def _create_example_models(self, model_dir: Path, company: str, version: str) -> dict:
+        """
+        Create example model files
+
+        Returns:
+            dict: Model information for manifest
+        """
+        import pickle
+        import numpy as np
+
+        models_info = {}
+
+        # Create a simple sklearn LogisticRegression model
+        try:
+            from sklearn.linear_model import LogisticRegression
+            from sklearn.preprocessing import StandardScaler
+
+            # Create and train a simple model
+            X_train = np.random.rand(100, 5)
+            y_train = np.random.randint(0, 2, 100)
+
+            model = LogisticRegression(random_state=42)
+            model.fit(X_train, y_train)
+
+            # Save model
+            model_file = model_dir / "example_model.pkl"
+            with open(model_file, 'wb') as f:
+                pickle.dump(model, f)
+
+            models_info["example_model"] = {
+                "file": "example_model.pkl",
+                "required": True,
+                "size_mb": round(model_file.stat().st_size / (1024 * 1024), 2),
+                "type": "sklearn.LogisticRegression"
+            }
+
+            # Create a scaler
+            scaler = StandardScaler()
+            scaler.fit(X_train)
+
+            scaler_file = model_dir / "scaler.pkl"
+            with open(scaler_file, 'wb') as f:
+                pickle.dump(scaler, f)
+
+            models_info["scaler"] = {
+                "file": "scaler.pkl",
+                "required": True,
+                "size_mb": round(scaler_file.stat().st_size / (1024 * 1024), 2),
+                "type": "sklearn.StandardScaler"
+            }
+
+        except ImportError:
+            # Fallback: create dummy models if sklearn not available
+            generator_logger.warning("sklearn not available, creating dummy models")
+
+            dummy_model = {"type": "dummy", "version": version}
+
+            model_file = model_dir / "example_model.pkl"
+            with open(model_file, 'wb') as f:
+                pickle.dump(dummy_model, f)
+
+            models_info["example_model"] = {
+                "file": "example_model.pkl",
+                "required": True,
+                "size_mb": round(model_file.stat().st_size / (1024 * 1024), 2),
+                "type": "dummy"
+            }
+
+        return models_info
+
+    def _create_manifest_file(self, model_dir: Path, version: str, models_info: dict):
+        """
+        Create manifest.json file
+
+        Args:
+            model_dir: Model directory path
+            version: Version number
+            models_info: Model information dictionary
+        """
+        import json
+        from datetime import datetime
+
+        manifest = {
+            "version": "1.0",
+            "model_version": version,
+            "created_at": datetime.utcnow().isoformat() + "Z",
+            "description": f"Example models for {version}",
+            "metadata": {
+                "framework": "sklearn",
+                "python_version": "3.8+",
+                "generated_by": "aigear-grpc",
+                "note": "These are example models for testing. Replace with your trained models."
+            },
+            "models": {}
+        }
+
+        # Add model information
+        for model_name, model_info in models_info.items():
+            manifest["models"][model_name] = {
+                "file": model_info["file"],
+                "required": model_info["required"],
+                "size_mb": model_info.get("size_mb", 0),
+                "type": model_info.get("type", "unknown")
+            }
+
+        # Write manifest.json
+        manifest_file = model_dir / "manifest.json"
+        with open(manifest_file, 'w', encoding='utf-8') as f:
+            json.dump(manifest, f, indent=2, ensure_ascii=False)
+
+        if not self.silent:
+            generator_logger.info(f"    ✓ Created manifest.json with {len(models_info)} models")
+
     def _create_models_directory(self):
         """Create models directory structure"""
         models_dir = self.project_path / "models"
         models_dir.mkdir(exist_ok=True)
-        
-        # Create .gitkeep to track empty directory
+
+        # Simple mode: flat structure, no subdirectories
+        # Just create .gitkeep to track the directory
         (models_dir / ".gitkeep").touch()
         
-        # Create subdirectories based on template type
-        if self.template_type == ServiceTemplate.MULTI_COMPANY:
-            for company in self.companies:
-                for version in self.versions:
-                    company_version_dir = models_dir / company / version
-                    company_version_dir.mkdir(parents=True, exist_ok=True)
-                    (company_version_dir / ".gitkeep").touch()
-        
         # Create README in models directory
-        models_readme = f'''# Models Directory
+        models_readme = '''# Models Directory
 
 Place your trained model files here.
 
 ## Directory Structure
 
-{"### Multi-Company Mode" if self.template_type == ServiceTemplate.MULTI_COMPANY else ""}
-{"" if self.template_type != ServiceTemplate.MULTI_COMPANY else """
-Each company and version has its own directory:
+Simple flat structure:
 ```
 models/
-├── {}/
-│   ├── {}/
-│   │   └── model_file.pkl
-│   └── {}/
-│       └── model_file.pkl
-└── {}/
-    ├── {}/
-    │   └── model_file.pkl
-    └── {}/
-        └── model_file.pkl
+├── model.pkl
+├── scaler.pkl
+└── other_model_files...
 ```
-""".format(self.companies[0], self.versions[0], self.versions[1] if len(self.versions) > 1 else "v2",
-           self.companies[1] if len(self.companies) > 1 else "company2",
-           self.versions[0], self.versions[1] if len(self.versions) > 1 else "v2")}
 
 ## Configuration
 
 Model file paths are configured in `env.json`:
 
 ```json
-"modelPaths": {{
-  "v1": {{
-    "model_file": "/models/company/v1/model_file.pkl"
-  }}
-}}
+"modelPaths": {
+  "model_file": "/models/model.pkl",
+  "scaler_file": "/models/scaler.pkl"
+}
+```
+
+Or use manifest mode (recommended):
+
+```json
+"modelPaths": {
+  "mode": "manifest",
+  "base_path": "/models/"
+}
 ```
 
 ## Demo Mode
@@ -2151,11 +2681,11 @@ If model files are not found, the service will automatically run in **demo mode*
 
 ## Adding Your Models
 
-1. Place your trained model files (`.pkl`, `.pth`, `.h5`, etc.) in the appropriate directory
+1. Place your trained model files (`.pkl`, `.pth`, `.h5`, etc.) directly in the models/ directory
 2. Update the `env.json` configuration if needed
 3. Restart the service
 
 The service will automatically load the real models when they are detected.
 '''
-        
+
         (models_dir / "README.md").write_text(models_readme, encoding='utf-8')

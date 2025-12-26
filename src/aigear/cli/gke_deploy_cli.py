@@ -11,6 +11,7 @@ import argparse
 import sys
 from pathlib import Path
 from aigear.infrastructure.gcp import Infra
+from aigear.common.config_parser import ConfigParser
 import logging
 
 
@@ -51,15 +52,9 @@ Examples:
     )
 
     parser.add_argument(
-        '--companies',
+        '--pipelines',
         type=str,
-        help='Comma-separated list of company codes (e.g., trial,aeon). If not provided, will read from env.json'
-    )
-
-    parser.add_argument(
-        '--versions',
-        type=str,
-        help='Comma-separated list of versions (e.g., alc3,alc4). If not provided, will read from env.json'
+        help='Comma-separated list of pipeline names (e.g., pipeline_v1,pipeline_v2). If not provided, will read from env.json'
     )
 
     parser.add_argument(
@@ -89,24 +84,31 @@ Examples:
         logger.error("Please ensure env.json exists with GKE configuration")
         sys.exit(1)
 
-    # Parse companies and versions
-    companies = None
-    versions = None
+    # Load configuration using ConfigParser
+    config_parser = ConfigParser(config_path=str(env_file))
+    if not config_parser.load():
+        logger.error("Failed to load configuration file")
+        sys.exit(1)
 
-    if args.companies:
-        companies = [c.strip() for c in args.companies.split(',')]
+    # Parse pipelines
+    pipelines = None
 
-    if args.versions:
-        versions = [v.strip() for v in args.versions.split(',')]
+    if args.pipelines:
+        pipelines = [p.strip() for p in args.pipelines.split(',')]
+    else:
+        # Auto-detect from config
+        pipelines = config_parser.get_pipelines()
+        if not pipelines:
+            logger.error("No pipelines found in env.json. Please specify --pipelines")
+            sys.exit(1)
+        logger.info(f"Auto-detected pipelines from env.json: {', '.join(pipelines)}")
 
     logger.info("=" * 60)
     logger.info("GKE Deployment Tool")
     logger.info("=" * 60)
     logger.info(f"Project directory: {project_dir}")
-    if companies:
-        logger.info(f"Companies: {', '.join(companies)}")
-    if versions:
-        logger.info(f"Versions: {', '.join(versions)}")
+    if pipelines:
+        logger.info(f"Pipelines: {', '.join(pipelines)}")
     logger.info(f"Use Cloud Build: {args.use_cloud_build}")
     logger.info("=" * 60)
 

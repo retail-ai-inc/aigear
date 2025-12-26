@@ -1,0 +1,307 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Aigear gRPC Configuration v1.0.0",
+  "type": "object",
+  "required": ["config_version", "config_schema", "grpc"],
+  "properties": {
+    "config_version": {
+      "type": "string",
+      "pattern": "^1\\.0\\.\\d+$",
+      "description": "配置文件版本号，必须是 1.0.x"
+    },
+    "config_schema": {
+      "type": "string",
+      "const": "aigear-grpc",
+      "description": "配置模式标识符"
+    },
+    "last_updated": {
+      "type": "string",
+      "format": "date-time",
+      "description": "最后更新时间（ISO 8601 格式）"
+    },
+    "project_name": {
+      "type": "string",
+      "description": "项目名称"
+    },
+    "environment": {
+      "type": "string",
+      "enum": ["local", "development", "staging", "production"],
+      "description": "运行环境"
+    },
+    "grpc": {
+      "type": "object",
+      "required": ["servers"],
+      "properties": {
+        "servers": {
+          "$ref": "#/definitions/servers"
+        },
+        "deployment": {
+          "$ref": "#/definitions/deployment"
+        },
+        "sentry": {
+          "$ref": "#/definitions/sentry"
+        }
+      }
+    }
+  },
+  "definitions": {
+    "servers": {
+      "type": "object",
+      "minProperties": 1,
+      "description": "gRPC 服务器配置，key 为公司名称",
+      "patternProperties": {
+        "^[a-zA-Z0-9_-]+$": {
+          "$ref": "#/definitions/serverConfig"
+        }
+      }
+    },
+    "serverConfig": {
+      "type": "object",
+      "required": ["serviceHost", "port", "modelPaths"],
+      "properties": {
+        "serviceHost": {
+          "type": "string",
+          "description": "服务监听地址"
+        },
+        "port": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "服务端口号"
+        },
+        "modelPaths": {
+          "$ref": "#/definitions/modelPaths"
+        },
+        "multiProcessing": {
+          "$ref": "#/definitions/multiProcessing"
+        },
+        "grpcOptions": {
+          "$ref": "#/definitions/grpcOptions"
+        }
+      }
+    },
+    "modelPaths": {
+      "type": "object",
+      "minProperties": 1,
+      "description": "模型路径配置，key 为版本名称",
+      "patternProperties": {
+        "^[a-zA-Z0-9_-]+$": {
+          "$ref": "#/definitions/modelPathConfig"
+        }
+      }
+    },
+    "modelPathConfig": {
+      "type": "object",
+      "required": ["mode", "base_path"],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["manifest", "explicit"],
+          "description": "模型加载模式"
+        },
+        "base_path": {
+          "type": "string",
+          "description": "模型基础路径，支持本地路径和 GCS 路径"
+        },
+        "manifest_file": {
+          "type": "string",
+          "default": "manifest.json",
+          "description": "Manifest 文件名"
+        }
+      }
+    },
+    "multiProcessing": {
+      "type": "object",
+      "properties": {
+        "on": {
+          "type": "boolean",
+          "description": "是否启用多进程"
+        },
+        "processCount": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "进程数量"
+        },
+        "threadCount": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "每个进程的线程数"
+        }
+      }
+    },
+    "grpcOptions": {
+      "type": "object",
+      "properties": {
+        "maxMessageSize": {
+          "type": "integer",
+          "minimum": 1024,
+          "description": "最大消息大小（字节）"
+        },
+        "keepalive": {
+          "type": "object",
+          "properties": {
+            "time": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "KeepAlive 时间间隔（秒）"
+            },
+            "timeout": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "KeepAlive 超时时间（秒）"
+            }
+          }
+        }
+      }
+    },
+    "deployment": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "是否启用部署"
+        },
+        "preset": {
+          "type": "string",
+          "description": "预设模板名称"
+        },
+        "model_source": {
+          "$ref": "#/definitions/modelSource"
+        },
+        "gke": {
+          "$ref": "#/definitions/gke"
+        },
+        "docker": {
+          "$ref": "#/definitions/docker"
+        }
+      }
+    },
+    "modelSource": {
+      "type": "object",
+      "properties": {
+        "from_release_bucket": {
+          "type": "boolean",
+          "description": "是否从 release bucket 获取模型"
+        },
+        "bucket_name": {
+          "type": "string",
+          "description": "GCS bucket 名称"
+        },
+        "custom_path": {
+          "type": "string",
+          "description": "自定义模型路径"
+        }
+      }
+    },
+    "gke": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "cluster": {
+          "$ref": "#/definitions/gkeCluster"
+        },
+        "deployment": {
+          "$ref": "#/definitions/gkeDeployment"
+        },
+        "service": {
+          "$ref": "#/definitions/gkeService"
+        },
+        "image": {
+          "$ref": "#/definitions/gkeImage"
+        }
+      }
+    },
+    "gkeCluster": {
+      "type": "object",
+      "properties": {
+        "name": {"type": "string"},
+        "location": {"type": "string"},
+        "node_count": {"type": "integer", "minimum": 1},
+        "machine_type": {"type": "string"},
+        "disk_size": {"type": "integer", "minimum": 10},
+        "enable_autoscaling": {"type": "boolean"},
+        "min_nodes": {"type": "integer", "minimum": 1},
+        "max_nodes": {"type": "integer", "minimum": 1},
+        "enable_autopilot": {"type": "boolean"}
+      }
+    },
+    "gkeDeployment": {
+      "type": "object",
+      "properties": {
+        "replicas": {"type": "integer", "minimum": 1},
+        "resources": {
+          "type": "object",
+          "properties": {
+            "requests": {"$ref": "#/definitions/resources"},
+            "limits": {"$ref": "#/definitions/resources"}
+          }
+        },
+        "autoscaling": {
+          "type": "object",
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "min_replicas": {"type": "integer", "minimum": 1},
+            "max_replicas": {"type": "integer", "minimum": 1},
+            "target_cpu": {"type": "integer", "minimum": 1, "maximum": 100}
+          }
+        }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "properties": {
+        "cpu": {"type": "string"},
+        "memory": {"type": "string"}
+      }
+    },
+    "gkeService": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["ClusterIP", "NodePort", "LoadBalancer"]
+        },
+        "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+        "annotations": {"type": "object"}
+      }
+    },
+    "gkeImage": {
+      "type": "object",
+      "properties": {
+        "repository": {"type": "string"},
+        "tag": {"type": "string"},
+        "pull_policy": {
+          "type": "string",
+          "enum": ["Always", "IfNotPresent", "Never"]
+        }
+      }
+    },
+    "docker": {
+      "type": "object",
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "base_image": {"type": "string"},
+        "working_dir": {"type": "string"},
+        "expose_ports": {
+          "type": "array",
+          "items": {"type": "integer"}
+        }
+      }
+    },
+    "sentry": {
+      "type": "object",
+      "properties": {
+        "on": {"type": "boolean"},
+        "dsn": {"type": "string"},
+        "tracesSampleRate": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "environment": {"type": "string"},
+        "release": {"type": "string"}
+      }
+    }
+  }
+}
