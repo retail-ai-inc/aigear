@@ -67,16 +67,13 @@ def create_project(args):
         logger.info(f"Pipeline: {args.pipeline}")
         logger.info(f"Output directory: {output_dir.absolute()}")
 
-        # Note: GrpcServiceGenerator needs to be updated to support pipeline-centric mode
-        # For now, we use companies=['demo'] and versions=['v1'] as placeholders
+        # Pipeline-centric mode: simple generator
         generator = GrpcServiceGenerator(
             project_name=config['project_name'],
-            service_template=config['service_template'],
             model_types=config['model_types'],
-            companies=[args.pipeline],  # Use pipeline name as company
-            versions=['v1'],  # Single version
             output_dir=output_dir,
-            features=config.get('features', {})
+            features=config.get('features', {}),
+            silent=False
         )
 
         generator.generate()

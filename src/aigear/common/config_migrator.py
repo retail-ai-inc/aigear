@@ -1,7 +1,7 @@
 """
-配置迁移工具
+Configuration Migration Tool
 
-提供配置文件从旧版本迁移到新版本的功能。
+Provides functionality to migrate configuration files from old versions to new versions.
 """
 
 import json
@@ -14,12 +14,12 @@ from .config_version import CURRENT_VERSION, compare_versions
 
 
 class ConfigMigrator:
-    """配置迁移工具"""
+    """Configuration Migration Tool"""
 
     def __init__(self):
         self.migrations = {
-            "0.0.0": self.migrate_from_legacy,  # 从旧版本迁移到 v1.0.0
-            # 未来版本的迁移函数在这里添加
+            "0.0.0": self.migrate_from_legacy,  # Migrate from legacy version to v1.0.0
+            # Future version migration functions can be added here
             # "1.0.0": self.migrate_1_0_to_1_1,
         }
 
@@ -27,24 +27,24 @@ class ConfigMigrator:
         self, config: dict, target_version: str = None, backup: bool = True
     ) -> dict:
         """
-        迁移配置到目标版本
+        Migrate configuration to target version
 
         Args:
-            config: 原始配置
-            target_version: 目标版本（默认为最新版本）
-            backup: 是否备份原配置
+            config: Original configuration
+            target_version: Target version (defaults to latest version)
+            backup: Whether to backup original configuration
 
         Returns:
-            dict: 迁移后的配置
+            dict: Migrated configuration
         """
         current_version = config.get("config_version", "0.0.0")
         target_version = target_version or CURRENT_VERSION
 
-        # 如果已经是目标版本，直接返回
+        # If already at target version, return directly
         if current_version == target_version:
             return config
 
-        # 执行迁移链
+        # Execute migration chain
         migrated_config = deepcopy(config)
 
         migration_path = self._get_migration_path(current_version, target_version)
@@ -53,7 +53,7 @@ class ConfigMigrator:
             if version in self.migrations:
                 migrated_config = self.migrations[version](migrated_config)
 
-        # 更新版本号和时间戳
+        # Update version number and timestamp
         migrated_config["config_version"] = target_version
         migrated_config["last_updated"] = datetime.now().isoformat()
 
@@ -61,31 +61,31 @@ class ConfigMigrator:
 
     def _get_migration_path(self, from_version: str, to_version: str) -> List[str]:
         """
-        获取迁移路径
+        Get migration path
 
         Args:
-            from_version: 起始版本
-            to_version: 目标版本
+            from_version: Starting version
+            to_version: Target version
 
         Returns:
-            List[str]: 需要执行的迁移版本列表
+            List[str]: List of migration versions to execute
         """
-        # 简化实现：如果是从旧版本迁移，只需要执行 0.0.0 迁移
+        # Simplified implementation: if migrating from legacy version, only need to execute 0.0.0 migration
         if from_version == "0.0.0" or "config_version" not in from_version:
             return ["0.0.0"]
 
-        # 未来可以实现更复杂的迁移路径
+        # More complex migration paths can be implemented in the future
         return []
 
     def migrate_from_legacy(self, config: dict) -> dict:
         """
-        从旧版本配置迁移到 v1.0.0
+        Migrate from legacy configuration to v1.0.0
 
         Args:
-            config: 旧版本配置
+            config: Legacy configuration
 
         Returns:
-            dict: v1.0.0 配置
+            dict: v1.0.0 configuration
         """
         new_config = {
             "config_version": "1.0.0",
@@ -93,50 +93,50 @@ class ConfigMigrator:
             "last_updated": datetime.now().isoformat(),
         }
 
-        # 保留基础字段
+        # Preserve basic fields
         if "project_name" in config:
             new_config["project_name"] = config["project_name"]
 
         if "environment" in config:
             new_config["environment"] = config["environment"]
 
-        # 保留 aigear 配置
+        # Preserve aigear configuration
         if "aigear" in config:
             new_config["aigear"] = config["aigear"]
 
-        # 迁移 pipelines 配置
+        # Migrate pipelines configuration
         if "pipelines" in config:
             new_config["pipelines"] = self._migrate_pipelines(config["pipelines"])
 
-        # 迁移 grpc 配置
+        # Migrate grpc configuration
         new_config["grpc"] = self._migrate_grpc_config(config)
 
         return new_config
 
     def _migrate_pipelines(self, pipelines: dict) -> dict:
         """
-        迁移 pipelines 配置
+        Migrate pipelines configuration
 
         Args:
-            pipelines: 旧的 pipelines 配置
+            pipelines: Old pipelines configuration
 
         Returns:
-            dict: 新的 pipelines 配置
+            dict: New pipelines configuration
         """
         new_pipelines = {}
 
         for pipeline_name, pipeline_config in pipelines.items():
             new_pipeline = deepcopy(pipeline_config)
 
-            # 处理 release 配置
+            # Handle release configuration
             if "release" in new_pipeline:
                 release_config = new_pipeline["release"]
 
-                # 删除旧的 grpc_service 配置
+                # Remove old grpc_service configuration
                 if "grpc_service" in release_config:
                     del release_config["grpc_service"]
 
-                # 简化 release 配置
+                # Simplify release configuration
                 new_pipeline["release"] = {
                     "on": release_config.get("on", True),
                     "to_bucket": True,
@@ -149,13 +149,13 @@ class ConfigMigrator:
 
     def _migrate_grpc_config(self, config: dict) -> dict:
         """
-        迁移 grpc 配置
+        Migrate grpc configuration
 
         Args:
-            config: 完整的旧配置
+            config: Complete old configuration
 
         Returns:
-            dict: 新的 grpc 配置
+            dict: New grpc configuration
         """
         old_grpc = config.get("grpc", {})
         new_grpc = {
@@ -163,7 +163,7 @@ class ConfigMigrator:
             "sentry": old_grpc.get("sentry", {"on": False}),
         }
 
-        # 从旧的 pipelines.*.release.grpc_service 提取部署配置
+        # Extract deployment configuration from old pipelines.*.release.grpc_service
         deployment_config = self._extract_deployment_config(config)
 
         if deployment_config:
@@ -173,15 +173,15 @@ class ConfigMigrator:
 
     def _extract_deployment_config(self, config: dict) -> Dict[str, Any]:
         """
-        从旧配置中提取部署配置
+        Extract deployment configuration from old configuration
 
         Args:
-            config: 旧配置
+            config: Old configuration
 
         Returns:
-            dict: 部署配置
+            dict: Deployment configuration
         """
-        # 从 pipelines.*.release.grpc_service 中提取
+        # Extract from pipelines.*.release.grpc_service
         for pipeline_config in config.get("pipelines", {}).values():
             grpc_service = pipeline_config.get("release", {}).get("grpc_service", {})
 
@@ -191,15 +191,15 @@ class ConfigMigrator:
                     "preset": grpc_service.get("preset", ""),
                 }
 
-                # 提取 model_source
+                # Extract model_source
                 if "model_source" in grpc_service:
                     deployment["model_source"] = grpc_service["model_source"]
 
-                # 提取 GKE 配置
+                # Extract GKE configuration
                 if "gke" in grpc_service:
                     deployment["gke"] = grpc_service["gke"]
 
-                # 添加 docker 配置（默认值）
+                # Add docker configuration (default values)
                 deployment["docker"] = {
                     "enabled": True,
                     "base_image": "python:3.9-slim",
@@ -219,43 +219,43 @@ def migrate_config_file(
     backup: bool = True,
 ) -> bool:
     """
-    迁移配置文件
+    Migrate configuration file
 
     Args:
-        input_file: 输入文件路径
-        output_file: 输出文件路径（默认为输入文件）
-        target_version: 目标版本（默认为最新版本）
-        backup: 是否备份原文件
+        input_file: Input file path
+        output_file: Output file path (defaults to input file)
+        target_version: Target version (defaults to latest version)
+        backup: Whether to backup original file
 
     Returns:
-        bool: 是否成功
+        bool: Whether successful
     """
     try:
-        # 读取原配置
+        # Read original configuration
         with open(input_file, "r", encoding="utf-8") as f:
             config = json.load(f)
 
-        # 备份原文件
+        # Backup original file
         if backup and output_file is None:
             backup_file = f"{input_file}.backup.{datetime.now().strftime('%Y%m%d_%H%M%S')}"
             with open(backup_file, "w", encoding="utf-8") as f:
                 json.dump(config, f, indent=2, ensure_ascii=False)
-            print(f"✅ 已备份原配置到: {backup_file}")
+            print(f"✅ Backed up original configuration to: {backup_file}")
 
-        # 执行迁移
+        # Execute migration
         migrator = ConfigMigrator()
         migrated_config = migrator.migrate(config, target_version, backup)
 
-        # 写入新配置
+        # Write new configuration
         output_path = output_file or input_file
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(migrated_config, f, indent=2, ensure_ascii=False)
 
-        print(f"✅ 配置已迁移到版本 {migrated_config['config_version']}")
-        print(f"✅ 新配置已保存到: {output_path}")
+        print(f"✅ Configuration migrated to version {migrated_config['config_version']}")
+        print(f"✅ New configuration saved to: {output_path}")
 
         return True
 
     except Exception as e:
-        print(f"❌ 迁移失败: {str(e)}")
+        print(f"❌ Migration failed: {str(e)}")
         return False

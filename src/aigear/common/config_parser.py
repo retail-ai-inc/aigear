@@ -1,7 +1,7 @@
 """
-增强的配置解析器
+Enhanced Configuration Parser
 
-支持新的配置结构，包括版本管理、验证和自动推断功能。
+Supports new configuration structure, including version management, validation, and auto-inference features.
 """
 
 import json
@@ -25,22 +25,22 @@ logger = Logging(log_name=__name__).console_logging()
 
 class ConfigParser:
     """
-    增强的配置解析器
+    Enhanced Configuration Parser
 
-    功能：
-    - 支持配置版本验证
-    - 自动向上查找配置文件（最多3级父目录）
-    - 提供便捷的配置访问方法
-    - 自动推断 companies 和 versions
+    Features:
+    - Support configuration version validation
+    - Automatically search upward for config files (up to 3 parent directories)
+    - Provide convenient configuration access methods
+    - Automatically infer companies and versions
     """
 
     def __init__(self, config_path: str = None, auto_find: bool = True):
         """
-        初始化配置解析器
+        Initialize configuration parser
 
         Args:
-            config_path: 配置文件路径（默认为 env.json）
-            auto_find: 是否自动向上查找配置文件
+            config_path: Configuration file path (defaults to env.json)
+            auto_find: Whether to automatically search upward for config file
         """
         self._config = None
         self._config_path = None
@@ -54,101 +54,101 @@ class ConfigParser:
 
     def _find_config_file(self, filename: str = "env.json", max_levels: int = 3) -> Optional[str]:
         """
-        向上查找配置文件
+        Search upward for configuration file
 
         Args:
-            filename: 配置文件名
-            max_levels: 最多向上查找的层级
+            filename: Configuration file name
+            max_levels: Maximum levels to search upward
 
         Returns:
-            str: 配置文件路径，如果未找到则返回 None
+            str: Configuration file path, or None if not found
         """
         current_dir = Path.cwd()
 
         for _ in range(max_levels + 1):
             config_file = current_dir / filename
             if config_file.exists():
-                logger.info(f"找到配置文件: {config_file}")
+                logger.info(f"Found configuration file: {config_file}")
                 return str(config_file)
 
-            # 向上一级
+            # Move up one level
             parent = current_dir.parent
-            if parent == current_dir:  # 已到根目录
+            if parent == current_dir:  # Reached root directory
                 break
             current_dir = parent
 
-        # 未找到，返回当前目录的默认路径
+        # Not found, return default path in current directory
         default_path = Path.cwd() / filename
-        logger.warning(f"未找到配置文件，使用默认路径: {default_path}")
+        logger.warning(f"Configuration file not found, using default path: {default_path}")
         return str(default_path)
 
     def load(self, validate: bool = True) -> bool:
         """
-        加载配置文件
+        Load configuration file
 
         Args:
-            validate: 是否验证配置
+            validate: Whether to validate configuration
 
         Returns:
-            bool: 是否成功加载
+            bool: Whether successfully loaded
         """
         if not os.path.exists(self._config_path):
-            logger.error(f"配置文件不存在: {self._config_path}")
+            logger.error(f"Configuration file does not exist: {self._config_path}")
             return False
 
         try:
             with open(self._config_path, "r", encoding="utf-8") as f:
                 self._config = json.load(f)
 
-            logger.info(f"成功加载配置文件: {self._config_path}")
+            logger.info(f"Successfully loaded configuration file: {self._config_path}")
 
-            # 验证配置
+            # Validate configuration
             if validate:
                 return self._validate()
 
             return True
 
         except json.JSONDecodeError as e:
-            logger.error(f"配置文件 JSON 格式错误: {str(e)}")
+            logger.error(f"Configuration file JSON format error: {str(e)}")
             return False
         except Exception as e:
-            logger.error(f"加载配置文件失败: {str(e)}")
+            logger.error(f"Failed to load configuration file: {str(e)}")
             return False
 
     def _validate(self) -> bool:
         """
-        验证配置文件
+        Validate configuration file
 
         Returns:
-            bool: 是否验证通过
+            bool: Whether validation passed
         """
-        # 验证版本
+        # Validate version
         is_valid, error_msg = validate_config_version(self._config)
         if not is_valid:
-            logger.error(f"配置版本验证失败: {error_msg}")
+            logger.error(f"Configuration version validation failed: {error_msg}")
             return False
 
-        # 验证结构
+        # Validate structure
         is_valid, errors = validate_config_structure(self._config)
         if not is_valid:
-            logger.error("配置结构验证失败:")
+            logger.error("Configuration structure validation failed:")
             for error in errors:
                 logger.error(f"  - {error}")
             return False
 
-        logger.info("配置验证通过")
+        logger.info("Configuration validation passed")
         return True
 
     def get(self, key: str, default: Any = None) -> Any:
         """
-        获取配置值（支持点号路径）
+        Get configuration value (supports dot notation path)
 
         Args:
-            key: 配置键（支持 "grpc.servers.demo.port" 格式）
-            default: 默认值
+            key: Configuration key (supports "grpc.servers.demo.port" format)
+            default: Default value
 
         Returns:
-            Any: 配置值
+            Any: Configuration value
         """
         if not self._config:
             self.load()
@@ -169,10 +169,10 @@ class ConfigParser:
 
     def get_config(self) -> Dict[str, Any]:
         """
-        获取完整配置
+        Get complete configuration
 
         Returns:
-            dict: 配置字典
+            dict: Configuration dictionary
         """
         if not self._config:
             self.load()
@@ -180,21 +180,21 @@ class ConfigParser:
         return deepcopy(self._config) if self._config else {}
 
     def get_config_path(self) -> str:
-        """获取配置文件路径"""
+        """Get configuration file path"""
         return self._config_path
 
     def get_config_version(self) -> str:
-        """获取配置版本"""
-        return self.get("config_version", "未知")
+        """Get configuration version"""
+        return self.get("config_version", "Unknown")
 
-    # ==================== Pipeline 配置相关方法 ====================
+    # ==================== Pipeline Configuration Related Methods ====================
 
     def get_pipelines(self) -> List[str]:
         """
-        获取所有 pipeline 列表
+        Get all pipeline list
 
         Returns:
-            List[str]: pipeline 名称列表
+            List[str]: List of pipeline names
         """
         if not self._config:
             self.load()
@@ -204,99 +204,99 @@ class ConfigParser:
 
     def get_pipeline_config(self, pipeline_name: str) -> Optional[Dict[str, Any]]:
         """
-        获取指定 pipeline 的配置
+        Get configuration for specified pipeline
 
         Args:
-            pipeline_name: pipeline 名称
+            pipeline_name: Pipeline name
 
         Returns:
-            dict: pipeline 配置
+            dict: Pipeline configuration
         """
         return self.get(f"pipelines.{pipeline_name}")
 
-    # ==================== gRPC 配置相关方法 ====================
+    # ==================== gRPC Configuration Related Methods ====================
 
     def get_grpc_server_config(self, pipeline_name: str) -> Optional[Dict[str, Any]]:
         """
-        获取指定 pipeline 的 gRPC 服务器配置
+        Get gRPC server configuration for specified pipeline
 
         Args:
-            pipeline_name: pipeline 名称
+            pipeline_name: Pipeline name
 
         Returns:
-            dict: gRPC 服务器配置
+            dict: gRPC server configuration
         """
         return self.get(f"pipelines.{pipeline_name}.grpc.server")
 
     def get_grpc_deployment_config(self, pipeline_name: str) -> Optional[Dict[str, Any]]:
         """
-        获取指定 pipeline 的 gRPC 部署配置
+        Get gRPC deployment configuration for specified pipeline
 
         Args:
-            pipeline_name: pipeline 名称
+            pipeline_name: Pipeline name
 
         Returns:
-            dict: gRPC 部署配置
+            dict: gRPC deployment configuration
         """
         return self.get(f"pipelines.{pipeline_name}.grpc.deployment")
 
     def get_grpc_gke_config(self, pipeline_name: str) -> Optional[Dict[str, Any]]:
         """
-        获取指定 pipeline 的 GKE 配置
+        Get GKE configuration for specified pipeline
 
         Args:
-            pipeline_name: pipeline 名称
+            pipeline_name: Pipeline name
 
         Returns:
-            dict: GKE 配置
+            dict: GKE configuration
         """
         return self.get(f"pipelines.{pipeline_name}.grpc.deployment.gke")
 
     def is_grpc_enabled(self, pipeline_name: str) -> bool:
         """
-        检查指定 pipeline 是否启用 gRPC
+        Check if gRPC is enabled for specified pipeline
 
         Args:
-            pipeline_name: pipeline 名称
+            pipeline_name: Pipeline name
 
         Returns:
-            bool: 是否启用
+            bool: Whether enabled
         """
         grpc_config = self.get(f"pipelines.{pipeline_name}.grpc")
         return grpc_config is not None
 
     def is_gke_enabled(self, pipeline_name: str) -> bool:
         """
-        检查指定 pipeline 是否启用 GKE 部署
+        Check if GKE deployment is enabled for specified pipeline
 
         Args:
-            pipeline_name: pipeline 名称
+            pipeline_name: Pipeline name
 
         Returns:
-            bool: 是否启用
+            bool: Whether enabled
         """
         return self.get(f"pipelines.{pipeline_name}.grpc.deployment.gke.enabled", False)
 
     def get_grpc_sentry_config(self, pipeline_name: str) -> Optional[Dict[str, Any]]:
         """
-        获取指定 pipeline 的 Sentry 配置
+        Get Sentry configuration for specified pipeline
 
         Args:
-            pipeline_name: pipeline 名称
+            pipeline_name: Pipeline name
 
         Returns:
-            dict: Sentry 配置
+            dict: Sentry configuration
         """
         return self.get(f"pipelines.{pipeline_name}.grpc.sentry")
 
     def is_sentry_enabled(self, pipeline_name: str) -> bool:
         """
-        检查指定 pipeline 是否启用 Sentry
+        Check if Sentry is enabled for specified pipeline
 
         Args:
-            pipeline_name: pipeline 名称
+            pipeline_name: Pipeline name
 
         Returns:
-            bool: 是否启用
+            bool: Whether enabled
         """
         return self.get(f"pipelines.{pipeline_name}.grpc.sentry.on", False)

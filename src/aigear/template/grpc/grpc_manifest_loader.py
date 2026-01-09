@@ -1,18 +1,20 @@
 """
-Manifest Loader - 模型清单加载器
+Manifest Loader - Model Manifest Loader
 
-用于读取和解析 manifest.json 文件，自动发现和加载模型文件。
+Used to read and parse manifest.json files, automatically discover and load model files.
 
 Features:
-- 读取 manifest.json 文件
-- 验证文件格式
-- 检查必需文件是否存在
-- 返回模型文件路径字典
-- 支持 GCS 和本地文件系统
+- Read manifest.json files
+- Validate file format
+- Check if required files exist
+- Return model file path dictionary
+- Support GCS and local file systems
 """
 
 import json
 import os
+import subprocess
+import tempfile
 from pathlib import Path
 from typing import Dict, Any, Optional
 import logging
@@ -21,47 +23,58 @@ logger = logging.getLogger(__name__)
 
 
 class ManifestError(Exception):
-    """Manifest 相关错误"""
+    """Manifest related errors"""
     pass
 
 
 class ManifestLoader:
-    """Manifest 加载器"""
+    """Manifest Loader"""
 
     def __init__(self, base_path: str, manifest_filename: str = "manifest.json"):
         """
-        初始化 Manifest 加载器
+        Initialize Manifest Loader
 
         Args:
-            base_path: 模型目录路径（可以是本地路径或 GCS 路径）
-            manifest_filename: Manifest 文件名（默认 "manifest.json"）
+            base_path: Model directory path (can be local path or GCS path)
+            manifest_filename: Manifest filename (default "manifest.json")
         """
-        self.base_path = Path(base_path)
+        self.base_path_str = base_path
         self.manifest_filename = manifest_filename
-        self.manifest_path = self.base_path / manifest_filename
         self.manifest_data = None
+
+        # Detect if it's a GCS path
+        self.is_gcs = base_path.startswith('gs://')
+
+        if self.is_gcs:
+            # GCS path: keep string format
+            self.base_path = base_path.rstrip('/')
+            self.manifest_path = f"{self.base_path}/{manifest_filename}"
+        else:
+            # Local path: use Path object
+            self.base_path = Path(base_path)
+            self.manifest_path = self.base_path / manifest_filename
 
     def load(self) -> Dict[str, str]:
         """
-        加载 manifest 并返回模型文件路径字典
+        Load manifest and return model file path dictionary
 
         Returns:
-            模型文件路径字典，格式：{"model_name": "/path/to/model.pkl"}
+            Model file path dictionary, format: {"model_name": "/path/to/model.pkl"}
 
         Raises:
-            ManifestError: 如果 manifest 文件不存在或格式错误
-            FileNotFoundError: 如果必需的模型文件不存在
+            ManifestError: If manifest file does not exist or has invalid format
+            FileNotFoundError: If required model files do not exist
         """
-        # 1. 读取 manifest 文件
+        # 1. Read manifest file
         self.manifest_data = self._read_manifest()
 
-        # 2. 验证格式
+        # 2. Validate format
         self._validate_manifest()
 
-        # 3. 构建模型路径字典
+        # 3. Build model path dictionary
         model_paths = self._build_model_paths()
 
-        # 4. 验证文件存在性
+        # 4. Verify file existence
         self._verify_files(model_paths)
 
         logger.info(f"Successfully loaded manifest from {self.manifest_path}")
@@ -70,7 +83,16 @@ class ManifestLoader:
         return model_paths
 
     def _read_manifest(self) -> Dict:
-        """读取 manifest.json 文件"""
+        """Read manifest.json file (supports local and GCS)"""
+        if self.is_gcs:
+            # Read from GCS
+            return self._read_manifest_from_gcs()
+        else:
+            # Read from local
+            return self._read_manifest_from_local()
+
+    def _read_manifest_from_local(self) -> Dict:
+        """Read manifest from local file system"""
         if not self.manifest_path.exists():
             raise ManifestError(
                 f"Manifest file not found: {self.manifest_path}\n"
@@ -86,12 +108,39 @@ class ManifestLoader:
         except Exception as e:
             raise ManifestError(f"Error reading manifest file: {e}")
 
+    def _read_manifest_from_gcs(self) -> Dict:
+        """Read manifest from GCS"""
+        try:
+            # Use gsutil cat to read GCS file content
+            result = subprocess.run(
+                ['gsutil', 'cat', self.manifest_path],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+
+            # Parse JSON
+            data = json.loads(result.stdout)
+            logger.info(f"Successfully read manifest from GCS: {self.manifest_path}")
+            return data
+
+        except subprocess.CalledProcessError as e:
+            raise ManifestError(
+                f"Failed to read manifest from GCS: {self.manifest_path}\n"
+                f"Error: {e.stderr}\n"
+                f"Please ensure gsutil is installed and you have access to the bucket."
+            )
+        except json.JSONDecodeError as e:
+            raise ManifestError(f"Invalid JSON format in GCS manifest file: {e}")
+        except Exception as e:
+            raise ManifestError(f"Error reading manifest from GCS: {e}")
+
     def _validate_manifest(self):
-        """验证 manifest 格式"""
+        """Validate manifest format"""
         if not isinstance(self.manifest_data, dict):
             raise ManifestError("Manifest must be a JSON object")
 
-        # 检查必需字段
+        # Check required fields
         if 'models' not in self.manifest_data:
             raise ManifestError("Manifest must contain 'models' field")
 
@@ -101,7 +150,7 @@ class ManifestLoader:
         if len(self.manifest_data['models']) == 0:
             raise ManifestError("'models' field cannot be empty")
 
-        # 验证每个模型条目
+        # Validate each model entry
         for model_name, model_info in self.manifest_data['models'].items():
             if not isinstance(model_info, dict):
                 raise ManifestError(f"Model '{model_name}' info must be a dictionary")
@@ -110,22 +159,33 @@ class ManifestLoader:
                 raise ManifestError(f"Model '{model_name}' must have 'file' field")
 
     def _build_model_paths(self) -> Dict[str, str]:
-        """构建模型文件路径字典"""
+        """Build model file path dictionary (supports local and GCS)"""
         model_paths = {}
 
         for model_name, model_info in self.manifest_data['models'].items():
-            # 获取文件名
+            # Get filename
             filename = model_info['file']
 
-            # 构建完整路径
-            full_path = self.base_path / filename
+            if self.is_gcs:
+                # GCS path: return full gs:// path
+                full_path = f"{self.base_path}/{filename}"
+            else:
+                # Local path: use Path object
+                full_path = self.base_path / filename
+                full_path = str(full_path)
 
-            model_paths[model_name] = str(full_path)
+            model_paths[model_name] = full_path
 
         return model_paths
 
     def _verify_files(self, model_paths: Dict[str, str]):
-        """验证模型文件是否存在"""
+        """Verify if model files exist (supports local and GCS)"""
+        if self.is_gcs:
+            # GCS mode: skip file verification (will verify during download)
+            logger.info("GCS mode: Skipping file existence check (will verify during download)")
+            return
+
+        # Local mode: verify file existence
         models_info = self.manifest_data['models']
 
         for model_name, model_path in model_paths.items():
@@ -141,15 +201,15 @@ class ManifestLoader:
                     )
                 else:
                     logger.warning(f"Optional model file not found: {model_path} (model: {model_name})")
-                    # 从字典中移除不存在的可选文件
+                    # Remove non-existent optional files from dictionary
                     del model_paths[model_name]
 
     def get_metadata(self) -> Dict[str, Any]:
         """
-        获取 manifest 中的元数据
+        Get metadata from manifest
 
         Returns:
-            元数据字典
+            Metadata dictionary
         """
         if self.manifest_data is None:
             raise ManifestError("Manifest not loaded yet. Call load() first.")
@@ -164,13 +224,13 @@ class ManifestLoader:
 
     def get_model_info(self, model_name: str) -> Optional[Dict]:
         """
-        获取特定模型的信息
+        Get information for a specific model
 
         Args:
-            model_name: 模型名称
+            model_name: Model name
 
         Returns:
-            模型信息字典，如果不存在则返回 None
+            Model information dictionary, or None if not found
         """
         if self.manifest_data is None:
             raise ManifestError("Manifest not loaded yet. Call load() first.")
@@ -179,10 +239,10 @@ class ManifestLoader:
 
     def list_models(self) -> list:
         """
-        列出所有模型名称
+        List all model names
 
         Returns:
-            模型名称列表
+            List of model names
         """
         if self.manifest_data is None:
             raise ManifestError("Manifest not loaded yet. Call load() first.")
@@ -192,14 +252,14 @@ class ManifestLoader:
 
 def load_models_from_manifest(base_path: str, manifest_filename: str = "manifest.json") -> Dict[str, str]:
     """
-    便捷函数：从 manifest 加载模型路径
+    Convenience function: Load model paths from manifest
 
     Args:
-        base_path: 模型目录路径
-        manifest_filename: Manifest 文件名
+        base_path: Model directory path
+        manifest_filename: Manifest filename
 
     Returns:
-        模型文件路径字典
+        Model file path dictionary
 
     Example:
         >>> model_paths = load_models_from_manifest("/models/trial/alc3/")

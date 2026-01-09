@@ -1,30 +1,30 @@
 """
-配置版本管理模块
+Configuration Version Management Module
 
-提供配置文件的版本验证、比较和管理功能。
+Provides version validation, comparison, and management functionality for configuration files.
 """
 
 from typing import Tuple
 from packaging import version as pkg_version
 
 
-# 版本常量
+# Version constants
 MIN_SUPPORTED_VERSION = "1.0.0"
 CURRENT_VERSION = "1.0.0"
-MAX_SUPPORTED_VERSION = "1.999.999"  # 支持所有 1.x 版本
+MAX_SUPPORTED_VERSION = "1.999.999"  # Support all 1.x versions
 
 CONFIG_SCHEMA = "aigear-grpc"
 
 
 def is_version_supported(config_version: str) -> bool:
     """
-    检查配置版本是否被当前代码支持
+    Check if the configuration version is supported by current code
 
     Args:
-        config_version: 配置文件版本号
+        config_version: Configuration file version number
 
     Returns:
-        bool: 是否支持该版本
+        bool: Whether the version is supported
     """
     try:
         v = pkg_version.parse(config_version)
@@ -38,14 +38,14 @@ def is_version_supported(config_version: str) -> bool:
 
 def compare_versions(version1: str, version2: str) -> int:
     """
-    比较两个版本号
+    Compare two version numbers
 
     Args:
-        version1: 版本号1
-        version2: 版本号2
+        version1: Version number 1
+        version2: Version number 2
 
     Returns:
-        int: -1 (version1 < version2), 0 (相等), 1 (version1 > version2)
+        int: -1 (version1 < version2), 0 (equal), 1 (version1 > version2)
     """
     v1 = pkg_version.parse(version1)
     v2 = pkg_version.parse(version2)
@@ -60,13 +60,13 @@ def compare_versions(version1: str, version2: str) -> int:
 
 def get_version_info(config_version: str) -> dict:
     """
-    获取版本详细信息
+    Get detailed version information
 
     Args:
-        config_version: 配置文件版本号
+        config_version: Configuration file version number
 
     Returns:
-        dict: 版本信息
+        dict: Version information
     """
     v = pkg_version.parse(config_version)
 
@@ -83,41 +83,41 @@ def get_version_info(config_version: str) -> dict:
 
 def validate_config_version(config: dict) -> Tuple[bool, str]:
     """
-    验证配置文件的版本信息
+    Validate configuration file version information
 
     Args:
-        config: 配置字典
+        config: Configuration dictionary
 
     Returns:
-        Tuple[bool, str]: (是否有效, 错误信息)
+        Tuple[bool, str]: (Whether valid, Error message)
     """
-    # 检查 config_version 字段
+    # Check config_version field
     if "config_version" not in config:
-        return False, "配置文件缺少 config_version 字段"
+        return False, "Configuration file is missing config_version field"
 
     config_version = config["config_version"]
 
-    # 检查版本格式
+    # Check version format
     try:
         pkg_version.parse(config_version)
     except Exception as e:
-        return False, f"config_version 格式无效: {config_version}"
+        return False, f"config_version format is invalid: {config_version}"
 
-    # 检查版本支持
+    # Check version support
     if not is_version_supported(config_version):
         return False, (
-            f"不支持的配置版本: {config_version}\n"
-            f"当前代码支持的版本范围: {MIN_SUPPORTED_VERSION} - {MAX_SUPPORTED_VERSION}"
+            f"Unsupported configuration version: {config_version}\n"
+            f"Current code supports version range: {MIN_SUPPORTED_VERSION} - {MAX_SUPPORTED_VERSION}"
         )
 
-    # 检查 config_schema 字段
+    # Check config_schema field
     if "config_schema" not in config:
-        return False, "配置文件缺少 config_schema 字段"
+        return False, "Configuration file is missing config_schema field"
 
     if config["config_schema"] != CONFIG_SCHEMA:
         return False, (
-            f"config_schema 不匹配: {config['config_schema']}\n"
-            f"期望值: {CONFIG_SCHEMA}"
+            f"config_schema does not match: {config['config_schema']}\n"
+            f"Expected value: {CONFIG_SCHEMA}"
         )
 
     return True, ""

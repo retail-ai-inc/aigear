@@ -113,9 +113,7 @@ class GrpcServiceGenerator:
         self.output_dir = output_dir or Path.cwd()
         self.silent = silent
 
-        # Simple mode: fixed company and version
-        self.companies = ["demo"]
-        self.versions = ["v1"]
+        # Simple mode: single pipeline
         self.template_type = ServiceTemplate.SIMPLE
 
         # Feature configuration (new)
@@ -246,30 +244,26 @@ class GrpcServiceGenerator:
             generator_logger.info(f"\n📝 Or manual setup:")
             generator_logger.info(f"   1. cd {self.project_name}")
             generator_logger.info(f"   2. cp env.sample.json env.json")
-            generator_logger.info(f"   3. pip install -r service/requirements.txt")
-            generator_logger.info(f"   4. cd service && python -m grpc_tools.protoc -I../proto --python_out=proto --grpc_python_out=proto ../proto/grpc.proto")
+            generator_logger.info(f"   3. pip install -r requirements.txt")
+            generator_logger.info(f"   4. python -m grpc_tools.protoc -I./proto --python_out=proto --grpc_python_out=proto ./proto/grpc.proto")
             generator_logger.info(f"   5. python main.py")
-            generator_logger.info(f"   6. (In another terminal) python ../test_client.py")
+            generator_logger.info(f"   6. (In another terminal) python test_client.py")
 
     def _create_directory_structure(self):
         """Create project directory structure"""
         # Main directory
         self.project_path.mkdir(parents=True, exist_ok=True)
 
-        # Service directory
-        service_dir = self.project_path / "service"
-        service_dir.mkdir(exist_ok=True)
+        # grpc_package directory (directly under project root)
+        (self.project_path / "grpc_package").mkdir(exist_ok=True)
+        (self.project_path / "grpc_package" / "__init__.py").touch()
 
-        # grpc_package directory
-        (service_dir / "grpc_package").mkdir(exist_ok=True)
-        (service_dir / "grpc_package" / "__init__.py").touch()
+        # proto directory (directly under project root)
+        (self.project_path / "proto").mkdir(exist_ok=True)
+        (self.project_path / "proto" / "__init__.py").touch()
 
-        # proto directory
-        (service_dir / "proto").mkdir(exist_ok=True)
-        (service_dir / "proto" / "__init__.py").touch()
-
-        # models_modules directory
-        models_dir = service_dir / "models_modules"
+        # models_modules directory (directly under project root)
+        models_dir = self.project_path / "models_modules"
         models_dir.mkdir(exist_ok=True)
         (models_dir / "__init__.py").touch()
 
@@ -279,10 +273,8 @@ class GrpcServiceGenerator:
         (model_dir / "__init__.py").touch()
 
         # Other directories
-        (self.project_path / "proto").mkdir(exist_ok=True)
+        (self.project_path / "models").mkdir(exist_ok=True)
         (self.project_path / "cloudbuild").mkdir(exist_ok=True)
-        (self.project_path / "docs").mkdir(exist_ok=True)
-        (self.project_path / "kms").mkdir(exist_ok=True)
 
     def _generate_proto(self):
         """Generate proto files"""
@@ -307,24 +299,17 @@ message MLResponse {
 
     def _generate_main(self):
         """Generate main.py"""
-        # Simple mode: no multi-company or multi-version support
-        multi_company = False
-        multi_version = False
 
         main_template = self._get_main_template()
 
-        main_content = main_template.render(
-            multi_company=multi_company,
-            multi_version=multi_version,
-            template_type=self.template_type.value
-        )
+        main_content = main_template.render(template_type=self.template_type.value)
 
-        main_file = self.project_path / "service" / "main.py"
+        main_file = self.project_path / "main.py"
         main_file.write_text(main_content)
 
     def _generate_grpc_package(self):
         """Generate files in grpc_package directory"""
-        grpc_package_dir = self.project_path / "service" / "grpc_package"
+        grpc_package_dir = self.project_path / "grpc_package"
 
         # 1. grpc_ml_module.py - Model loader
         ml_module_template = self._get_ml_module_template()
@@ -344,7 +329,7 @@ message MLResponse {
 
     def _generate_model_modules(self):
         """Generate model modules"""
-        models_dir = self.project_path / "service" / "models_modules"
+        models_dir = self.project_path / "models_modules"
 
         # Simple mode: only one model directory
         self._generate_simple_model(models_dir / "model")
@@ -363,32 +348,16 @@ message MLResponse {
         (model_dir / "Model.py").write_text(model_content, encoding='utf-8')
 
     def _generate_config(self):
-        """Generate or update unified configuration file (NEW: unified config management)"""
+        """Generate configuration file in project directory"""
         # Build gRPC configuration
         grpc_config = self._build_config_structure()
 
-        # Find project root directory by searching upward for existing config
-        project_root = self._find_project_root()
+        # Create env.sample.json in project directory (not in parent directory)
+        env_sample_json = self.project_path / "env.sample.json"
+        env_sample_json.write_text(json.dumps(grpc_config, indent=2, ensure_ascii=False))
 
-        # Check if env.json or env.sample.json exists in project root
-        env_json = project_root / "env.json"
-        env_sample_json = project_root / "env.sample.json"
-
-        if env_json.exists():
-            # Update existing env.json
-            self._update_config_file(env_json, grpc_config)
-            if not self.silent:
-                generator_logger.info(f"✓ Updated existing configuration: {env_json}")
-        elif env_sample_json.exists():
-            # Update existing env.sample.json
-            self._update_config_file(env_sample_json, grpc_config)
-            if not self.silent:
-                generator_logger.info(f"✓ Updated existing configuration: {env_sample_json}")
-        else:
-            # Create new env.sample.json in project root
-            env_sample_json.write_text(json.dumps(grpc_config, indent=2, ensure_ascii=False))
-            if not self.silent:
-                generator_logger.info(f"✓ Created new configuration file: {env_sample_json}")
+        if not self.silent:
+            generator_logger.info(f"✓ Created configuration file: env.sample.json")
 
     def _find_project_root(self) -> Path:
         """
@@ -489,15 +458,14 @@ message MLResponse {
             "pipelines": {}
         }
 
-        # Build pipeline configurations
-        # Use companies as pipeline names
-        for i, pipeline_name in enumerate(self.companies):
-            port = 50051 + i
+        # Build pipeline configuration (single pipeline)
+        pipeline_name = self.project_name
+        port = 50051
 
-            # Build model paths
-            model_paths = self._build_model_paths(pipeline_name, "v1")
+        # Build model paths
+        model_paths = self._build_model_paths()
 
-            config["pipelines"][pipeline_name] = {
+        config["pipelines"][pipeline_name] = {
                 "pipeline_parameter": {},
                 "fetch_store_list": {},
                 "fetch_data": {},
@@ -514,8 +482,8 @@ message MLResponse {
                         "port": str(port),
                         "modelPaths": model_paths,
                         "multiProcessing": {
-                            "on": self.features.get('multi_processing', False),
-                            "processCount": 2,
+                            "on": False,
+                            "processCount": 1,
                             "threadCount": 10
                         },
                         "grpcOptions": {
@@ -604,91 +572,18 @@ message MLResponse {
         # Default to custom
         return "custom"
 
-    def _build_model_paths(self, company: str, version: str) -> Dict:
+    def _build_model_paths(self) -> Dict:
         """
-        Build modelPaths configuration for a single version
-
-        Args:
-            company: Company code
-            version: Version number
+        Build modelPaths configuration
 
         Returns:
             Model file path dictionary
         """
-        # Check if custom model_files configuration is available
-        if version in self.model_files:
-            config = self.model_files[version]
-
-            # Mode 1: If config is a dict with full paths, use it directly
-            if isinstance(config, dict) and any(path.startswith('gs://') or path.startswith('/') for path in config.values()):
-                # Replace template variables if enabled
-                if self.features.get('template_variables', False):
-                    model_paths = {}
-                    for key, path in config.items():
-                        # Replace ${company} and ${version} placeholders
-                        path = path.replace('${company}', company)
-                        path = path.replace('${version}', version)
-                        model_paths[key] = path
-                    return model_paths
-                else:
-                    return config
-
-            # Mode 2: If config is a list of file names, generate paths
-            elif isinstance(config, list):
-                file_list = config
-            else:
-                # Fallback: treat as list
-                file_list = ['model_file']
-
-        elif 'default' in self.model_files:
-            config = self.model_files['default']
-
-            # Same logic for default configuration
-            if isinstance(config, dict) and any(path.startswith('gs://') or path.startswith('/') for path in config.values()):
-                if self.features.get('template_variables', False):
-                    model_paths = {}
-                    for key, path in config.items():
-                        path = path.replace('${company}', company)
-                        path = path.replace('${version}', version)
-                        model_paths[key] = path
-                    return model_paths
-                else:
-                    return config
-            elif isinstance(config, list):
-                file_list = config
-            else:
-                file_list = ['model_file']
-        else:
-            # Default configuration: Use Manifest mode (NEW)
-            # Check if manifest mode is enabled (default: True)
-            use_manifest = self.features.get('use_manifest', True)
-
-            if use_manifest:
-                # Return Manifest mode configuration
-                base_path = f"/models/{company}/{version}/"
-                if self.features.get('template_variables', False):
-                    base_path = f"/models/${{company}}/${{version}}/"
-
-                return {
-                    "mode": "manifest",
-                    "base_path": base_path
-                }
-            else:
-                # Fallback to explicit path mode (for backward compatibility)
-                file_list = ['model_file']
-
-        # Generate path dictionary from file list (only for explicit path mode)
-        model_paths = {}
-        for file_key in file_list:
-            # Support template variables
-            if self.features.get('template_variables', False):
-                path = f"/models/${{company}}/${{version}}/{file_key}.pkl"
-            else:
-                path = f"/models/{company}/{version}/{file_key}.pkl"
-
-            model_paths[file_key] = path
-
-        return model_paths
+        # Use Manifest mode with unified model path
+        return {
+            "mode": "manifest",
+            "base_path": "./models/"
+        }
 
     def _generate_docker_files(self):
         """Generate Docker related files"""
@@ -736,14 +631,12 @@ venv/
         # Merge and deduplicate
         all_requirements = sorted(set(base_requirements + model_requirements))
 
-        service_dir = self.project_path / "service"
-
         # 1. Generate merged requirements.txt
-        req_file = service_dir / "requirements.txt"
+        req_file = self.project_path / "requirements.txt"
         req_file.write_text("\n".join(all_requirements) + "\n")
 
         # 2. Generate requirements_base.txt (base dependencies only)
-        base_req_file = service_dir / "requirements_base.txt"
+        base_req_file = self.project_path / "requirements_base.txt"
         base_req_file.write_text("\n".join(sorted(set(base_requirements))) + "\n")
 
         # 3. Generate version-specific requirements files (if model_files configured)
@@ -756,7 +649,7 @@ venv/
                 version_requirements = base_requirements.copy()
 
                 # Infer model type based on version (simplified logic, can be extended later)
-                version_req_file = service_dir / f"requirements_{version}.txt"
+                version_req_file = self.project_path / f"requirements_{version}.txt"
                 version_requirements.extend(model_requirements)
 
                 version_req_file.write_text("\n".join(sorted(set(version_requirements))) + "\n")
@@ -771,27 +664,24 @@ This is a gRPC machine learning service project generated using aigear.
 
 - **Template Type**: {self.template_type.value}
 - **Model Types**: {', '.join([m.value for m in self.model_types])}
-- **Companies**: {', '.join(self.companies)}
-- **Versions**: {', '.join(self.versions)}
 
 ## Quick Start
 
 ### 1. Install Dependencies
 
 ```bash
-cd service
 pip install -r requirements.txt
 ```
 
 ### 2. Compile Proto Files
 
 ```bash
-python -m grpc_tools.protoc -I../proto --python_out=proto --grpc_python_out=proto ../proto/grpc.proto
+python -m grpc_tools.protoc -I./proto --python_out=proto --grpc_python_out=proto ./proto/grpc.proto
 ```
 
 ### 3. Implement Models
 
-Edit model files under `service/models_modules/` and implement the `predict()` method.
+Edit model files under `models_modules/` and implement the `predict()` method.
 
 ### 4. Configure Environment
 
@@ -806,7 +696,6 @@ cp env.sample.json env.json
 #### Local Run
 
 ```bash
-cd service
 python main.py
 ```
 
@@ -820,13 +709,12 @@ docker-compose up
 
 ```
 {self.project_name}/
-├── service/               # gRPC service code
-│   ├── main.py            # Main entry point
-│   ├── grpc_package/      # gRPC toolkit
-│   ├── models_modules/    # Model implementations
-│   ├── proto/             # Compiled proto files
-│   └── requirements.txt   # Python dependencies
-├── proto/                 # Proto definitions
+├── main.py                # Main entry point
+├── grpc_package/          # gRPC toolkit
+├── models_modules/        # Model implementations
+├── proto/                 # Proto definitions and compiled files
+├── models/                # Model files storage
+├── requirements.txt       # Python dependencies
 ├── docker-compose.yml     # Docker orchestration
 ├── Dockerfile-grpc        # Docker image
 └── env.sample.json        # Configuration example
@@ -1562,8 +1450,8 @@ class Model:
         return f'''FROM python:3.12-slim-bookworm
 COPY --from=ghcr.io/astral-sh/uv:0.5.14 /uv /uvx /bin/
 
-WORKDIR /service
-COPY /service .
+WORKDIR /app
+COPY . .
 COPY env.json .
 
 # Install system dependencies
@@ -1584,7 +1472,7 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
 # Default command (can be overridden in docker-compose)
-CMD ["/opt/venv/bin/python", "/service/main.py"]
+CMD ["/opt/venv/bin/python", "/app/main.py"]
 '''
 
     def _get_docker_compose_content(self) -> str:
@@ -1594,14 +1482,14 @@ CMD ["/opt/venv/bin/python", "/service/main.py"]
     build:
       context: .
       dockerfile: Dockerfile-grpc
-    working_dir: /service
+    working_dir: /app
     ports:
       - "50051:50051"
     volumes:
-      - ./service:/service
-      - ./env.json:/service/env.json
-      - ./models:/models  # Mount models directory
-    command: /opt/venv/bin/python /service/main.py
+      - .:/app
+      - ./env.json:/app/env.json
+      - ./models:/app/models  # Mount models directory to /app/models
+    command: /opt/venv/bin/python /app/main.py
     networks:
       - backend'''
 
@@ -1619,7 +1507,7 @@ networks:
 
     def _generate_config_parser(self):
         """Generate grpc_config.py configuration parser"""
-        grpc_package_dir = self.project_path / "service" / "grpc_package"
+        grpc_package_dir = self.project_path / "grpc_package"
 
         config_parser_content = '''"""
 gRPC Config Parser - Configuration Parser
@@ -1806,7 +1694,7 @@ class ConfigParser:
 
     def _generate_base_classes(self):
         """Generate base class templates"""
-        grpc_package_dir = self.project_path / "service" / "grpc_package"
+        grpc_package_dir = self.project_path / "grpc_package"
         base_dir = grpc_package_dir / "base"
         base_dir.mkdir(exist_ok=True)
         (base_dir / "__init__.py").touch()
@@ -1859,7 +1747,7 @@ class BaseClassifier:
             Mode 2 - Manifest-based (NEW):
                 {
                     "mode": "manifest",
-                    "base_path": "/models/trial/alc3/"
+                    "base_path": "./models/trial/alc3/"
                 }
         """
         self.model_path_config = model_path_config
@@ -1984,7 +1872,7 @@ class BaseRecommender:
             Mode 2 - Manifest-based (NEW):
                 {
                     "mode": "manifest",
-                    "base_path": "/models/trial/ape4/"
+                    "base_path": "./models/trial/ape4/"
                 }
         """
         self.model_path_config = model_path_config
@@ -2095,7 +1983,7 @@ This is a simple test client to verify the gRPC service is working correctly.
 """
 
 import grpc
-from service.proto import grpc_pb2, grpc_pb2_grpc
+from proto import grpc_pb2, grpc_pb2_grpc
 from google.protobuf import struct_pb2
 
 service_api = 'localhost:{port}'
@@ -2218,19 +2106,17 @@ echo "   ✓ models directory created"
 # 3. Install Python dependencies
 echo ""
 echo "3. Installing Python dependencies..."
-pip install -r service\/requirements.txt
+pip install -r requirements.txt
 echo "   ✓ Dependencies installed"
 
 # 4. Compile proto files
 echo ""
 echo "4. Compiling proto files..."
-cd service
-python -m grpc_tools.protoc -I../proto --python_out=proto --grpc_python_out=proto ../proto/grpc.proto
+python -m grpc_tools.protoc -I./proto --python_out=proto --grpc_python_out=proto ./proto/grpc.proto
 
 # Fix import statement in generated grpc file
 sed -i 's/^import grpc_pb2 as grpc__pb2/from . import grpc_pb2 as grpc__pb2/' proto/grpc_pb2_grpc.py
 
-cd ..
 echo "   ✓ Proto files compiled"
 
 echo ""
@@ -2239,7 +2125,6 @@ echo "  Setup Complete!"
 echo "=================================="
 echo ""
 echo "To start the service:"
-echo "  cd service"
 echo "  python main.py"
 echo ""
 echo "To test the service (in another terminal):"
@@ -2297,19 +2182,17 @@ echo    * models directory created
 REM 3. Install Python dependencies
 echo.
 echo 3. Installing Python dependencies...
-pip install -r service\requirements.txt
+pip install -r requirements.txt
 echo    * Dependencies installed
 
 REM 4. Compile proto files
 echo.
 echo 4. Compiling proto files...
-cd service
-python -m grpc_tools.protoc -I../proto --python_out=proto --grpc_python_out=proto ../proto/grpc.proto
+python -m grpc_tools.protoc -I./proto --python_out=proto --grpc_python_out=proto ./proto/grpc.proto
 
 REM Fix import statement in generated grpc file
 powershell -Command "(Get-Content proto\grpc_pb2_grpc.py) -replace '^import grpc_pb2 as grpc__pb2', 'from . import grpc_pb2 as grpc__pb2' | Set-Content proto\grpc_pb2_grpc.py"
 
-cd ..
 echo    * Proto files compiled
 
 echo.
@@ -2318,7 +2201,6 @@ echo   Setup Complete!
 echo ==================================
 echo.
 echo To start the service:
-echo   cd service
 echo   python main.py
 echo.
 echo To test the service (in another terminal):
@@ -2326,21 +2208,28 @@ echo   python test_client.py
 echo.
 pause
 '''
-        
+
         setup_bat_file = self.project_path / "setup.bat"
         setup_bat_file.write_text(setup_bat_content, encoding='utf-8')
+
+        # Generate entrypoint.sh for Docker
+        # NOTE: Removed GCS download logic - using volume mount approach like Macaron
+        # self._generate_entrypoint_script()
+
+    # NOTE: Removed _generate_entrypoint_script method
+    # Using volume mount approach like Macaron instead of GCS download logic
+    # def _generate_entrypoint_script(self):
+    #     """Generate entrypoint.sh for Docker with GCS support"""
+    #     ... (method removed)
 
     def _generate_dummy_models_script(self):
         """Generate script to create dummy model files for testing"""
 
-        # Build model paths list based on companies and versions
-        # Generate ALC-style model files (classification models)
-        model_paths_list = []
-        for company in self.companies:
-            for version in self.versions:
-                model_paths_list.append(f'        "models/{company}/{version}/features_min_max.pkl",')
-                model_paths_list.append(f'        "models/{company}/{version}/scaler.pkl",')
-                model_paths_list.append(f'        "models/{company}/{version}/catb_model.pkl",')
+        # Build model paths list for unified models directory
+        model_paths_list = [
+            '        "models/example_model.pkl",',
+            '        "models/scaler.pkl",',
+        ]
 
         models_list = '\n'.join(model_paths_list)
 
@@ -2464,9 +2353,9 @@ models/*
 !models/.gitkeep
 
 # Proto compiled files
-service/proto/*_pb2.py
-service/proto/*_pb2_grpc.py
-service/proto/*_pb2.pyi
+proto/*_pb2.py
+proto/*_pb2_grpc.py
+proto/*_pb2.pyi
 
 # Logs
 *.log
@@ -2486,11 +2375,11 @@ htmlcov/
 
     def _generate_example_models_with_manifest(self):
         """
-        Generate example model files with manifest.json (NEW)
+        Generate example model files with manifest.json
 
         This method creates:
         1. Simple sklearn models for testing
-        2. manifest.json for each model directory
+        2. manifest.json for model directory
         3. Ensures models are compatible with Manifest mode
         """
         import pickle
@@ -2500,27 +2389,28 @@ htmlcov/
         if not self.silent:
             generator_logger.info("Generating example models with manifest...")
 
-        # For each company and version, generate models
-        for company in self.companies:
-            for version in self.versions:
-                model_dir = self.project_path / "models" / company / version
-                model_dir.mkdir(parents=True, exist_ok=True)
+        # Generate models in unified models directory
+        model_dir = self.project_path / "models"
+        model_dir.mkdir(parents=True, exist_ok=True)
 
-                # Generate example models
-                models_info = self._create_example_models(model_dir, company, version)
+        # Generate example models
+        models_info = self._create_example_models(model_dir)
 
-                # Generate manifest.json
-                self._create_manifest_file(model_dir, version, models_info)
+        # Generate manifest.json
+        self._create_manifest_file(model_dir, models_info)
 
-                if not self.silent:
-                    generator_logger.info(f"  ✓ Generated models and manifest for {company}/{version}")
+        if not self.silent:
+            generator_logger.info(f"  ✓ Generated models and manifest")
 
-    def _create_example_models(self, model_dir: Path, company: str, version: str) -> dict:
+    def _create_example_models(self, model_dir: Path) -> dict:
         """
         Create example model files
 
+        Args:
+            model_dir: Directory to save models
+
         Returns:
-            dict: Model information for manifest
+            Dictionary of model information for manifest
         """
         import pickle
         import numpy as np
@@ -2585,13 +2475,12 @@ htmlcov/
 
         return models_info
 
-    def _create_manifest_file(self, model_dir: Path, version: str, models_info: dict):
+    def _create_manifest_file(self, model_dir: Path, models_info: dict):
         """
         Create manifest.json file
 
         Args:
             model_dir: Model directory path
-            version: Version number
             models_info: Model information dictionary
         """
         import json
@@ -2599,9 +2488,9 @@ htmlcov/
 
         manifest = {
             "version": "1.0",
-            "model_version": version,
+            "model_version": "1.0",
             "created_at": datetime.utcnow().isoformat() + "Z",
-            "description": f"Example models for {version}",
+            "description": f"Example models for testing",
             "metadata": {
                 "framework": "sklearn",
                 "python_version": "3.8+",
@@ -2668,7 +2557,7 @@ Or use manifest mode (recommended):
 ```json
 "modelPaths": {
   "mode": "manifest",
-  "base_path": "/models/"
+  "base_path": "./models/"
 }
 ```
 
