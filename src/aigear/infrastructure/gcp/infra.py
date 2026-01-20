@@ -1,7 +1,4 @@
 import json
-import subprocess
-from pathlib import Path
-
 from aigear.common.logger import Logging
 from aigear.common.sh import run_sh
 from aigear.common.config import AigearConfig
@@ -13,6 +10,7 @@ from aigear.infrastructure.gcp.pub_sub import PubSub
 from aigear.infrastructure.gcp.artifacts import Artifacts
 from aigear.infrastructure.gcp.pre_vm_image import PreVMImage
 from aigear.infrastructure.gcp.constant import entry_point_of_cloud_fuction
+from aigear.infrastructure.gcp.kubernetes import KubernetesCluster
 
 logger = Logging(log_name=__name__).console_logging()
 
@@ -99,6 +97,15 @@ class Infra:
             custom_image_name=self.aigear_config.gcp.pre_vm_image.custom_image_name,
             bake_timeout_sec=self.aigear_config.gcp.pre_vm_image.bake_timeout_sec,
             bake_poll_interval_sec=self.aigear_config.gcp.pre_vm_image.bake_poll_interval_sec,
+        )
+
+        self.kubernetes_cluster = KubernetesCluster(
+            cluster_name=self.aigear_config.gcp.kubernetes.cluster_name,
+            zone=self.location,
+            num_nodes=self.aigear_config.gcp.kubernetes.num_nodes,
+            min_nodes=self.aigear_config.gcp.kubernetes.min_nodes,
+            max_nodes=self.aigear_config.gcp.kubernetes.max_nodes,
+            project_id=self.project_id,
         )
 
     # ================================================================
@@ -281,6 +288,20 @@ class Infra:
                 f"Skipping custom VM image ({self.aigear_config.gcp.pre_vm_image.custom_image_name}) creation."
             )
 
+        # Kubernetes Cluster
+        if self.aigear_config.gcp.kubernetes.on:
+            success = self._step(
+                f"Kubernetes Cluster ({self.aigear_config.gcp.kubernetes.cluster_name})",
+                self._ensure_kubernetes_cluster
+            )
+            if not success:
+                failed_steps.append(f"Kubernetes Cluster ({self.aigear_config.gcp.kubernetes.cluster_name})")
+        else:
+            logger.info(
+                f"Kubernetes Cluster creation is disabled in the configuration file. "
+                f"Skipping Kubernetes Cluster ({self.aigear_config.gcp.cloud_function.function_name}) setup."
+            )
+
         # Summary
         logger.info("\n===================================================")
         if failed_steps:
@@ -426,4 +447,21 @@ class Infra:
             logger.info(
                 f"Pre-VM custom image ({self.aigear_config.gcp.pre_vm_image.custom_image_name}) already exists in "
                 f"project ({self.project_id}). Skipping creation."
+            )
+
+    def _ensure_kubernetes_cluster(self):
+        exists = self.kubernetes_cluster.describe()
+        if not exists:
+            logger.info(
+                f"Kubernetes Cluster ({self.aigear_config.gcp.kubernetes.cluster_name}) not found in region "
+                f"({self.location}). Creating Kubernetes Cluster..."
+            )
+            self.kubernetes_cluster.cluster_name()
+            logger.info(
+                f"Kubernetes Cluster ({self.aigear_config.gcp.kubernetes.cluster_name}) created successfully."
+            )
+        else:
+            logger.info(
+                f"Kubernetes Cluster ({self.aigear_config.gcp.cloud_function.function_name}) already exists in region "
+                f"({self.location})."
             )
