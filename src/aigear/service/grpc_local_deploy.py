@@ -1,64 +1,16 @@
-from pathlib import Path
+from aigear.service.helm_chart import create_helm_chart
 from aigear.common import run_sh
 from aigear.common.logger import Logging
 
 logger = Logging(log_name=__name__).console_logging()
 
 
-def switch_context():
+def switch_local_context():
     command = [
         "kubectl", "config", "use-context", "docker-desktop"
     ]
     event = run_sh(command)
     logger.info(event)
-
-
-def create_helm_chart(helm_location, service_name, service_image, service_ports):
-    helm_path = Path.cwd() / helm_location
-    helm_path.mkdir(parents=True, exist_ok=True)
-
-    deploy_template = f"""
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: {service_name}-deployment
-  labels:
-    app: {service_name}
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: {service_name}
-  template:
-    metadata:
-      labels:
-        app: {service_name}
-    spec:
-      containers:
-      - name: {service_name}
-        image: {service_image}
-        imagePullPolicy: IfNotPresent
-        ports:
-        - containerPort: {service_ports}
-          name: grpc
----
-
-apiVersion: v1
-kind: Service
-metadata:
-  name: {service_name}-service
-spec:
-  selector:
-    app: {service_name}
-  ports:
-    - protocol: TCP
-      port: {service_ports}
-      targetPort: {service_ports}
-      name: grpc
-  type: LoadBalancer
-"""
-    with open(helm_path / "grpc_deployment.yaml", "w") as f:
-        f.write(deploy_template)
 
 
 def helm_deploy(helm_location="."):
@@ -76,7 +28,7 @@ def deploy_local_grpc(
         service_image=None,
         service_ports=None
 ):
-    switch_context()
+    switch_local_context()
     create_helm_chart(
         helm_location=helm_location,
         service_name=service_name,
@@ -87,8 +39,9 @@ def deploy_local_grpc(
     if "error" not in event:
         logger.info("Deployment completed.")
         logger.info(f"Methods of accessing services:\n"
-              f"  grpcurl -plaintext localhost:50051 list\n"
-              f"  grpcurl -plaintext localhost:50051 'service path'")
+                    f"  grpcurl -plaintext localhost:50051 list\n"
+                    f"  grpcurl -plaintext localhost:50051 'service path'")
+
 
 def delete_local_grpc(
         helm_location="."
@@ -98,7 +51,6 @@ def delete_local_grpc(
     ]
     event = run_sh(command)
     logger.info(event)
-
 
 
 if __name__ == "__main__":
@@ -114,4 +66,3 @@ if __name__ == "__main__":
 
     # grpcurl -plaintext localhost:50051 list
     # grpcurl -plaintext localhost:50051 helloworld.Greeter/SayHello
-
