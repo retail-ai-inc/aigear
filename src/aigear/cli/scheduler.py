@@ -16,4 +16,4 @@ def get_argument():
 def scheduler_init():
     args = get_argument()
     step_names = args.step_names.split(",")
-    create_scheduler(args.version, args.step_names)
+    create_scheduler(args.version, step_names)

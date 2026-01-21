@@ -2,13 +2,6 @@ from pathlib import Path
 import shutil
 
 
-class GCPInfra:
-    def __init__(self):
-        pass
-
-    def init(self):
-        pass
-
 class Project:
     def __init__(self, name: str = "template_project"):
         """
@@ -60,7 +53,6 @@ class Project:
         if (not file_path.exists()) or (file_path.stat().st_size == 0):
             shutil.copy(self._template_path / file_path.name, file_path)
             print(f"Copied {file_path.name} to ({file_path})")
-
 
 if __name__ == "__main__":
     Project('test').init()

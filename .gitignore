@@ -13,3 +13,8 @@ aigear.egg-info
 build
 dist
 env.json
+
+# macOS system files
+.DS_Store
+*/.DS_Store
+**/.DS_Store

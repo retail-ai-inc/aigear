@@ -1,8 +1,8 @@
-import os
 import json
 from aigear.common import run_sh
 from aigear.common.logger import Logging
-from aigear.common.config import AigearConfig
+from aigear.common.config import AigearConfig, PipelinesConfig
+from aigear.deploy.gcp.artifacts_image import get_artifacts_image
 
 
 logger = Logging(log_name=__name__).console_logging()
@@ -124,20 +124,17 @@ class Scheduler:
             logger.info("Error occurred while creating cloud function.")
 
 def create_scheduler(pipeline_version, step_names):
-    def read_pipelines_config():
-        pipelines_config_path = os.path.join(os.getcwd(), "env.json")
-        with open(pipelines_config_path, "r", encoding="utf-8") as f:
-            pipelines_config = json.load(f)
-        return pipelines_config
-
     aigear_config = AigearConfig.get_config()
-    pipelines_config = read_pipelines_config()
-    pipeline_config = pipelines_config.get("pipelines", {}).get(pipeline_version, {})
+    pipelines_config = PipelinesConfig.get_config()
+    artifacts_image = get_artifacts_image(aigear_config)
+    pipeline_config = pipelines_config.get(pipeline_version, {})
 
     scheduler_messages = []
     for step_name in step_names:
         step_config = pipeline_config.get(step_name, {})
         resources = step_config.get("resources", {})
+        if "docker_image" not in resources:
+            resources["docker_image"] = artifacts_image
         task_run_parameters = step_config.get("task_run_parameters", {})
         message = {**resources, **task_run_parameters}
         scheduler_messages.append(message)
@@ -163,29 +160,27 @@ def create_scheduler(pipeline_version, step_names):
 if __name__ == "__main__":
     message = [
         {
-            "vm_name": "coopiwate-ape3-fetch-data-vm",
+            "vm_name": "",
             "disk_size_gb": "20",
-            "docker_image": "asia-northeast1-docker.pkg.dev/ssc-ape-staging/medovik/ape3",
             "spec": "e2-standard-2",
             "on_host_maintenance": "MIGRATE",
-            "pipeline_version": "coopiwate_ape3",
-            "pipeline_step": "ape3.coopiwate.data.fetch_data"
+            "pipeline_version": "",
+            "pipeline_step": "xxx.xxx.xxx"
         },
         {
-            "vm_name": "coopiwate-ape3-preprocessing-vm",
+            "vm_name": "",
             "disk_size_gb": "40",
-            "docker_image": "asia-northeast1-docker.pkg.dev/ssc-ape-staging/medovik/ape3",
             "spec": "e2-highmem-8",
             "on_host_maintenance": "MIGRATE",
-            "pipeline_version": "coopiwate_ape3",
-            "pipeline_step": "ape3.coopiwate.feature.preprocessing"
+            "pipeline_version": "",
+            "pipeline_step": "xxx.xxx.xxx"
         }
     ]
     scheduler = Scheduler(
         name="ml_test",
-        location="asia-northeast1",
+        location="",
         schedule="45 21 * * 0",
-        topic_name="medovik-pipelines-pubsub",
+        topic_name="pipelines-pubsub",
         message=message,
         time_zone="Asia/Tokyo",
     )

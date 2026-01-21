@@ -57,7 +57,8 @@ msgrpc = [
 gcp = [
     "google-cloud-logging>=3.0.0",
     "google-cloud-secret-manager>=2.24.0",
-    "google-cloud-storage>=3.2.0"
+    "google-cloud-storage>=3.2.0",
+    "google-cloud-compute>=1.38.0"
 ]
 
 [project.scripts]
@@ -65,9 +66,25 @@ aigear-init = "aigear.cli.project_cli:project_init"
 gcp-infra-init = "aigear.cli.gcp_cli:gcp_infra_init"
 aigear-workflow = "aigear.cli.task_running:task_run"
 aigear-scheduler = "aigear.cli.scheduler:scheduler_init"
+artifacts-image-create = "aigear.cli.artifacts_image:artifacts_image_init"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 include = [
     "aigear*",
+]
+
+[tool.setuptools.package-data]
+"aigear" = [
+    "template/*",
+    "template/**/*",
+    "common/*",
+    "common/**/*",
+    "**/*.yaml",
+    "**/*.yml",
+    "**/*.json",
+    "**/*.toml",
+    "**/*.js",
+    "**/*.md",
+    "**/Dockerfile",
 ]

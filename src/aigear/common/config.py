@@ -15,7 +15,7 @@ def read_config(env_path) -> Optional[Config]:
     with open(env_path, "r", encoding="utf-8") as f:
         cfg = json.load(f)
 
-    return Config(**cfg["aigear"])
+    return cfg
 
 class AigearConfig:
     _config = None
@@ -25,7 +25,26 @@ class AigearConfig:
         if cls._config:
             return cls._config
         
-        cls._config = read_config(env_path=os.path.join(os.getcwd(), "env.json"))
+        cfg = read_config(env_path=os.path.join(os.getcwd(), "env.json"))
+        cls._config = Config(**cfg["aigear"])
+        return cls._config
+
+    @classmethod
+    def get_config(cls) -> Config:
+        if not cls._config:
+            cls.load()
+        return cls._config
+
+class PipelinesConfig:
+    _config = None
+
+    @classmethod
+    def load(cls):
+        if cls._config:
+            return cls._config
+
+        cfg = read_config(env_path=os.path.join(os.getcwd(), "env.json"))
+        cls._config = cfg.get("pipelines", {})
         return cls._config
 
     @classmethod

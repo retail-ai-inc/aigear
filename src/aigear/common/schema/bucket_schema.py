@@ -12,7 +12,7 @@ class BucketABC(ABC):
         pass
 
     @abstractmethod
-    def download(self, bucket_blob_name: str, local_blob_name: str, local_blob_path: str):
+    def download(self, local_blob_name: str, local_blob_path: str):
         """Download a blob from the bucket to a local file."""
         pass
 

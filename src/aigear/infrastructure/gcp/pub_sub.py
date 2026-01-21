@@ -68,7 +68,7 @@ class PubSub:
 
 
 if __name__ == "__main__":
-    project_id = "ssc-ape-staging"
+    project_id = ""
     topic_name = "ml-test-pubsub"
     pubsub = PubSub(
         topic_name=topic_name,

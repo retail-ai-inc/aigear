@@ -85,8 +85,8 @@ if __name__ == "__main__":
         region="asia-northeast1",
         entry_point="cronjobProcessPubSub",
         topic_name="ml-test-pubsub",
-        project_id="ssc-ape-staging",
-        service_account="ml-test@ssc-ape-staging.iam.gserviceaccount.com"
+        project_id="",
+        service_account=""
     )
     cloud_function_exist = cloud_function.describe()
     print("cloud_function: ", cloud_function_exist)

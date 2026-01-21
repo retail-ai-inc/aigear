@@ -44,9 +44,9 @@ class Artifacts:
 
 
 if __name__ == "__main__":
-    project_id = "ssc-ape-staging"
+    project_id = ""
     repository_name = "test"
-    location = "asia-northeast1"
+    location = ""
     repositories = Artifacts(
         repository_name=repository_name,
         location=location,

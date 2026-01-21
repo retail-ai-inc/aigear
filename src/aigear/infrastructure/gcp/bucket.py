@@ -58,9 +58,9 @@ class Bucket:
         logger.info(event)
 
 if __name__ == "__main__":
-    project_id = "ssc-ape-staging"
-    bucket_name = "medovik-ape-staging"
-    location = "asia-northeast1"
+    project_id = ""
+    bucket_name = ""
+    location = ""
     bucket = Bucket(
         bucket_name=bucket_name,
         project_id=project_id,
