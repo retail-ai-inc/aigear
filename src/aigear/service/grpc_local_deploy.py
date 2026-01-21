@@ -56,7 +56,7 @@ def delete_local_grpc(
 if __name__ == "__main__":
     # deploy_local_grpc(
     #     helm_location=".",
-    #     service_name="grpc",
+    #     service_name="grpc-service",
     #     service_image="aguilbau/hello-world-grpc:latest",
     #     service_ports="50051"
     # )
