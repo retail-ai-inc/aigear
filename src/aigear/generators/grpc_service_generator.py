@@ -243,7 +243,7 @@ class GrpcServiceGenerator:
             generator_logger.info(f"   ./setup.sh  (or setup.bat on Windows)")
             generator_logger.info(f"\n📝 Or manual setup:")
             generator_logger.info(f"   1. cd {self.project_name}")
-            generator_logger.info(f"   2. cp env.sample.json env.json")
+            generator_logger.info(f"   2. Review and modify env.json according to your needs")
             generator_logger.info(f"   3. pip install -r requirements.txt")
             generator_logger.info(f"   4. python -m grpc_tools.protoc -I./proto --python_out=proto --grpc_python_out=proto ./proto/grpc.proto")
             generator_logger.info(f"   5. python main.py")
@@ -327,6 +327,10 @@ message MLResponse {
         features_content = self._get_features_module_content()
         (grpc_package_dir / "grpc_features.py").write_text(features_content)
 
+        # 4. grpc_manifest_loader.py - Manifest loader (NEW)
+        manifest_loader_content = self._get_manifest_loader_content()
+        (grpc_package_dir / "grpc_manifest_loader.py").write_text(manifest_loader_content)
+
     def _generate_model_modules(self):
         """Generate model modules"""
         models_dir = self.project_path / "models_modules"
@@ -352,20 +356,21 @@ message MLResponse {
         # Build gRPC configuration
         grpc_config = self._build_config_structure()
 
-        # Create env.sample.json in project directory (not in parent directory)
-        env_sample_json = self.project_path / "env.sample.json"
-        env_sample_json.write_text(json.dumps(grpc_config, indent=2, ensure_ascii=False))
+        # Create env.json directly in project directory
+        env_json = self.project_path / "env.json"
+        env_json.write_text(json.dumps(grpc_config, indent=2, ensure_ascii=False))
 
         if not self.silent:
-            generator_logger.info(f"✓ Created configuration file: env.sample.json")
+            generator_logger.info(f"✓ Created configuration file: env.json")
+            generator_logger.info(f"  💡 Tip: Review and modify env.json according to your needs before running the service")
 
     def _find_project_root(self) -> Path:
         """
         Find project root directory by searching upward
 
         Search strategy:
-        1. Check if output_dir has env.json or env.sample.json -> use it
-        2. Search parent directories (up to 3 levels) for config files
+        1. Check if output_dir has env.json -> use it
+        2. Search parent directories (up to 3 levels) for env.json
         3. Search for .git directory
         4. Fallback to output_dir
 
@@ -375,7 +380,7 @@ message MLResponse {
         current_dir = self.output_dir
 
         # Strategy 1: Check current output_dir
-        if (current_dir / "env.json").exists() or (current_dir / "env.sample.json").exists():
+        if (current_dir / "env.json").exists():
             return current_dir
 
         # Strategy 2: Search parent directories for config files
@@ -391,9 +396,9 @@ message MLResponse {
                     generator_logger.info(f"Stopped at project boundary (.git found in {parent})")
                 break
 
-            if (parent / "env.json").exists() or (parent / "env.sample.json").exists():
+            if (parent / "env.json").exists():
                 if not self.silent:
-                    generator_logger.info(f"Found project root with config: {parent}")
+                    generator_logger.info(f"Found project root with env.json: {parent}")
                 return parent
 
             current_dir = parent
@@ -685,10 +690,11 @@ Edit model files under `models_modules/` and implement the `predict()` method.
 
 ### 4. Configure Environment
 
-Copy `env.sample.json` to `env.json` and modify the configuration:
+Review and modify `env.json` according to your needs:
 
 ```bash
-cp env.sample.json env.json
+# The env.json file has been generated automatically
+# Edit it to configure your service settings
 ```
 
 ### 5. Run Service
@@ -717,7 +723,7 @@ docker-compose up
 ├── requirements.txt       # Python dependencies
 ├── docker-compose.yml     # Docker orchestration
 ├── Dockerfile-grpc        # Docker image
-└── env.sample.json        # Configuration example
+└── env.json               # Configuration file (generated automatically)
 ```
 
 ## API Usage
@@ -920,6 +926,10 @@ def main():
     logger.info("Starting gRPC ML Service")
     logger.info("=" * 60)
 
+    # Get script directory for resolving relative paths
+    script_dir = Path(__file__).parent.resolve()
+    logger.info(f"Script directory: {script_dir}")
+
     # Load configuration using ConfigParser
     config_parser = grpc_config.ConfigParser("env.json")
 
@@ -939,9 +949,34 @@ def main():
     port = server_config.get('port', '50051')
 
     # Get model paths (modelPaths format)
-    model_paths = server_config.get('modelPaths', {})
+    model_paths_config = server_config.get('modelPaths', {})
 
-    logger.info(f"Model paths configuration: {model_paths}")
+    logger.info(f"Model paths configuration: {model_paths_config}")
+
+    # Resolve model paths (support Manifest mode)
+    if isinstance(model_paths_config, dict) and model_paths_config.get('mode') == 'manifest':
+        # Manifest mode: load from manifest.json (local filesystem)
+        base_path = model_paths_config.get('base_path', './models/')
+
+        logger.info(f"Using Manifest mode with base_path: {base_path}")
+
+        try:
+            # Local mode: load from local filesystem
+            from grpc_package.grpc_manifest_loader import ManifestLoader
+            loader = ManifestLoader(base_path, script_dir=script_dir)
+            model_paths = loader.load()
+
+            # Log metadata
+            metadata = loader.get_metadata()
+            logger.info(f"Manifest version: {metadata.get('model_version')}")
+            logger.info(f"Loaded {len(model_paths)} models from manifest")
+        except Exception as e:
+            logger.error(f"Failed to load manifest: {e}")
+            logger.warning("Falling back to empty model paths (demo mode will be used)")
+            model_paths = {}
+    else:
+        # Explicit paths mode (backward compatible)
+        model_paths = model_paths_config
 
     # Get gRPC options
     grpc_options = server_config.get('grpcOptions', {})
@@ -978,19 +1013,22 @@ def main():
     # Initialize model with modelPaths (new standard)
     model_instance = model_class(model_paths)
 
-    # Log model file information
-    for model_name, model_path in model_paths.items():
-        if os.path.exists(model_path):
-            file_size_bytes = os.path.getsize(model_path)
-            file_size_mb = file_size_bytes / (1024 * 1024)
-            modification_time = time.ctime(os.path.getmtime(model_path))
+    # Log model file information (only if model_paths is a valid dict with file paths)
+    if isinstance(model_paths, dict) and model_paths:
+        for model_name, model_path in model_paths.items():
+            if isinstance(model_path, str) and os.path.exists(model_path):
+                file_size_bytes = os.path.getsize(model_path)
+                file_size_mb = file_size_bytes / (1024 * 1024)
+                modification_time = time.ctime(os.path.getmtime(model_path))
 
-            logger.info(f"Loaded model '{model_name}':")
-            logger.info(f"  - Path: {model_path}")
-            logger.info(f"  - Size: {file_size_mb:.2f} MB")
-            logger.info(f"  - Last Modified: {modification_time}")
-        else:
-            logger.warning(f"Model file not found: {model_path}")
+                logger.info(f"Loaded model '{model_name}':")
+                logger.info(f"  - Path: {model_path}")
+                logger.info(f"  - Size: {file_size_mb:.2f} MB")
+                logger.info(f"  - Last Modified: {modification_time}")
+            elif isinstance(model_path, str):
+                logger.warning(f"Model file not found: {model_path}")
+    else:
+        logger.info("No model paths configured (demo mode will be used)")
 
     # Start server
     with grpc_features.reserve_port(int(port)) as grpc_port:
@@ -1194,6 +1232,125 @@ def get_argument():
     parser.add_argument('--version', default="", help='Model version')
     args = parser.parse_args()
     return args.company, args.version
+'''
+
+    def _get_manifest_loader_content(self) -> str:
+        """Get manifest loader content"""
+        return '''"""
+Manifest Loader - Load model paths from manifest.json
+
+Supports automatic discovery and loading of model file paths from manifest.json
+"""
+
+import json
+import os
+from pathlib import Path
+from typing import Dict, Optional
+
+
+class ManifestError(Exception):
+    """Manifest related errors"""
+    pass
+
+
+class ManifestLoader:
+    """Manifest Loader"""
+
+    def __init__(self, base_path: str, script_dir: Optional[Path] = None):
+        """
+        Initialize Manifest Loader
+
+        Args:
+            base_path: Base path for model files (directory containing manifest.json)
+                      - Absolute path: use directly
+                      - Relative path: relative to script_dir or current working directory
+            script_dir: Script directory (for resolving relative paths), defaults to current working directory
+        """
+        base_path_obj = Path(base_path)
+
+        # If absolute path, use directly
+        if base_path_obj.is_absolute():
+            self.base_path = base_path_obj
+        else:
+            # Relative path: prefer relative to script_dir, otherwise relative to current working directory
+            if script_dir:
+                self.base_path = (script_dir / base_path).resolve()
+            else:
+                self.base_path = base_path_obj.resolve()
+
+        self.manifest_file = self.base_path / "manifest.json"
+        self.manifest_data = None
+
+    def load(self) -> Dict[str, str]:
+        """
+        Load model paths from manifest.json
+
+        Returns:
+            Model path dictionary, format: {"model_name": "/full/path/to/model.pkl"}
+
+        Raises:
+            ManifestError: When manifest.json does not exist or has invalid format
+        """
+        # Check if manifest.json exists
+        if not self.manifest_file.exists():
+            raise ManifestError(f"Manifest file not found: {self.manifest_file}")
+
+        # Load manifest.json
+        try:
+            with open(self.manifest_file, 'r', encoding='utf-8') as f:
+                self.manifest_data = json.load(f)
+        except json.JSONDecodeError as e:
+            raise ManifestError(f"Invalid JSON in manifest file: {e}")
+        except Exception as e:
+            raise ManifestError(f"Failed to read manifest file: {e}")
+
+        # Parse model paths
+        models_config = self.manifest_data.get('models', {})
+        if not models_config:
+            raise ManifestError("No models defined in manifest.json")
+
+        model_paths = {}
+        for model_name, model_info in models_config.items():
+            if not isinstance(model_info, dict):
+                continue
+
+            # Get model file name
+            model_file = model_info.get('file')
+            if not model_file:
+                print(f"[WARNING] Model '{model_name}' has no 'file' field, skipping")
+                continue
+
+            # Build full path
+            full_path = self.base_path / model_file
+            model_paths[model_name] = str(full_path.absolute())
+
+            # Check if file exists (optional warning)
+            if not full_path.exists():
+                is_required = model_info.get('required', False)
+                if is_required:
+                    raise ManifestError(f"Required model file not found: {full_path}")
+                else:
+                    print(f"[WARNING] Optional model file not found: {full_path}")
+
+        return model_paths
+
+    def get_metadata(self) -> Dict:
+        """
+        Get manifest metadata
+
+        Returns:
+            Metadata dictionary
+        """
+        if self.manifest_data is None:
+            self.load()
+
+        return {
+            'version': self.manifest_data.get('version'),
+            'model_version': self.manifest_data.get('model_version'),
+            'created_at': self.manifest_data.get('created_at'),
+            'description': self.manifest_data.get('description'),
+            'metadata': self.manifest_data.get('metadata', {})
+        }
 '''
 
     def _get_model_template(self, model_type: ModelType) -> Template:
@@ -2074,27 +2231,15 @@ echo "  {self.project_name} Setup"
 echo "=================================="
 echo ""
 
-# 1. Find and copy environment configuration
-echo "1. Finding environment configuration..."
-# Search for env.json in parent directories (up to 4 levels)
-ENV_PATH=""
-for i in . .. ../.. ../../.. ../../../..; do
-    if [ -f "$i/env.sample.json" ]; then
-        ENV_PATH="$i"
-        break
-    fi
-done
-
-if [ -z "$ENV_PATH" ]; then
-    echo "   [WARNING] env.sample.json not found in parent directories"
+# 1. Check environment configuration
+echo "1. Checking environment configuration..."
+if [ ! -f "env.json" ]; then
+    echo "   [WARNING] env.json not found in current directory"
     echo "   Please ensure env.json exists in project root"
+    echo "   Tip: The env.json file should have been generated automatically"
 else
-    if [ ! -f "$ENV_PATH/env.json" ]; then
-        cp "$ENV_PATH/env.sample.json" "$ENV_PATH/env.json"
-        echo "   * env.json created at $ENV_PATH"
-    else
-        echo "   i env.json already exists at $ENV_PATH"
-    fi
+    echo "   ✓ env.json found"
+    echo "   💡 Tip: Review and modify env.json according to your needs before running the service"
 fi
 
 # 2. Create models directory
@@ -2150,27 +2295,15 @@ echo   {self.project_name} Setup
 echo ==================================
 echo.
 
-REM 1. Find and copy environment configuration
-echo 1. Finding environment configuration...
-set ENV_PATH=
-for %%i in (. .. ..\.. ..\..\.. ..\..\..\..\..) do (
-    if exist "%%i\\env.sample.json" (
-        set ENV_PATH=%%i
-        goto :found
-    )
-)
-:found
-
-if "%ENV_PATH%"=="" (
-    echo    [WARNING] env.sample.json not found in parent directories
+REM 1. Check environment configuration
+echo 1. Checking environment configuration...
+if not exist "env.json" (
+    echo    [WARNING] env.json not found in current directory
     echo    Please ensure env.json exists in project root
+    echo    Tip: The env.json file should have been generated automatically
 ) else (
-    if not exist "%ENV_PATH%\\env.json" (
-        copy "%ENV_PATH%\\env.sample.json" "%ENV_PATH%\\env.json"
-        echo    * env.json created at %ENV_PATH%
-    ) else (
-        echo    i env.json already exists at %ENV_PATH%
-    )
+    echo    ^✓ env.json found
+    echo    💡 Tip: Review and modify env.json according to your needs before running the service
 )
 
 REM 2. Create models directory

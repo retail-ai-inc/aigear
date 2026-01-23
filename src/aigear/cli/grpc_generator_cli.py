@@ -234,8 +234,8 @@ def command_line_mode(args):
         print(f"   setup.bat           # Windows")
         print(f"")
         print(f"   # Option B: Manual setup")
-        print(f"   cp env.sample.json env.json")
-        print(f"   pip install -r service/requirements.txt")
+        print(f"   # Review and modify env.json according to your needs")
+        print(f"   pip install -r requirements.txt")
 
         # Step 3: Compile proto files
         print(f"\nStep 3: Compile proto files")

@@ -1,7 +1,7 @@
 """
-gRPC Service Generator - 使用示例
+gRPC Service Generator - Usage Examples
 
-演示如何使用 aigear 的 gRPC 服务生成器。
+Demonstrates how to use aigear's gRPC service generator.
 """
 
 from aigear import GrpcServiceGenerator, ModelType, ServiceTemplate
@@ -9,9 +9,9 @@ from pathlib import Path
 
 
 def example_simple_service():
-    """示例 1: 简单的单一模型服务"""
+    """Example 1: Simple single model service"""
     print("=" * 60)
-    print("示例 1: 生成简单的分类服务")
+    print("Example 1: Generate simple classification service")
     print("=" * 60)
 
     generator = GrpcServiceGenerator(
@@ -25,9 +25,9 @@ def example_simple_service():
 
 
 def example_multi_version_service():
-    """示例 2: 多版本服务（类似 ALC）"""
+    """Example 2: Multi-version service (similar to ALC)"""
     print("\n" + "=" * 60)
-    print("示例 2: 生成多版本服务（类似 ALC）")
+    print("Example 2: Generate multi-version service (similar to ALC)")
     print("=" * 60)
 
     generator = GrpcServiceGenerator(
@@ -42,9 +42,9 @@ def example_multi_version_service():
 
 
 def example_multi_company_service():
-    """示例 3: 多公司服务（类似 Macaron）"""
+    """Example 3: Multi-company service (similar to Macaron)"""
     print("\n" + "=" * 60)
-    print("示例 3: 生成多公司服务（类似 Macaron）")
+    print("Example 3: Generate multi-company service (similar to Macaron)")
     print("=" * 60)
 
     generator = GrpcServiceGenerator(
@@ -60,9 +60,9 @@ def example_multi_company_service():
 
 
 def example_mixed_models():
-    """示例 4: 混合多种模型类型"""
+    """Example 4: Mixed multiple model types"""
     print("\n" + "=" * 60)
-    print("示例 4: 生成混合模型服务")
+    print("Example 4: Generate mixed model service")
     print("=" * 60)
 
     generator = GrpcServiceGenerator(
@@ -81,9 +81,9 @@ def example_mixed_models():
 
 
 def example_recommendation_service():
-    """示例 5: 推荐系统服务"""
+    """Example 5: Recommendation system service"""
     print("\n" + "=" * 60)
-    print("示例 5: 生成推荐系统服务")
+    print("Example 5: Generate recommendation system service")
     print("=" * 60)
 
     generator = GrpcServiceGenerator(
@@ -99,9 +99,9 @@ def example_recommendation_service():
 
 
 if __name__ == "__main__":
-    print("\n🚀 aigear gRPC Service Generator - 使用示例\n")
+    print("\n🚀 aigear gRPC Service Generator - Usage Examples\n")
 
-    # 运行所有示例
+    # Run all examples
     example_simple_service()
     example_multi_version_service()
     example_multi_company_service()
@@ -109,7 +109,7 @@ if __name__ == "__main__":
     example_recommendation_service()
 
     print("\n" + "=" * 60)
-    print("✨ 所有示例生成完成！")
+    print("✨ All examples generated successfully!")
     print("=" * 60)
-    print("\n查看 ./output 目录查看生成的项目")
-    print("详细使用文档：docs/GRPC_GENERATOR_GUIDE.md\n")
+    print("\nCheck ./output directory to view generated projects")
+    print("Detailed documentation: docs/GRPC_GENERATOR_GUIDE.md\n")

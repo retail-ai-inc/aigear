@@ -318,9 +318,6 @@ class GKEDeployer:
         # Load env.json
         env_file = self.project_dir / "env.json"
         if not env_file.exists():
-            env_file = self.project_dir / "env.sample.json"
-
-        if not env_file.exists():
             logger.error("env.json not found")
             return False
 

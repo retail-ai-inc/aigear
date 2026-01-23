@@ -389,7 +389,7 @@ venv/
             print(f'   powershell -Command "(Get-Content proto\\grpc_pb2_grpc.py) -replace \'^import grpc_pb2 as grpc__pb2\', \'from . import grpc_pb2 as grpc__pb2\' | Set-Content proto\\grpc_pb2_grpc.py"')
             print(f"   cd ..")
             print(f"\n   # Start service")
-            print(f"   python service/main.py")
+            print(f"   python main.py")
             print(f"\n   # Return to project root")
             print(f"   cd ../../..")
 
