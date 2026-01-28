@@ -49,15 +49,18 @@ def get_artifacts_image(aigear_config):
     artifacts_image = f"{zone}-docker.pkg.dev/{project_id}/{repository_name}/{repository_name}:latest"
     return artifacts_image
 
-def create_artifacts_image(dockerfile_path="."):
+def create_artifacts_image(dockerfile_path=".", force=False):
     aigear_config = AigearConfig.get_config()
     artifacts_image = get_artifacts_image(aigear_config)
     artifacts_image_instance = ArtifactsImage(artifacts_image=artifacts_image)
     is_exist = artifacts_image_instance.iamge_exist_in_artifacts()
-    if is_exist:
+    if is_exist and not force:
         logger.info(f"The image already exists in gcp artifacts: {artifacts_image}")
     else:
-        logger.info("The image does not exist in gcp artifacts, it will be created.")
+        if is_exist and force:
+            logger.info(f"The image already exists but force flag is set, recreating: {artifacts_image}")
+        else:
+            logger.info("The image does not exist in gcp artifacts, it will be created.")
         artifacts_image_instance.create_image(dockerfile_path)
         artifacts_image_instance.obtain_permissions()
         artifacts_image_instance.push_image()
