@@ -8,17 +8,17 @@ const Buffer = require('safe-buffer').Buffer;
 const Compute = require('@google-cloud/compute');
 const compute = new Compute();
 // Change this const value to your project
-const projectId = 'ssc-ape-staging';
-const zone = 'asia-northeast1-a';
+const projectId = 'PROJECTID';
+const zone = 'ZONE';
 
 //Build environment and clean up
 const commonCommand =
   'cd /var\n' +
-  'gcloud auth configure-docker asia-northeast1-docker.pkg.dev --quiet\n' +
+  'gcloud auth configure-docker REGION-docker.pkg.dev --quiet\n' +
   'sudo docker pull ${dockerImage}\n' +
   'sudo docker run --gpus all ${dockerImage} ${pipelineCommand}\n' +
   'docker_exit_code=$?\n' +
-  "[ ${docker_exit_code} -eq \"0\" ] && gcloud pubsub topics publish medovik-pipelines-pubsub --message 'createVMDate' || gcloud pubsub topics publish medovik-pipelines-pubsub --message \"Exit code: ${docker_exit_code}\"\n" +
+  "[ ${docker_exit_code} -eq \"0\" ] && gcloud pubsub topics publish TOPICSNAME --message 'createVMDate' || gcloud pubsub topics publish TOPICSNAME --message \"Exit code: ${docker_exit_code}\"\n" +
   'gcp_zone=$(curl -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/zone -s | cut -d/ -f4)\n' +
   'sleep 300\n' +
   'hostname_result=$(hostname)\n' +
@@ -54,7 +54,7 @@ const vmConfig = {
       autoDelete: true,
       deviceName: 'cronjob-process-vm',
       initializeParams: {
-        sourceImage: `projects/${projectId}/global/images/ml-model-training-cloud-function-image`,
+        sourceImage: `projects/cos-cloud/global/images/family/cos-stable`,
         diskType: `projects/${projectId}/zones/${zone}/diskTypes/pd-standard`,
         diskSizeGb: '20'
       },
@@ -65,7 +65,7 @@ const vmConfig = {
   networkInterfaces: [
     {
       kind: 'compute#networkInterface',
-      subnetwork: `projects/${projectId}/regions/asia-northeast1/subnetworks/default`,
+      subnetwork: `projects/${projectId}/regions/REGION/subnetworks/default`,
       accessConfigs: [
         {
           kind: 'compute#accessConfig',
@@ -91,7 +91,7 @@ const vmConfig = {
   },
   serviceAccounts: [
     {
-      email: `ml-model-training@ssc-ape-staging.iam.gserviceaccount.com`,
+      email: `SERVICEACCOUNT`,
       scopes: [
         'https://www.googleapis.com/auth/cloud-platform'
       ]

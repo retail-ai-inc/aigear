@@ -1,3 +1,4 @@
+import shutil
 from pathlib import Path
 from aigear.common import run_sh
 from aigear.common.logger import Logging
@@ -19,11 +20,33 @@ class CloudFunction:
         self.region = region
         self.entry_point = entry_point
         self.topic_name = topic_name
-        self.source_path = Path(__file__).resolve().parent / "function"
         self.project_id = project_id
         self.service_account = service_account
 
+    def _function_path(self):
+        source_path = Path(__file__).resolve().parent / "function"
+        destination_path = Path.cwd() / "cloud_function"
+        destination_path.mkdir(parents=True, exist_ok=True)
+
+        function_path_src = source_path / "index.js"
+        function_file_dst = destination_path / "index.js"
+        content = Path(function_path_src).read_text(encoding="utf-8")
+        content = content.replace("PROJECTID", self.project_id
+            ).replace("ZONE", f"{self.region}-a"
+            ).replace("REGION", self.region
+            ).replace("TOPICSNAME", self.topic_name
+            ).replace("SERVICEACCOUNT", self.service_account)
+        function_file_dst.write_text(content, encoding="utf-8")
+
+        package_file_src = source_path / "package.js"
+        package_file_dst = destination_path / "package.json"
+        if not package_file_dst.exists():
+            shutil.copy(package_file_src, package_file_dst)
+
+        return destination_path
+
     def deploy(self):
+        source_path = self._function_path()
         command = [
             "gcloud", "functions", "deploy",
             self.function_name,
@@ -32,7 +55,7 @@ class CloudFunction:
             f"--region={self.region}",
             f"--entry-point={self.entry_point}",
             f"--trigger-topic={self.topic_name}",
-            f"--source={self.source_path}",
+            f"--source={source_path}",
             f"--project={self.project_id}",
             f"--service-account={self.service_account}"
         ]
