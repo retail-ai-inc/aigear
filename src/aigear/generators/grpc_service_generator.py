@@ -81,6 +81,7 @@ class GrpcServiceGenerator:
     # Base dependencies (required for all projects)
     BASE_DEPENDENCIES = [
         "grpcio>=1.54.2",
+        "grpcio-tools>=1.54.2",
         "protobuf>=4.23.3",
         "grpcio-health-checking>=1.56.0",
         "sentry-sdk>=1.29.2",
@@ -2157,7 +2158,7 @@ def test_predict():
 
     request_data = struct_pb2.Struct()
     request_data.update({{
-        "features": [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
+        "features": [[1.0, 2.0, 3.0, 4.0, 5.0], [1.5, 2.5, 3.5, 4.5, 5.5]]
     }})
 
     request = grpc_pb2.MLRequest(request=request_data)
@@ -2179,9 +2180,11 @@ def test_predict():
 
     request_data2 = struct_pb2.Struct()
     request_data2.update({{
-        "feature1": 1.5,
-        "feature2": 2.5,
-        "feature3": 3.5
+        "feature1": 1.0,
+        "feature2": 2.0,
+        "feature3": 3.0,
+        "feature4": 4.0,
+        "feature5": 5.0
     }})
 
     request2 = grpc_pb2.MLRequest(request=request_data2)

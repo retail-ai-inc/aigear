@@ -55,7 +55,7 @@ class Project:
         (project_path / ".gitignore").touch(exist_ok=True)
         (project_path / "docker-compose.yml").touch(exist_ok=True)
         (project_path / "Dockerfile").touch(exist_ok=True)
-        (project_path / "env.sample.json").touch(exist_ok=True)
+        (project_path / "env.json").touch(exist_ok=True)
         (project_path / "README.md").touch(exist_ok=True)
         (project_path / "requirements.txt").touch(exist_ok=True)
 
@@ -89,7 +89,7 @@ class Project:
             with open(template_env_file, 'r', encoding='utf-8') as f:
                 config = json.load(f)
         except Exception as e:
-            print(f"[WARNING] 无法读取模板配置文件: {e}")
+            print(f"[WARNING] Failed to read template config file: {e}")
             return
 
         # Update basic info
@@ -205,25 +205,23 @@ class Project:
         # Update pipelines in config
         config['pipelines'] = pipelines_config
 
-        # Write to env.sample.json (as template)
-        env_sample_file = project_path / "env.sample.json"
+        # Write to env.json
+        env_file = project_path / "env.json"
         try:
-            with open(env_sample_file, 'w', encoding='utf-8') as f:
+            with open(env_file, 'w', encoding='utf-8') as f:
                 json.dump(config, f, indent=2, ensure_ascii=False)
 
             print("\n" + "=" * 60)
-            print("[OK] 已生成配置模板文件: env.sample.json")
+            print("[OK] Generated config file: env.json")
             print("=" * 60)
-            print(f"  - 项目名称: {self.name}")
+            print(f"  - Project Name: {self.name}")
             print(f"  - Pipelines: {', '.join(self.pipelines)}")
             for i, pipeline_name in enumerate(self.pipelines):
                 print(f"    - {pipeline_name}: port {50051 + i}")
-            print("\n  提示: 请复制 env.sample.json 为 env.json 并修改配置")
-            print("  命令: cp env.sample.json env.json")
             print("=" * 60)
 
         except Exception as e:
-            print(f"[WARNING] 写入配置文件失败: {e}")
+            print(f"[WARNING] Failed to write config file: {e}")
 
     def _create_pipeline_structure(self, project_path: Path, pipeline_name: str):
         """
@@ -254,6 +252,14 @@ class Project:
             grpc_service_dir: grpc_service directory path
             pipeline_name: Pipeline name
         """
+        # Check if required dependencies are available
+        try:
+            import numpy
+        except ImportError:
+            logger.debug("numpy not available, using minimal structure")
+            self._create_minimal_grpc_structure(grpc_service_dir)
+            return
+
         try:
             from .generators.grpc_service_generator import GrpcServiceGenerator, ModelType
             import tempfile
@@ -288,6 +294,10 @@ class Project:
                         else:
                             shutil.copy2(item, dest)
 
+        except (ImportError, ModuleNotFoundError) as e:
+            logger.debug(f"Missing dependency for full gRPC service structure: {e}")
+            logger.info("Creating minimal structure instead...")
+            self._create_minimal_grpc_structure(grpc_service_dir)
         except Exception as e:
             import traceback
             logger.warning(f"Failed to generate full gRPC service structure: {e}")
@@ -361,9 +371,7 @@ venv/
         print("\n" + "-" * 70)
         print("Step 2: Configure Environment File")
         print("-" * 70)
-        print("   # Copy configuration template and modify as needed")
-        print("   cp env.sample.json env.json")
-        print("   # Or Windows: copy env.sample.json env.json")
+        print("   # Modify env.json config file (already generated)")
 
         print("\n" + "-" * 70)
         print("Step 3: Run gRPC Service for Each Pipeline")
