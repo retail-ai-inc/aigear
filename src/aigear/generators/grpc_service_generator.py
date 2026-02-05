@@ -182,12 +182,7 @@ class GrpcServiceGenerator:
         if not self.silent:
             generator_logger.info("✓ Model modules generated")
 
-        # 6. Generate configuration files
-        self._generate_config()
-        if not self.silent:
-            generator_logger.info("✓ Configuration files generated")
-
-        # 7. Generate Docker files
+        # 6. Generate Docker files
         self._generate_docker_files()
         if not self.silent:
             generator_logger.info("✓ Docker files generated")
@@ -352,19 +347,6 @@ message MLResponse {
         # Generate Model.py with UTF-8 encoding
         (model_dir / "Model.py").write_text(model_content, encoding='utf-8')
 
-    def _generate_config(self):
-        """Generate configuration file in project directory"""
-        # Build gRPC configuration
-        grpc_config = self._build_config_structure()
-
-        # Create env.json directly in project directory
-        env_json = self.project_path / "env.json"
-        env_json.write_text(json.dumps(grpc_config, indent=2, ensure_ascii=False))
-
-        if not self.silent:
-            generator_logger.info(f"✓ Created configuration file: env.json")
-            generator_logger.info(f"  💡 Tip: Review and modify env.json according to your needs before running the service")
-
     def _find_project_root(self) -> Path:
         """
         Find project root directory by searching upward
@@ -416,154 +398,6 @@ message MLResponse {
             generator_logger.info(f"Using output_dir as project root: {self.output_dir}")
         return self.output_dir
 
-    def _update_config_file(self, config_file: Path, grpc_config: Dict):
-        """
-        Update existing configuration file with gRPC config
-
-        Args:
-            config_file: Path to existing configuration file
-            grpc_config: New gRPC configuration to merge
-        """
-        # Load existing config
-        with open(config_file, 'r', encoding='utf-8') as f:
-            existing_config = json.load(f)
-
-        # Ensure grpc section exists
-        if 'grpc' not in existing_config:
-            existing_config['grpc'] = {}
-
-        # Merge gRPC configuration
-        # For multi-company mode: update grpc.servers
-        if 'servers' in grpc_config.get('grpc', {}):
-            if 'servers' not in existing_config['grpc']:
-                existing_config['grpc']['servers'] = {}
-            # Merge server configurations
-            existing_config['grpc']['servers'].update(grpc_config['grpc']['servers'])
-
-        # For simple mode: update grpc.server
-        if 'server' in grpc_config.get('grpc', {}):
-            existing_config['grpc']['server'] = grpc_config['grpc']['server']
-
-        # Update other grpc-level configurations (sentry, etc.)
-        for key in ['sentry', 'logging']:
-            if key in grpc_config.get('grpc', {}):
-                existing_config['grpc'][key] = grpc_config['grpc'][key]
-
-        # Write back
-        with open(config_file, 'w', encoding='utf-8') as f:
-            json.dump(existing_config, f, indent=2, ensure_ascii=False)
-
-    def _build_config_structure(self) -> Dict:
-        """Build configuration structure (v1.0.0 standard - pipeline independent grpc)"""
-        config = {
-            "config_version": "1.0.0",
-            "config_schema": "aigear-pipeline",
-            "last_updated": datetime.now().isoformat(),
-            "project_name": self.project_name,
-            "environment": "local",
-            "pipelines": {}
-        }
-
-        # Build pipeline configuration (single pipeline)
-        pipeline_name = self.project_name
-        port = 50051
-
-        # Build model paths
-        model_paths = self._build_model_paths()
-
-        config["pipelines"][pipeline_name] = {
-                "pipeline_parameter": {},
-                "fetch_store_list": {},
-                "fetch_data": {},
-                "preprocessing": {},
-                "training": {},
-                "release": {
-                    "on": True,
-                    "to_bucket": True,
-                    "bucket_path": f"models/releases/{pipeline_name}/"
-                },
-                "grpc": {
-                    "server": {
-                        "serviceHost": "0.0.0.0",
-                        "port": str(port),
-                        "modelPaths": model_paths,
-                        "multiProcessing": {
-                            "on": False,
-                            "processCount": 1,
-                            "threadCount": 10
-                        },
-                        "grpcOptions": {
-                            "maxMessageSize": self.features.get('max_message_size', 52428800),
-                            "keepalive": {
-                                "time": 60,
-                                "timeout": 5
-                            } if self.features.get('keepalive', True) else {}
-                        }
-                    },
-                    "deployment": {
-                        "enabled": False,
-                        "gke": {
-                            "enabled": False,
-                            "cluster": {
-                                "name": f"{pipeline_name}-cluster",
-                                "location": "asia-east1",
-                                "node_count": 3,
-                                "machine_type": "e2-standard-4",
-                                "disk_size": 100,
-                                "enable_autoscaling": True,
-                                "min_nodes": 1,
-                                "max_nodes": 10,
-                                "enable_autopilot": False
-                            },
-                            "deployment": {
-                                "replicas": 2,
-                                "resources": {
-                                    "requests": {
-                                        "cpu": "500m",
-                                        "memory": "1Gi"
-                                    },
-                                    "limits": {
-                                        "cpu": "2000m",
-                                        "memory": "4Gi"
-                                    }
-                                },
-                                "autoscaling": {
-                                    "enabled": True,
-                                    "min_replicas": 2,
-                                    "max_replicas": 10,
-                                    "target_cpu": 70
-                                }
-                            },
-                            "service": {
-                                "type": "LoadBalancer",
-                                "port": port,
-                                "annotations": {}
-                            },
-                            "image": {
-                                "repository": f"{pipeline_name}-grpc",
-                                "tag": "latest",
-                                "pull_policy": "Always"
-                            }
-                        },
-                        "docker": {
-                            "enabled": True,
-                            "base_image": "python:3.9-slim",
-                            "working_dir": "/app",
-                            "expose_ports": [port]
-                        }
-                    },
-                    "sentry": {
-                        "on": False,
-                        "dsn": "https://your-sentry-dsn@sentry.io/project-id",
-                        "tracesSampleRate": 1.0,
-                        "environment": "production",
-                        "release": "1.0.0"
-                    } if self.features.get('sentry', True) else {"on": False}
-                }
-            }
-
-        return config
-
     def _get_preset_name(self) -> str:
         """
         Get preset name based on model types
@@ -577,19 +411,6 @@ message MLResponse {
 
         # Default to custom
         return "custom"
-
-    def _build_model_paths(self) -> Dict:
-        """
-        Build modelPaths configuration
-
-        Returns:
-            Model file path dictionary
-        """
-        # Use Manifest mode with unified model path
-        return {
-            "mode": "manifest",
-            "base_path": "./models/"
-        }
 
     def _generate_docker_files(self):
         """Generate Docker related files"""
@@ -949,20 +770,45 @@ def main():
     service_host = server_config.get('serviceHost', '0.0.0.0')
     port = server_config.get('port', '50051')
 
-    # Get model paths (modelPaths format)
-    model_paths_config = server_config.get('modelPaths', {})
+    # Get model paths configuration from training.model_paths
+    training_config = pipeline_config.get('training', {})
+    training_model_paths = training_config.get('model_paths', {})
 
-    logger.info(f"Model paths configuration: {model_paths_config}")
+    logger.info(f"Model paths configuration: {training_model_paths}")
 
     # Resolve model paths (support Manifest mode)
-    if isinstance(model_paths_config, dict) and model_paths_config.get('mode') == 'manifest':
-        # Manifest mode: load from manifest.json (local filesystem)
-        base_path = model_paths_config.get('base_path', './models/')
+    if isinstance(training_model_paths, dict) and training_model_paths.get('mode') == 'manifest':
+        # Manifest mode: load from manifest.json
+        base_path = training_model_paths.get('base_path', '')
+
+        # Check if base_path is already a GCS path
+        is_gcs_path = base_path.startswith('gs://')
+        
+        # If not GCS and base_path is not empty, try to construct GCS path for k8s environment
+        if not is_gcs_path and base_path:
+            # Try to get GCS path from aigear config for k8s environment
+            aigear_config = config_parser.config.get('aigear', {})
+            gcp_config = aigear_config.get('gcp', {})
+            bucket_config = gcp_config.get('bucket', {})
+            bucket_name_for_release = bucket_config.get('bucket_name_for_release', '')
+            
+            # If bucket is available, construct GCS path
+            if bucket_name_for_release:
+                # Remove leading slash from base_path if present
+                training_base_path = base_path.lstrip('/')
+                base_path = f"gs://{bucket_name_for_release}/{training_base_path}"
+                is_gcs_path = True
+                logger.info(f"Constructed GCS path from config: {base_path}")
+            else:
+                logger.info(f"Using local path: {base_path}")
+        elif not base_path:
+            # Fallback to default local path if base_path is empty
+            base_path = './models/'
+            logger.info(f"Using default local path: {base_path}")
 
         logger.info(f"Using Manifest mode with base_path: {base_path}")
 
         try:
-            # Local mode: load from local filesystem
             from grpc_package.grpc_manifest_loader import ManifestLoader
             loader = ManifestLoader(base_path, script_dir=script_dir)
             model_paths = loader.load()
@@ -977,7 +823,7 @@ def main():
             model_paths = {}
     else:
         # Explicit paths mode (backward compatible)
-        model_paths = model_paths_config
+        model_paths = training_model_paths
 
     # Get gRPC options
     grpc_options = server_config.get('grpcOptions', {})
@@ -1241,12 +1087,18 @@ def get_argument():
 Manifest Loader - Load model paths from manifest.json
 
 Supports automatic discovery and loading of model file paths from manifest.json
+Supports both local filesystem and GCS (Google Cloud Storage)
 """
 
 import json
 import os
+import subprocess
+import tempfile
 from pathlib import Path
 from typing import Dict, Optional
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class ManifestError(Exception):
@@ -1257,83 +1109,180 @@ class ManifestError(Exception):
 class ManifestLoader:
     """Manifest Loader"""
 
-    def __init__(self, base_path: str, script_dir: Optional[Path] = None):
+    def __init__(self, base_path: str, script_dir: Optional[Path] = None, manifest_filename: str = "manifest.json"):
         """
         Initialize Manifest Loader
 
         Args:
             base_path: Base path for model files (directory containing manifest.json)
-                      - Absolute path: use directly
-                      - Relative path: relative to script_dir or current working directory
+                      - Local path: absolute or relative path
+                      - GCS path: gs://bucket-name/path/to/models/
             script_dir: Script directory (for resolving relative paths), defaults to current working directory
+            manifest_filename: Manifest filename (default "manifest.json")
         """
-        base_path_obj = Path(base_path)
-
-        # If absolute path, use directly
-        if base_path_obj.is_absolute():
-            self.base_path = base_path_obj
-        else:
-            # Relative path: prefer relative to script_dir, otherwise relative to current working directory
-            if script_dir:
-                self.base_path = (script_dir / base_path).resolve()
-            else:
-                self.base_path = base_path_obj.resolve()
-
-        self.manifest_file = self.base_path / "manifest.json"
+        self.base_path_str = base_path
+        self.manifest_filename = manifest_filename
         self.manifest_data = None
+
+        # Detect if it's a GCS path
+        self.is_gcs = base_path.startswith('gs://')
+
+        if self.is_gcs:
+            # GCS path: keep string format
+            self.base_path = base_path.rstrip('/')
+            self.manifest_path = f"{self.base_path}/{manifest_filename}"
+        else:
+            # Local path: use Path object
+            base_path_obj = Path(base_path)
+            # If absolute path, use directly
+            if base_path_obj.is_absolute():
+                self.base_path = base_path_obj
+            else:
+                # Relative path: prefer relative to script_dir, otherwise relative to current working directory
+                if script_dir:
+                    self.base_path = (script_dir / base_path).resolve()
+                else:
+                    self.base_path = base_path_obj.resolve()
+            self.manifest_path = self.base_path / manifest_filename
 
     def load(self) -> Dict[str, str]:
         """
         Load model paths from manifest.json
 
         Returns:
-            Model path dictionary, format: {"model_name": "/full/path/to/model.pkl"}
+            Model path dictionary, format: {"model_name": "/full/path/to/model.pkl"} or {"model_name": "gs://bucket/path/to/model.pkl"}
 
         Raises:
             ManifestError: When manifest.json does not exist or has invalid format
         """
-        # Check if manifest.json exists
-        if not self.manifest_file.exists():
-            raise ManifestError(f"Manifest file not found: {self.manifest_file}")
+        # 1. Read manifest file
+        self.manifest_data = self._read_manifest()
 
-        # Load manifest.json
-        try:
-            with open(self.manifest_file, 'r', encoding='utf-8') as f:
-                self.manifest_data = json.load(f)
-        except json.JSONDecodeError as e:
-            raise ManifestError(f"Invalid JSON in manifest file: {e}")
-        except Exception as e:
-            raise ManifestError(f"Failed to read manifest file: {e}")
+        # 2. Validate format
+        self._validate_manifest()
 
-        # Parse model paths
-        models_config = self.manifest_data.get('models', {})
-        if not models_config:
-            raise ManifestError("No models defined in manifest.json")
+        # 3. Build model path dictionary
+        model_paths = self._build_model_paths()
 
-        model_paths = {}
-        for model_name, model_info in models_config.items():
-            if not isinstance(model_info, dict):
-                continue
-
-            # Get model file name
-            model_file = model_info.get('file')
-            if not model_file:
-                print(f"[WARNING] Model '{model_name}' has no 'file' field, skipping")
-                continue
-
-            # Build full path
-            full_path = self.base_path / model_file
-            model_paths[model_name] = str(full_path.absolute())
-
-            # Check if file exists (optional warning)
-            if not full_path.exists():
-                is_required = model_info.get('required', False)
-                if is_required:
-                    raise ManifestError(f"Required model file not found: {full_path}")
-                else:
-                    print(f"[WARNING] Optional model file not found: {full_path}")
+        # 4. Verify file existence (only for local paths)
+        if not self.is_gcs:
+            self._verify_files(model_paths)
 
         return model_paths
+
+    def _read_manifest(self) -> Dict:
+        """Read manifest.json file (supports local and GCS)"""
+        if self.is_gcs:
+            return self._read_manifest_from_gcs()
+        else:
+            return self._read_manifest_from_local()
+
+    def _read_manifest_from_local(self) -> Dict:
+        """Read manifest from local file system"""
+        if not self.manifest_path.exists():
+            raise ManifestError(
+                f"Manifest file not found: {self.manifest_path}\n"
+                f"Please ensure manifest.json exists in the model directory."
+            )
+
+        try:
+            with open(self.manifest_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            return data
+        except json.JSONDecodeError as e:
+            raise ManifestError(f"Invalid JSON format in manifest file: {e}")
+        except Exception as e:
+            raise ManifestError(f"Error reading manifest file: {e}")
+
+    def _read_manifest_from_gcs(self) -> Dict:
+        """Read manifest from GCS"""
+        try:
+            # Use gsutil cat to read GCS file content
+            result = subprocess.run(
+                ['gsutil', 'cat', self.manifest_path],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+
+            # Parse JSON
+            data = json.loads(result.stdout)
+            logger.info(f"Successfully read manifest from GCS: {self.manifest_path}")
+            return data
+
+        except subprocess.CalledProcessError as e:
+            raise ManifestError(
+                f"Failed to read manifest from GCS: {self.manifest_path}\n"
+                f"Error: {e.stderr}\n"
+                f"Please ensure gsutil is installed and you have access to the bucket."
+            )
+        except json.JSONDecodeError as e:
+            raise ManifestError(f"Invalid JSON format in GCS manifest file: {e}")
+        except Exception as e:
+            raise ManifestError(f"Error reading manifest from GCS: {e}")
+
+    def _validate_manifest(self):
+        """Validate manifest format"""
+        if not isinstance(self.manifest_data, dict):
+            raise ManifestError("Manifest must be a JSON object")
+
+        # Check required fields
+        if 'models' not in self.manifest_data:
+            raise ManifestError("Manifest must contain 'models' field")
+
+        if not isinstance(self.manifest_data['models'], dict):
+            raise ManifestError("'models' field must be a dictionary")
+
+        if len(self.manifest_data['models']) == 0:
+            raise ManifestError("'models' field cannot be empty")
+
+        # Validate each model entry
+        for model_name, model_info in self.manifest_data['models'].items():
+            if not isinstance(model_info, dict):
+                raise ManifestError(f"Model '{model_name}' info must be a dictionary")
+
+            if 'file' not in model_info:
+                raise ManifestError(f"Model '{model_name}' must have 'file' field")
+
+    def _build_model_paths(self) -> Dict[str, str]:
+        """Build model file path dictionary (supports local and GCS)"""
+        model_paths = {}
+
+        for model_name, model_info in self.manifest_data['models'].items():
+            # Get filename
+            filename = model_info['file']
+
+            if self.is_gcs:
+                # GCS path: return full gs:// path
+                full_path = f"{self.base_path}/{filename}"
+            else:
+                # Local path: use Path object
+                full_path = self.base_path / filename
+                full_path = str(full_path.absolute())
+
+            model_paths[model_name] = full_path
+
+        return model_paths
+
+    def _verify_files(self, model_paths: Dict[str, str]):
+        """Verify if model files exist (only for local paths)"""
+        models_info = self.manifest_data['models']
+
+        for model_name, model_path in model_paths.items():
+            model_info = models_info[model_name]
+            is_required = model_info.get('required', True)
+
+            if not os.path.exists(model_path):
+                if is_required:
+                    raise FileNotFoundError(
+                        f"Required model file not found: {model_path}\n"
+                        f"Model: {model_name}\n"
+                        f"Please ensure the file exists in the model directory."
+                    )
+                else:
+                    logger.warning(f"Optional model file not found: {model_path} (model: {model_name})")
+                    # Remove non-existent optional files from dictionary
+                    del model_paths[model_name]
 
     def get_metadata(self) -> Dict:
         """
@@ -1606,31 +1555,26 @@ class Model:
             python_version = "3.8"
 
         return f'''FROM python:3.12-slim-bookworm
-COPY --from=ghcr.io/astral-sh/uv:0.5.14 /uv /uvx /bin/
-
 WORKDIR /app
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends wget gcc \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# grpc health probe
+RUN wget -qO /bin/grpc_health_probe \
+    https://github.com/grpc-ecosystem/grpc-health-probe/releases/download/v0.4.19/grpc_health_probe-linux-amd64 \
+ && chmod +x /bin/grpc_health_probe
+
 COPY . .
-COPY env.json .
-
-# Install system dependencies
-RUN apt-get update && apt-get -y install gcc wget && rm -rf /var/lib/apt/lists/*
-
-# Install grpc_health_probe for Kubernetes health checks
-RUN wget -qO/bin/grpc_health_probe https://github.com/grpc-ecosystem/grpc-health-probe/releases/download/v0.4.19/grpc_health_probe-linux-amd64 && \\
-    chmod +x /bin/grpc_health_probe
-
-# Create virtual environment
-RUN uv venv /opt/venv --python {python_version}
-
-# Install Python dependencies
-RUN . /opt/venv/bin/activate && uv pip install -r requirements.txt
 
 ENV PORT=50051
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
+EXPOSE 50051
 
-# Default command (can be overridden in docker-compose)
-CMD ["/opt/venv/bin/python", "/app/main.py"]
+CMD ["python", "main.py"]
 '''
 
     def _get_docker_compose_content(self) -> str:
@@ -1644,10 +1588,9 @@ CMD ["/opt/venv/bin/python", "/app/main.py"]
     ports:
       - "50051:50051"
     volumes:
-      - .:/app
       - ./env.json:/app/env.json
-      - ./models:/app/models  # Mount models directory to /app/models
-    command: /opt/venv/bin/python /app/main.py
+      - ./models:/app/models
+    command: python main.py
     networks:
       - backend'''
 
@@ -1872,6 +1815,8 @@ Features:
 
 import joblib
 import os
+import subprocess
+import tempfile
 from typing import Dict, Union
 from pathlib import Path
 import sys
@@ -1954,20 +1899,63 @@ class BaseClassifier:
             print(f"[ERROR] Failed to load manifest: {e}")
             raise
 
+    def _download_from_gcs_if_needed(self, gcs_path: str) -> str:
+        """
+        Download model from GCS if path is a GCS path, otherwise return local path
+        
+        Args:
+            gcs_path: GCS path (gs://bucket/path) or local path
+            
+        Returns:
+            Local file path
+        """
+        if not gcs_path.startswith('gs://'):
+            return gcs_path
+        
+        # Create temporary directory for downloaded models
+        temp_dir = Path(tempfile.gettempdir()) / "grpc_models"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Extract filename from GCS path
+        filename = gcs_path.split('/')[-1]
+        local_path = temp_dir / filename
+        
+        # Download if not already exists
+        if not local_path.exists():
+            print(f"[INFO] Downloading model from GCS: {gcs_path}")
+            try:
+                result = subprocess.run(
+                    ['gsutil', 'cp', gcs_path, str(local_path)],
+                    capture_output=True,
+                    text=True,
+                    check=True
+                )
+                print(f"[OK] Model downloaded to: {local_path}")
+            except subprocess.CalledProcessError as e:
+                print(f"[ERROR] Failed to download from GCS: {e.stderr}")
+                raise FileNotFoundError(f"Failed to download model from GCS: {gcs_path}")
+        else:
+            print(f"[INFO] Using cached model: {local_path}")
+        
+        return str(local_path)
+
     def load_models(self) -> Dict:
-        """Batch load model files"""
+        """Batch load model files (supports local and GCS paths)"""
         models = {}
         for model_name, model_path in self.model_path_dict.items():
-            if os.path.exists(model_path):
+            # Download from GCS if needed
+            local_model_path = self._download_from_gcs_if_needed(model_path)
+            
+            if os.path.exists(local_model_path):
                 try:
-                    models[model_name] = joblib.load(model_path)
+                    models[model_name] = joblib.load(local_model_path)
                     print(f"[OK] Loaded model: {model_name} from {model_path}")
                 except Exception as e:
                     print(f"[ERROR] Load failed: {model_name} - {str(e)}")
                     raise
             else:
-                print(f"[ERROR] File not found: {model_path}")
-                raise FileNotFoundError(f"Model file does not exist: {model_path}")
+                print(f"[ERROR] File not found: {local_model_path}")
+                raise FileNotFoundError(f"Model file does not exist: {local_model_path}")
 
         return models
 
@@ -2000,6 +1988,9 @@ Features:
 """
 
 import pickle
+import subprocess
+import tempfile
+import os
 from typing import Dict, Union
 from pathlib import Path
 import sys
@@ -2085,10 +2076,53 @@ class BaseRecommender:
             print(f"[ERROR] Failed to load manifest: {e}")
             raise
 
+    def _download_from_gcs_if_needed(self, gcs_path: str) -> str:
+        """
+        Download model from GCS if path is a GCS path, otherwise return local path
+        
+        Args:
+            gcs_path: GCS path (gs://bucket/path) or local path
+            
+        Returns:
+            Local file path
+        """
+        if not gcs_path.startswith('gs://'):
+            return gcs_path
+        
+        # Create temporary directory for downloaded models
+        temp_dir = Path(tempfile.gettempdir()) / "grpc_models"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Extract filename from GCS path
+        filename = gcs_path.split('/')[-1]
+        local_path = temp_dir / filename
+        
+        # Download if not already exists
+        if not local_path.exists():
+            print(f"[INFO] Downloading model from GCS: {gcs_path}")
+            try:
+                result = subprocess.run(
+                    ['gsutil', 'cp', gcs_path, str(local_path)],
+                    capture_output=True,
+                    text=True,
+                    check=True
+                )
+                print(f"[OK] Model downloaded to: {local_path}")
+            except subprocess.CalledProcessError as e:
+                print(f"[ERROR] Failed to download from GCS: {e.stderr}")
+                raise FileNotFoundError(f"Failed to download model from GCS: {gcs_path}")
+        else:
+            print(f"[INFO] Using cached model: {local_path}")
+        
+        return str(local_path)
+
     def load_model(self):
-        """Load model"""
+        """Load model (supports local and GCS paths)"""
         try:
-            with open(self.model_path, "rb") as pickle_file:
+            # Download from GCS if needed
+            local_model_path = self._download_from_gcs_if_needed(self.model_path)
+            
+            with open(local_model_path, "rb") as pickle_file:
                 model = pickle.load(pickle_file)
             print(f"[OK] Loaded model: {self.model_path}")
             return model
@@ -2596,7 +2630,7 @@ htmlcov/
             # Fallback: create dummy models if sklearn not available
             generator_logger.warning("sklearn not available, creating dummy models")
 
-            dummy_model = {"type": "dummy", "version": version}
+            dummy_model = {"type": "dummy", "version": "1.0"}
 
             model_file = model_dir / "example_model.pkl"
             with open(model_file, 'wb') as f:

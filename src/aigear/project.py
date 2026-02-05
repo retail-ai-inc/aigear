@@ -111,20 +111,20 @@ class Project:
                 "fetch_store_list": {},
                 "fetch_data": {},
                 "preprocessing": {},
-                "training": {},
-                "release": {
+                "training": {
                     "on": True,
-                    "to_bucket": True,
-                    "bucket_path": f"models/releases/{pipeline_name}/"
+                    "model_paths": {
+                        "base_path": f"/{pipeline_name}/",
+                        "mode": "manifest"
+                    }
+                },
+                "release": {
+                    "on": True
                 },
                 "grpc": {
                     "server": {
                         "serviceHost": "0.0.0.0",
                         "port": str(port),
-                        "modelPaths": {
-                            "mode": "manifest",
-                            "base_path": "/models/"
-                        },
                         "multiProcessing": template_pipeline.get('grpc', {}).get('server', {}).get('multiProcessing', {
                             "on": False,
                             "processCount": 2,
