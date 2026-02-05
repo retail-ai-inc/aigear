@@ -256,7 +256,8 @@ class GrpcServiceGenerator:
 
         # proto directory (directly under project root)
         (self.project_path / "proto").mkdir(exist_ok=True)
-        (self.project_path / "proto" / "__init__.py").touch()
+        proto_init_file = self.project_path / "proto" / "__init__.py"
+        proto_init_file.write_text("from . import grpc_pb2\nfrom . import grpc_pb2_grpc\n\n__all__ = ['grpc_pb2', 'grpc_pb2_grpc']\n")
 
         # models_modules directory (directly under project root)
         models_dir = self.project_path / "models_modules"
@@ -753,7 +754,9 @@ def main():
     logger.info(f"Script directory: {script_dir}")
 
     # Load configuration using ConfigParser
-    config_parser = grpc_config.ConfigParser("env.json")
+    # Try /project_root/env.json first (for Docker), fallback to env.json (for local)
+    env_json_path = "/project_root/env.json" if os.path.exists("/project_root/env.json") else "env.json"
+    config_parser = grpc_config.ConfigParser(env_json_path)
 
     # Simple mode: get first pipeline configuration
     pipelines = config_parser.config.get('pipelines', {})
@@ -1092,6 +1095,7 @@ Supports both local filesystem and GCS (Google Cloud Storage)
 
 import json
 import os
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -1196,6 +1200,7 @@ class ManifestLoader:
 
     def _read_manifest_from_gcs(self) -> Dict:
         """Read manifest from GCS"""
+       
         try:
             # Use gsutil cat to read GCS file content
             result = subprocess.run(
@@ -1207,19 +1212,19 @@ class ManifestLoader:
 
             # Parse JSON
             data = json.loads(result.stdout)
-            logger.info(f"Successfully read manifest from GCS: {self.manifest_path}")
+            logger.info(f"Successfully read manifest from GCS using gsutil: {self.manifest_path}")
             return data
 
         except subprocess.CalledProcessError as e:
             raise ManifestError(
-                f"Failed to read manifest from GCS: {self.manifest_path}\n"
+                f"Failed to read manifest from GCS using gsutil: {self.manifest_path}\n"
                 f"Error: {e.stderr}\n"
                 f"Please ensure gsutil is installed and you have access to the bucket."
             )
-        except json.JSONDecodeError as e:
-            raise ManifestError(f"Invalid JSON format in GCS manifest file: {e}")
-        except Exception as e:
-            raise ManifestError(f"Error reading manifest from GCS: {e}")
+        except FileNotFoundError:
+            raise ManifestError(
+                f"gsutil command not found. Please install Google Cloud SDK or use google-cloud-storage library."
+            )
 
     def _validate_manifest(self):
         """Validate manifest format"""
@@ -1588,8 +1593,9 @@ CMD ["python", "main.py"]
     ports:
       - "50051:50051"
     volumes:
-      - ./env.json:/app/env.json
       - ./models:/app/models
+      - ../../../../:/project_root:ro
+
     command: python main.py
     networks:
       - backend'''
