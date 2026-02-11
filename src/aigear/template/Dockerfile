@@ -11,6 +11,8 @@ RUN . /opt/venv/{project_name}/bin/activate && \
     uv pip install --upgrade setuptools && \
     uv pip install -r requirements.txt
 
+ENV VIRTUAL_ENV=/opt/venv/{projrct_name}
+ENV PATH="/opt/venv/{projrct_name}/bin:$PATH"
 ENV PORT=50051 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONBUFFERED=1

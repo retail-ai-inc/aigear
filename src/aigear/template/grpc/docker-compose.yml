@@ -1,0 +1,16 @@
+services:
+  pipeline-version:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /{grpc_directory}
+    ports:
+      - 50001:50051
+    command:  |
+      sh -c "
+      grpc-run --model_class_path {model class path}
+      tail -f /dev/null
+      "
+    volumes:
+      - ./.config/gcloud:/root/.config/gcloud:r
+      - .:/{grpc_directory}:rw
