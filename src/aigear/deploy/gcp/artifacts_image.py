@@ -1,6 +1,6 @@
 from aigear.common import run_sh, run_sh_stream
 from aigear.common.logger import Logging
-from aigear.common.config import AigearConfig
+from aigear.common.config import AigearConfig, get_project_name
 
 
 logger = Logging(log_name=__name__).console_logging()
@@ -42,16 +42,20 @@ class ArtifactsImage:
         logger.info(event)
         return is_exist
 
-def get_artifacts_image(aigear_config):
+def get_artifacts_image(aigear_config, image_name=None, image_version="latest"):
     project_id = aigear_config.gcp.gcp_project_id
     zone = aigear_config.gcp.location
     repository_name = aigear_config.gcp.artifacts.repository_name
-    artifacts_image = f"{zone}-docker.pkg.dev/{project_id}/{repository_name}/{repository_name}:latest"
+    if image_name is None:
+        image_name = get_project_name()
+    if image_name is None:
+        image_name = repository_name
+    artifacts_image = f"{zone}-docker.pkg.dev/{project_id}/{repository_name}/{image_name}:{image_version}"
     return artifacts_image
 
-def create_artifacts_image(dockerfile_path="."):
+def create_artifacts_image(dockerfile_path=".", image_name=None, image_version="latest"):
     aigear_config = AigearConfig.get_config()
-    artifacts_image = get_artifacts_image(aigear_config)
+    artifacts_image = get_artifacts_image(aigear_config, image_name, image_version)
     artifacts_image_instance = ArtifactsImage(artifacts_image=artifacts_image)
     is_exist = artifacts_image_instance.iamge_exist_in_artifacts()
     if is_exist:
