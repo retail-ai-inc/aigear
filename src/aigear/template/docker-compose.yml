@@ -8,10 +8,8 @@ services:
       - 50001:50051
     command:  |
       sh -c "
-      /opt/venv/{project_name}/bin/python main.py --version {pipeline_version} --step {step_1} &
-      /opt/venv/{project_name}/bin/python main.py --version {pipeline_version} --step {step_2} & 
-      /opt/venv/{project_name}/bin/python main.py --version {pipeline_version} --step {step_3} & 
-      /opt/venv/{project_name}/bin/python main.py --version {pipeline_version} --step {step_4} & 
+      aigear-workflow --version {pipeline version} --step {Step path 1} &
+      aigear-workflow --version {pipeline version} --step {Step path 2} & 
       tail -f /dev/null
       "
     volumes:
