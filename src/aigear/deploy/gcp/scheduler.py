@@ -126,7 +126,6 @@ class Scheduler:
 def create_scheduler(pipeline_version, step_names):
     aigear_config = AigearConfig.get_config()
     pipelines_config = PipelinesConfig.get_config()
-    artifacts_image = get_artifacts_image(aigear_config)
     pipeline_config = pipelines_config.get(pipeline_version, {})
 
     scheduler_messages = []
@@ -134,6 +133,7 @@ def create_scheduler(pipeline_version, step_names):
         step_config = pipeline_config.get(step_name, {})
         resources = step_config.get("resources", {})
         if "docker_image" not in resources:
+            artifacts_image = get_artifacts_image(aigear_config)
             resources["docker_image"] = artifacts_image
         task_run_parameters = step_config.get("task_run_parameters", {})
         message = {**resources, **task_run_parameters}
@@ -153,7 +153,6 @@ def create_scheduler(pipeline_version, step_names):
         time_zone=scheduler_time_zone,
     )
     is_exist = scheduler.describe()
-    print(is_exist)
     if not is_exist:
         scheduler.create()
 

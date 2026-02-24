@@ -17,7 +17,6 @@ __all__ = [
     "generate_schema_for_json",
     "SecretManager",
     "Infra",
-    "Scheduler",
 ]
 
 __all__.extend(

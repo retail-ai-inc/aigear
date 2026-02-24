@@ -8,7 +8,7 @@ def create_helm_chart(
         service_ports,
         replicas: int = 1,
         port: int = 443,
-        targetPort: int = 50051
+        target_port: int = 50051
 ):
     helm_path = Path.cwd() / helm_location
     helm_path.mkdir(parents=True, exist_ok=True)
@@ -43,7 +43,7 @@ spec:
   type: LoadBalancer
   ports:
     - port: {port}
-      targetPort: {targetPort}
+      targetPort: {target_port}
       protocol: TCP
   selector:
     app: {service_name}

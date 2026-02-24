@@ -1,4 +1,4 @@
-from aigear.service.helm_chart import create_helm_chart
+from aigear.deploy.common.helm_chart import create_helm_chart
 from aigear.common import run_sh
 from aigear.common.logger import Logging
 
@@ -54,15 +54,15 @@ def delete_local_grpc(
 
 
 if __name__ == "__main__":
-    # deploy_local_grpc(
-    #     helm_location=".",
-    #     service_name="grpc-service",
-    #     service_image="aguilbau/hello-world-grpc:latest",
-    #     service_ports="50051"
-    # )
-    delete_local_grpc(
-        helm_location="."
+    deploy_local_grpc(
+        helm_location=".",
+        service_name="grpc-service",
+        service_image="aguilbau/hello-world-grpc:latest",
+        service_ports="50051"
     )
+    # delete_local_grpc(
+    #     helm_location="."
+    # )
 
     # grpcurl -plaintext localhost:50051 list
     # grpcurl -plaintext localhost:50051 helloworld.Greeter/SayHello

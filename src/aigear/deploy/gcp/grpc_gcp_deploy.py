@@ -1,4 +1,4 @@
-from aigear.service.helm_chart import create_helm_chart
+from aigear.deploy.common.helm_chart import create_helm_chart
 from aigear.common import run_sh
 from aigear.common.logger import Logging
 

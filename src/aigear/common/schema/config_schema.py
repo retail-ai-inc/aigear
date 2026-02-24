@@ -80,11 +80,5 @@ class Gcp(BaseModel):
     logging: bool
 
 
-class Slack(BaseModel):
-    on: bool
-    webhook_url: str
-
-
 class Config(BaseModel):
     gcp: Gcp
-    slack: Slack

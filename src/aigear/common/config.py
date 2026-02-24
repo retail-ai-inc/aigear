@@ -52,3 +52,8 @@ class PipelinesConfig:
         if not cls._config:
             cls.load()
         return cls._config
+
+def get_project_name() -> str:
+    cfg = read_config(env_path=os.path.join(os.getcwd(), "env.json"))
+    project_name = cfg.get("project_name")
+    return project_name

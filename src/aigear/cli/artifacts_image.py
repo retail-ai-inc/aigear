@@ -10,9 +10,18 @@ def get_argument():
                         help='path of dockerfile')
     parser.add_argument('--force', action='store_true',
                         help='force recreate image even if it already exists')
+    parser.add_argument('--image_name',
+                        help='The name of the Docker image')
+    parser.add_argument('--image_version', default="latest",
+                        help='The version of the Docker image')
     args = parser.parse_args()
     return args
 
 def artifacts_image_init():
     args = get_argument()
-    create_artifacts_image(dockerfile_path=args.dockerfile_path, force=args.force)
+    create_artifacts_image(
+        dockerfile_path=args.dockerfile_path,
+        force=args.force,
+        image_name=args.image_name,
+        image_version = args.image_version
+    )
