@@ -45,6 +45,7 @@ class PipelinesConfig:
 
         cfg = read_config(env_path=os.path.join(os.getcwd(), "env.json"))
         cls._config = cfg.get("pipelines", {})
+        cls._config["environment"] = cfg.get("environment")
         return cls._config
 
     @classmethod

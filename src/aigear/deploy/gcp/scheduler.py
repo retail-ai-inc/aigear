@@ -14,7 +14,7 @@ class Scheduler:
         location: str,
         schedule: str,
         topic_name: str,
-        message: any,
+        message: list[dict[str, str]],
         time_zone: str = "Etc/UTC",
     ):
         self.name = name
@@ -157,7 +157,7 @@ def create_scheduler(pipeline_version, step_names):
         scheduler.create()
 
 if __name__ == "__main__":
-    message = [
+    message_json = [
         {
             "vm_name": "",
             "disk_size_gb": "20",
@@ -180,10 +180,10 @@ if __name__ == "__main__":
         location="",
         schedule="45 21 * * 0",
         topic_name="pipelines-pubsub",
-        message=message,
+        message=message_json,
         time_zone="Asia/Tokyo",
     )
-    is_exist = scheduler.describe()
-    print(is_exist)
+    exist = scheduler.describe()
+    print(exist)
     # if not is_exist:
     #     scheduler.create()
