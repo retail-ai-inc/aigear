@@ -1,21 +1,22 @@
-import importlib
 import logging
 import argparse
 import sys
 import os
+from aigear.common.loading_module import LoadModule
 
 
 def run_step(pipeline_version, step):
     project_root = os.getcwd()
     if project_root not in sys.path:
         sys.path.insert(0, project_root)
-
-    module_name = f"src.pipelines.{step}"
+    function_module = LoadModule(step).load_module()
     try:
-        module = importlib.import_module(module_name)
-        module.main(pipeline_version)
+        function_module(
+            pipeline_version=pipeline_version
+        )
     except Exception as e:
-        logging.error(f"Error while executing {module_name}: {e}")
+        logging.error(f"Error while executing {step}: {e}")
+
 
 def get_argument():
     parser = argparse.ArgumentParser(
@@ -27,6 +28,7 @@ def get_argument():
                         help='Name of the pipeline step')
     args = parser.parse_args()
     return args
+
 
 def task_run():
     args = get_argument()
