@@ -56,19 +56,19 @@ class Project:
             training_dir = pipeline_dir / "training"
             training_dir.mkdir(parents=True, exist_ok=True)
 
-            grpc_dir = pipeline_dir / "grpc"
-            grpc_dir.mkdir(parents=True, exist_ok=True)
+            model_service = pipeline_dir / "model_service"
+            model_service.mkdir(parents=True, exist_ok=True)
 
-            (grpc_dir / "docker-compose.yml").touch(exist_ok=True)
-            (grpc_dir / "Dockerfile").touch(exist_ok=True)
-            (grpc_dir / "env.sample.json").touch(exist_ok=True)
-            (grpc_dir / "requirements.txt").touch(exist_ok=True)
+            (model_service / "docker-compose.yml").touch(exist_ok=True)
+            (model_service / "Dockerfile").touch(exist_ok=True)
+            (model_service / "env.sample.json").touch(exist_ok=True)
+            (model_service / "requirements.txt").touch(exist_ok=True)
 
-            self._print_tree(grpc_dir)
+            self._print_tree(model_service)
 
-            self._copy_file(self._template_path / "grpc", grpc_dir / "docker-compose.yml")
-            self._copy_file(self._template_path / "grpc", grpc_dir / "Dockerfile")
-            self._copy_file(self._template_path / "grpc", grpc_dir / "docker-compose.yml")
+            self._copy_file(self._template_path / "grpc", model_service / "docker-compose.yml")
+            self._copy_file(self._template_path / "grpc", model_service / "Dockerfile")
+            self._copy_file(self._template_path / "grpc", model_service / "docker-compose.yml")
 
     def _print_tree(self, path: Path, prefix=""):
         if path.is_dir():
