@@ -1,7 +1,6 @@
 from aigear.common import run_sh
 from aigear.common.logger import Logging
 
-
 logger = Logging(log_name=__name__).console_logging()
 
 class ServiceAccounts:
@@ -55,7 +54,8 @@ class ServiceAccounts:
             "roles/artifactregistry.reader",
             "roles/pubsub.publisher",
             "roles/pubsub.subscriber",
-            "roles/run.invoker"
+            "roles/run.invoker",
+            "roles/container.developer"
         ]
 
         for role in roles:
