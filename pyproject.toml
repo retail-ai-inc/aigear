@@ -53,6 +53,7 @@ msgrpc = [
     "protobuf>=4.23.3",
     "grpcio-health-checking>=1.56.0",
     "sentry-sdk>=1.29.2",
+    "grpcio-tools>=1.47.0",
 ]
 gcp = [
     "google-cloud-logging>=3.0.0",
@@ -66,8 +67,10 @@ aigear-init = "aigear.cli.project_cli:project_init"
 aigear-gcp-infra = "aigear.cli.gcp_cli:gcp_infra_init"
 aigear-workflow = "aigear.cli.task_running:task_run"
 aigear-scheduler = "aigear.cli.scheduler:scheduler_init"
-artifacts-image-create = "aigear.cli.artifacts_image:artifacts_image_init"
+aigear-create-image = "aigear.cli.artifacts_image:create_image"
+aigear-create-all-image = "aigear.cli.artifacts_image:create_all_image_in_default_env"
 aigear-grpc = "aigear.cli.grpc_service:grpc_run"
+aigear-generate-env-schema = "aigear.cli.generate_env_schema:auto_generate_env_schema"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -77,15 +80,6 @@ include = [
 
 [tool.setuptools.package-data]
 "aigear" = [
-    "template/*",
     "template/**/*",
-    "common/*",
-    "common/**/*",
-    "**/*.yaml",
-    "**/*.yml",
-    "**/*.json",
-    "**/*.toml",
-    "**/*.js",
-    "**/*.md",
-    "**/Dockerfile",
+    "infrastructure/gcp/function/*"
 ]
