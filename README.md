@@ -1,6 +1,13 @@
-# Aigear — One-command ML Deployment & Automation Framework
+<div align="center">
 
-Aigear is a Python library for deploying and managing machine learning pipelines in the cloud with minimal commands and configuration. It automates infrastructure setup, standardizes containerized pipeline execution, and ensures reproducibility through ephemeral compute—cutting deployment time from months to hours.
+# One-command ML Deployment & Automation Framework
+
+**Aigear is a Python library for deploying and managing machine learning pipelines in the cloud with minimal commands and configuration. It automates infrastructure setup, standardizes containerized pipeline execution, and ensures reproducibility through ephemeral compute—cutting deployment time from months to hours.**
+
+[**What is Aigear**](##-What-is-Aigear?) · [**Quick Start**](##-Quick-Start) ·  [**View Demo**](docs/full-guide.md)·  [**Configuration Guide**](docs/route-guide.md)
+
+
+</div>
 
 ## What is Aigear?
 
@@ -88,7 +95,7 @@ pip install -U aigear
 aigear-init --name xxx_ml_service
 ```
 
-3. **Prepare `env.json`** (define GCP project, bucket, service accounts, etc.). See [configuration guide](doc/route-guide.md).
+3. **Prepare `env.json`** (define GCP project, bucket, service accounts, etc.). See [configuration guide](docs/route-guide.md).
 
 4. **Create infrastructure:**
 ```bash
