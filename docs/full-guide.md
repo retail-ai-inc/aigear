@@ -1,7 +1,7 @@
 # AIGear Project Full Guide
 
 > [!NOTE]
-> This document is a **complete development and deployment guide** for machine learning projects (such as `my_service`) generated based on the AIGear standard template engine `aigear-init`.
+> This document is a **complete development and deployment guide** for machine learning projects (such as `Medovik`) generated based on the AIGear standard template engine `aigear-init`.
 >
 > 💡 For a quick reference to the configuration parameter dictionary, please refer to the [Configuration Guide](route-guide.md). This document focuses on explaining **project architecture, directory operational mechanisms, deployment principles, and the use of core APIs**.
 
