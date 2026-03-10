@@ -1,190 +1,190 @@
-# 配置参数说明文档
+# Configuration Parameter Guide
 
 
-## 1. 基本配置 (Basic)
+## 1. Basic Configuration (Basic)
 
-### 1.1 项目信息
+### 1.1 Project Information
 
-| 参数 | 类型 | 说明 | 示例值 |
+| Parameter | Type | Description | Example Value |
 | :--- | :--- | :--- | :--- |
-| `project_name` | `string` | 项目名称 | `test_sklearn_pipeline` |
-| `environment`  | `string` | 运行环境 | `local` |
+| `project_name` | `string` | Project name | `test_sklearn_pipeline` |
+| `environment`  | `string` | Operating environment | `local` |
 
 ---
 
-## 2. AIGear 配置
+## 2. AIGear Configuration
 
-### 2.1 GCP 云服务配置
+### 2.1 GCP Cloud Services Configuration
 
-| 参数 | 类型 | 说明 | 示例值 |
+| Parameter | Type | Description | Example Value |
 | :--- | :--- | :--- | :--- |
-| `gcp_project_id` | `string` | GCP 项目 ID | `xxx-ape-staging` |
-| `location`       | `string` | GCP 资源所在区域 | `asia-northeast1` |
+| `gcp_project_id` | `string` | GCP Project ID | `xxx-ape-staging` |
+| `location`       | `string` | GCP resource region | `asia-northeast1` |
 
-#### 2.1.1 存储桶配置 (bucket)
+#### 2.1.1 Storage Bucket Configuration (bucket)
 
-| 参数 | 类型 | 说明 | 示例值 |
+| Parameter | Type | Description | Example Value |
 | :--- | :--- | :--- | :--- |
-| `on` | `boolean` | 是否启用存储桶 | `true` |
-| `bucket_name` | `string` | 存储桶名称 | `medovik-xxx-staging` |
-| `bucket_name_for_release` | `string` | 发布用存储桶名称 | `medovik-xxx-staging` |
+| `on` | `boolean` | Whether to enable storage bucket | `true` |
+| `bucket_name` | `string` | Storage bucket name | `medovik-xxx-staging` |
+| `bucket_name_for_release` | `string` | Release storage bucket name | `medovik-xxx-staging` |
 
-#### 2.1.2 云构建配置 (cloud_build)
+#### 2.1.2 Cloud Build Configuration (cloud_build)
 
-| 参数 | 类型 | 说明 | 示例值 |
+| Parameter | Type | Description | Example Value |
 | :--- | :--- | :--- | :--- |
-| `on` | `boolean` | 是否启用云构建 | `false` |
-| `trigger_name` | `string` | 构建触发器名称 | `test-pipeline-trigger` |
-| `description` | `string` | 构建触发器描述 | `Trigger for sklearn pipeline` |
-| `repository` | `string` | 代码仓库地址 | `github.com/my-org/my-repo` |
-| `repo_owner` | `string` | 仓库所有者 | `my-org` |
-| `repo_name` | `string` | 仓库名称 | `my-repo` |
-| `branch_pattern` | `string` | 分支匹配模式 | `^main$` |
-| `build_config` | `string` | 构建配置文件 | `cloudbuild.yaml` |
-| `substitutions` | `string` | 构建变量替换 | `_ENV=staging,_REGION=asia-northeast1` |
+| `on` | `boolean` | Whether to enable Cloud Build | `false` |
+| `trigger_name` | `string` | Build trigger name | `test-pipeline-trigger` |
+| `description` | `string` | Build trigger description | `Trigger for sklearn pipeline` |
+| `repository` | `string` | Code repository address | `github.com/my-org/my-repo` |
+| `repo_owner` | `string` | Repository owner | `my-org` |
+| `repo_name` | `string` | Repository name | `my-repo` |
+| `branch_pattern` | `string` | Branch matching pattern | `^main$` |
+| `build_config` | `string` | Build configuration file | `cloudbuild.yaml` |
+| `substitutions` | `string` | Build variable substitution | `_ENV=staging,_REGION=asia-northeast1` |
 
-#### 2.1.3 预虚拟机镜像配置 (pre_vm_image)
+#### 2.1.3 Pre-configured VM Image Configuration (pre_vm_image)
 
-| 参数 | 类型 | 说明 | 示例值 |
+| Parameter | Type | Description | Example Value |
 | :--- | :--- | :--- | :--- |
-| `on` | `boolean` | 是否启用预装虚拟机镜像 | `false` |
-| `machine_type` | `string` | 机器类型 | `n1-standard-4` |
-| `gpu_type` | `string` | GPU 类型 | `nvidia-tesla-t4` |
-| `gpu_count` | `integer` | GPU 数量 | `1` |
-| `boot_disk_gb` | `integer` | 启动磁盘大小 (GB) | `50` |
-| `dlvm_family` | `string` | 深度学习虚拟机家族 | `tf2-latest-gpu` |
-| `bake_vm` | `string` | 虚拟机烘焙配置 | `ml-image-bake-config` |
-| `custom_image_name` | `string` | 自定义镜像名称 | `my-custom-ml-image` |
-| `bake_timeout_sec` | `integer` | 烘焙超时时间 (秒) | `1200` |
-| `bake_poll_interval_sec` | `integer` | 烘焙轮询间隔 (秒) | `20` |
+| `on` | `boolean` | Whether to enable pre-installed VM images | `false` |
+| `machine_type` | `string` | Machine type | `n1-standard-4` |
+| `gpu_type` | `string` | GPU type | `nvidia-tesla-t4` |
+| `gpu_count` | `integer` | Number of GPUs | `1` |
+| `boot_disk_gb` | `integer` | Boot disk size (GB) | `50` |
+| `dlvm_family` | `string` | Deep Learning VM family | `tf2-latest-gpu` |
+| `bake_vm` | `string` | VM baking configuration | `ml-image-bake-config` |
+| `custom_image_name` | `string` | Custom image name | `my-custom-ml-image` |
+| `bake_timeout_sec` | `integer` | Baking timeout (seconds) | `1200` |
+| `bake_poll_interval_sec` | `integer` | Baking poll interval (seconds) | `20` |
 
-#### 2.1.4 云函数配置 (cloud_function)
+#### 2.1.4 Cloud Function Configuration (cloud_function)
 
-| 参数 | 类型 | 说明 | 示例值 |
+| Parameter | Type | Description | Example Value |
 | :--- | :--- | :--- | :--- |
-| `on` | `boolean` | 是否启用云函数 | `true` |
-| `function_name` | `string` | 函数名称 | `test-pipeline-run` |
+| `on` | `boolean` | Whether to enable Cloud Functions | `true` |
+| `function_name` | `string` | Function name | `test-pipeline-run` |
 
-#### 2.1.5 IAM 权限配置 (iam)
+#### 2.1.5 IAM Permissions Configuration (iam)
 
-| 参数 | 类型 | 说明 | 示例值 |
+| Parameter | Type | Description | Example Value |
 | :--- | :--- | :--- | :--- |
-| `on` | `boolean` | 是否启用 IAM 权限配置 | `true` |
-| `account_name` | `string` | 绑定的服务账号名称 | `test-pipeline-sa` |
+| `on` | `boolean` | Whether to enable IAM permissions configuration | `true` |
+| `account_name` | `string` | Bound service account name | `test-pipeline-sa` |
 
-#### 2.1.6 消息队列配置 (pub_sub)
+#### 2.1.6 Message Queue Configuration (pub_sub)
 
-| 参数 | 类型 | 说明 | 示例值 |
+| Parameter | Type | Description | Example Value |
 | :--- | :--- | :--- | :--- |
-| `on` | `boolean` | 是否启用 Pub/Sub | `true` |
-| `topic_name` | `string` | 主题名称 | `test-pipelines-pubsub` |
+| `on` | `boolean` | Whether to enable Pub/Sub | `true` |
+| `topic_name` | `string` | Topic name | `test-pipelines-pubsub` |
 
-#### 2.1.7 工件仓库配置 (artifacts)
+#### 2.1.7 Artifact Repository Configuration (artifacts)
 
-| 参数 | 类型 | 说明 | 示例值 |
+| Parameter | Type | Description | Example Value |
 | :--- | :--- | :--- | :--- |
-| `on` | `boolean` | 是否启用工件仓库 | `true` |
-| `repository_name` | `string` | 仓库名称 | `test-pipelines-image-whn` |
+| `on` | `boolean` | Whether to enable Artifact Repository | `true` |
+| `repository_name` | `string` | Repository name | `test-pipelines-image-whn` |
 
-#### 2.1.8 Kubernetes 集群配置 (kubernetes)
+#### 2.1.8 Kubernetes Cluster Configuration (kubernetes)
 
-| 参数 | 类型 | 说明 | 示例值 |
+| Parameter | Type | Description | Example Value |
 | :--- | :--- | :--- | :--- |
-| `on` | `boolean` | 是否启用 Kubernetes | `true` |
-| `cluster_name` | `string` | 集群名称 | `my-grpc-cluster` |
-| `num_nodes` | `integer` | 默认节点数量 | `3` |
-| `min_nodes` | `integer` | 自动伸缩最小节点数 | `1` |
-| `max_nodes` | `integer` | 自动伸缩最大节点数 | `5` |
+| `on` | `boolean` | Whether to enable Kubernetes | `true` |
+| `cluster_name` | `string` | Cluster name | `my-grpc-cluster` |
+| `num_nodes` | `integer` | Default number of nodes | `3` |
+| `min_nodes` | `integer` | Autoscaling minimum node count | `1` |
+| `max_nodes` | `integer` | Autoscaling maximum node count | `5` |
 
-#### 2.1.9 日志配置 (logging)
+#### 2.1.9 Logging Configuration (logging)
 
-| 参数 | 类型 | 说明 | 示例值 |
+| Parameter | Type | Description | Example Value |
 | :--- | :--- | :--- | :--- |
-| `logging` | `boolean` | 是否启用详细日志记录 | `false` |
+| `logging` | `boolean` | Whether to enable verbose logging | `false` |
 
 ---
 
-## 3. 管道任务配置 (Pipelines)
+## 3. Pipeline Task Configuration (Pipelines)
 
-### 3.1 管道版本配置 (pipeline_version_1)
+### 3.1 Pipeline Version Configuration (pipeline_version_1)
 
-#### 3.1.1 调度器配置 (scheduler)
+#### 3.1.1 Scheduler Configuration (scheduler)
 
-| 参数 | 类型 | 说明 | 示例值 |
+| Parameter | Type | Description | Example Value |
 | :--- | :--- | :--- | :--- |
-| `name` | `string` | 调度任务名称 | `daily-sklearn-training` |
-| `location` | `string` | 调度器所在地区 | `asia-northeast1` |
-| `schedule` | `string` | 调度计划规则 (Cron 表达式) | `0 2 * * *` |
-| `time_zone` | `string` | 时区设置 | `Asia/Tokyo` |
+| `name` | `string` | Scheduled task name | `daily-sklearn-training` |
+| `location` | `string` | Scheduler region | `asia-northeast1` |
+| `schedule` | `string` | Scheduling rule (Cron expression) | `0 2 * * *` |
+| `time_zone` | `string` | Time zone setting | `Asia/Tokyo` |
 
-#### 3.1.2 商店列表获取配置 (fetch_store_list)
+#### 3.1.2 Fetch Store List Configuration (fetch_store_list)
 
-| 参数 | 类型 | 说明 | 示例值 |
+| Parameter | Type | Description | Example Value |
 | :--- | :--- | :--- | :--- |
-| `parameters` | `object` | 额外参数字典 | `{"store_list_base_uri": "https://sandbox.raicart.io/..."}` |
+| `parameters` | `object` | Additional parameter dictionary | `{"store_list_base_uri": "https://sandbox.raicart.io/..."}` |
 
-##### 3.1.2.1 任务资源配置 (resources)
+##### 3.1.2.1 Task Resource Configuration (resources)
 
-| 参数 | 类型 | 说明 | 示例值 |
+| Parameter | Type | Description | Example Value |
 | :--- | :--- | :--- | :--- |
-| `vm_name` | `string` | 分配的虚拟机名称 | `fetch-store-task-vm` |
-| `disk_size_gb` | `string` | 分配磁盘大小 (GB) | `50` |
-| `spec` | `string` | 计算资源规格描述 | `e2-standard-4` |
-| `on_host_maintenance` | `string` | 主机维护策略 (迁移等) | `MIGRATE` |
+| `vm_name` | `string` | Allocated Virtual Machine name | `fetch-store-task-vm` |
+| `disk_size_gb` | `string` | Allocated disk size (GB) | `50` |
+| `spec` | `string` | Computing resource specification | `e2-standard-4` |
+| `on_host_maintenance` | `string` | Host maintenance policy | `MIGRATE` |
 
-##### 3.1.2.2 任务运行参数 (task_run_parameters)
+##### 3.1.2.2 Task Run Parameters (task_run_parameters)
 
-| 参数 | 类型 | 说明 | 示例值 |
+| Parameter | Type | Description | Example Value |
 | :--- | :--- | :--- | :--- |
-| `pipeline_version` | `string` | 指定执行的管道版本 | `pipeline_version_1` |
-| `pipeline_step` | `string` | 指定执行的具体管道步骤 | `fetch_store_list` |
+| `pipeline_version` | `string` | Specify the executed pipeline version | `pipeline_version_1` |
+| `pipeline_step` | `string` | Specify the executed concrete pipeline step | `fetch_store_list` |
 
-#### 3.1.3 数据获取配置 (fetch_data)
+#### 3.1.3 Fetch Data Configuration (fetch_data)
 
-| 参数 | 类型 | 说明 | 示例值 |
+| Parameter | Type | Description | Example Value |
 | :--- | :--- | :--- | :--- |
-| `fetch_data` | `object` | 数据获取节点具体配置 | `{"mongo_uri_secret_name": "TRIAL_MONGO_URI"}` |
+| `fetch_data` | `object` | Specific configuration for data fetching node | `{"mongo_uri_secret_name": "TRIAL_MONGO_URI"}` |
 
-#### 3.1.4 预处理配置 (preprocessing)
+#### 3.1.4 Preprocessing Configuration (preprocessing)
 
-| 参数 | 类型 | 说明 | 示例值 |
+| Parameter | Type | Description | Example Value |
 | :--- | :--- | :--- | :--- |
-| `preprocessing` | `object` | 数据清洗和预处理节点配置 | `{"train_test_split": 0.8}` |
+| `preprocessing` | `object` | Configuration for data cleaning and preprocessing node | `{"train_test_split": 0.8}` |
 
-#### 3.1.5 训练配置 (training)
+#### 3.1.5 Training Configuration (training)
 
-| 参数 | 类型 | 说明 | 示例值 |
+| Parameter | Type | Description | Example Value |
 | :--- | :--- | :--- | :--- |
-| `training` | `object` | 模型训练节点配置 | `{"epochs": 35, "learning_rate": 0.1}` |
+| `training` | `object` | Model training node configuration | `{"epochs": 35, "learning_rate": 0.1}` |
 
-#### 3.1.6 发布配置 (release)
+#### 3.1.6 Release Configuration (release)
 
-| 参数 | 类型 | 说明 | 示例值 |
+| Parameter | Type | Description | Example Value |
 | :--- | :--- | :--- | :--- |
-| `release_grpc` | `boolean` | 模型部署是否发布为 gRPC 服务 | `false` |
+| `release_grpc` | `boolean` | Whether model deployment is released as a gRPC service | `false` |
 
-##### 3.1.6.1 gRPC 详细配置 (grpc)
+##### 3.1.6.1 gRPC Detailed Configuration (grpc)
 
-| 参数 | 类型 | 说明 | 示例值 |
+| Parameter | Type | Description | Example Value |
 | :--- | :--- | :--- | :--- |
-| `keep_alive.time` | `integer` | 保持活动心跳间隔(秒) | `60` |
-| `keep_alive.timeout` | `integer` | 保持活动超时时间(秒) | `5` |
-| `service_host` | `string` | 监听的主机地址 | `0.0.0.0` |
-| `port` | `string` | 监听端口 | `50051` |
-| `multi_processing.on` | `boolean` | 启用多进程机制 | `false` |
-| `multi_processing.process_count` | `integer` | 进程数量 | `2` |
-| `multi_processing.thread_count` | `integer` | 线程数量 | `10` |
-| `model_path.model_file` | `string` | 训练出的模型文件挂载/加载路径 | `/ape-model/${subsidiaryName}/ape4/LightSANs.pth` |
-| `model_path.dataset_file` | `string` | 训练集/字典关联数据文件全路径 | `/ape-model/${subsidiaryName}/ape4/SequentialDataset.pth` |
-| `sentry.on` | `boolean` | 启用 Sentry 异常监控 | `false` |
-| `sentry.dsn` | `string` | Sentry DSN 地址 | `https://examplePublicKey@o0.ingest.sentry.io/0` |
-| `sentry.traces_sample_rate` | `float` | Sentry 追踪采样率 | `1.0` |
+| `keep_alive.time` | `integer` | Keep alive heartbeat interval (seconds) | `60` |
+| `keep_alive.timeout` | `integer` | Keep alive timeout (seconds) | `5` |
+| `service_host` | `string` | Listening host address | `0.0.0.0` |
+| `port` | `string` | Listening port | `50051` |
+| `multi_processing.on` | `boolean` | Enable multi-processing mechanism | `false` |
+| `multi_processing.process_count` | `integer` | Process count | `2` |
+| `multi_processing.thread_count` | `integer` | Thread count | `10` |
+| `model_path.model_file` | `string` | Mount/Load path of the trained model file | `/ape-model/${subsidiaryName}/ape4/LightSANs.pth` |
+| `model_path.dataset_file` | `string` | Full path of the training set/dictionary associate data file | `/ape-model/${subsidiaryName}/ape4/SequentialDataset.pth` |
+| `sentry.on` | `boolean` | Enable Sentry exception monitoring | `false` |
+| `sentry.dsn` | `string` | Sentry DSN address | `https://examplePublicKey@o0.ingest.sentry.io/0` |
+| `sentry.traces_sample_rate` | `float` | Sentry tracing sample rate | `1.0` |
 
 ---
 
-## 4. 配置文件完整示例 (`env.json`)
+## 4. Complete Configuration File Example (`env.json`)
 
-以下是一个最新的、带建议填充值的 `env.sample.json` 示例参考：
+Below is the latest `env.sample.json` example reference with suggested populated values:
 
 ```json
 {
@@ -192,7 +192,7 @@
     "environment": "local",
     "aigear": {
         "gcp": {
-            "gcp_project_id": "ssc-ape-staging",
+            "gcp_project_id": "xxx-ape-staging",
             "location": "asia-northeast1",
             "bucket": {
                 "on": true,
@@ -313,25 +313,25 @@
 
 ---
 
-## 5. 配置使用说明
+## 5. Configuration Usage Instructions
 
 > [!TIP]
-> 推荐阅读以下步骤来快速使用并应用配置：
+> It is recommended to read the following steps to quickly use and apply configurations:
 
-1. 确保将配置文件保存为 `env.json`，并放置在项目 **根目录**。
-2. 根据你所处的实际环境（如开发/测试/生产）和需求修改对应的参数值。
-3. 如果将某项服务启用（即设置了 `on: true`），请务必确保已在云端配置好相关的权限与依赖项。
-4. GCP 相关的配置生效，需要确保本地或 CI/CD 环境已安装并正确登录了 `gcloud` CLI 工具。
-5. Kubernetes 相关配置要求已安装 `kubectl`，并且拥有访问对应 K8s 集群的证书与权限。
+1. Guarantee that the configuration file is saved as `env.json` and placed securely in the project **root directory**.
+2. Modify the corresponding parameter values according to your actual environment (e.g., Development/Test/Production) and requirements.
+3. If a certain service is enabled (i.e., setting `on: true`), ensure that related permissions and dependencies are well-configured in the cloud.
+4. For GCP-related configurations to take effect, ensure the local or CI/CD environment has the `gcloud` CLI tool installed and properly logged in.
+5. Kubernetes-related configs require `kubectl` installed alongside access to the corresponding K8s cluster certificates and permissions.
 
 ---
 
-## 6. 注意事项 \& 最佳实践
+## 6. Precautions & Best Practices
 
 > [!WARNING]
-> 为了保障项目的安全与稳定运行，请务必遵守以下安全约定：
+> To ensure the secure and stable operation of the project, please strictly observe the following security conventions:
 
-- **敏感信息治理**：强烈建议不要将 API 密钥（API Keys）、Webhook URL 回调地址等敏感信息 **硬编码** 并提交到代码仓库中。通过 GCP Secret Manager 管理器或环境变量注入。
-- **环境隔离**：生产环境（Production）与开发/测试环境（Development / Staging）的 `env.json` 必须相互隔离，严禁混用。
-- **配置备份**：重要的环境参数文件建议使用代码仓库隔离分支或安全工具定期备份。
-- **更新生效**：修改 `env.json` 文件后，通常需要**重启应用程序或容器服务**，以确保最新的配置被完整加载和应用。
+- **Sensitive Information Governance**: It is highly recommended NOT to **hardcode** sensitive information such as API Keys and Webhook URL callback addresses into the code repository. Inject them via GCP Secret Manager or environmental variables.
+- **Environment Isolation**: The `env.json` files for the Production environment and the Development/Staging environment must be isolated from each other, strictly prohibiting cross-usage.
+- **Configuration Backup**: Important environmental parameter files are recommended to be regularly backed up using secure tools or isolated branches in the code repository.
+- **Update Activation**: After modifying the `env.json` file, it is generally required to **restart the application or container services** to ensure the latest configuration is fully loaded and applied.
