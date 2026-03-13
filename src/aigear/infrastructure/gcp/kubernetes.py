@@ -23,26 +23,29 @@ class KubernetesCluster:
 
     def create(self):
         command = [
-            "gcloud", "container", "clusters",
+            "gcloud", "container", "clusters", "create",
             self.cluster_name,
-            f"--zone={self.zone}",
+            f"--region={self.zone}",
+            f"--node-locations={self.zone}-a",
             "--enable-autoscaling",
             f"--num-nodes={self.num_nodes}",
             f"--min-nodes={self.min_nodes}",
             f"--max-nodes={self.max_nodes}",
             f"--project={self.project_id}",
+            "--async",
+            "--quiet"
         ]
         event = run_sh(command)
         if "ERROR" in event:
             logger.info(event)
-            logger.error("Error occurred while creating cloud function.")
+            logger.error("Error occurred while creating GKE cluster.")
 
     def describe(self):
         is_exist = False
         command = [
             "gcloud", "container", "clusters", "describe",
             self.cluster_name,
-            f"--location={self.zone}",
+            f"--zone={self.zone}",
             f"--project={self.project_id}",
         ]
         event = run_sh(command)
@@ -75,5 +78,5 @@ if __name__ == "__main__":
     )
     kubernetes_cluster_exist = kubernetes_cluster.describe()
     print("kubernetes_cluster: ", kubernetes_cluster_exist)
-    # if not kubernetes_cluster_exist:
-    #     kubernetes_cluster.create()
+    if not kubernetes_cluster_exist:
+        kubernetes_cluster.create()

@@ -1,0 +1,19 @@
+services:
+  pipeline-version:
+    build:
+      context: .
+      dockerfile: Dockerfile.pl
+#    image: pl_test:latest
+    working_dir: /pl
+    command:  |
+      sh -c "
+      aigear-workflow --version logistic_regression --step src.pipelines.logistic_regression.fetch_data.data_from_sklearn.fetch_data &&
+      aigear-workflow --version logistic_regression --step src.pipelines.logistic_regression.preprocessing.feature_processing.feature_processing &&
+      aigear-workflow --version logistic_regression --step src.pipelines.logistic_regression.training.train.train_model
+      tail -f /dev/null
+      "
+    volumes:
+      - .:/pl:rw
+      - ./.config/gcloud:/root/.config/gcloud:r
+
+# docker compose -f docker-compose-pl.yml up -d

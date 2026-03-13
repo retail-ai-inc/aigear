@@ -1,8 +1,8 @@
 import shutil
 from pathlib import Path
+
 from aigear.common import run_sh
 from aigear.common.logger import Logging
-
 
 logger = Logging(log_name=__name__).console_logging()
 
@@ -30,20 +30,20 @@ class CloudFunction:
 
         function_path_src = source_path / "index.js"
         function_file_dst = destination_path / "index.js"
-        content = Path(function_path_src).read_text(encoding="utf-8")
-        content = content.replace("PROJECTID", self.project_id
-            ).replace("ZONE", f"{self.region}-a"
+        if not function_file_dst.exists():
+            content = Path(function_path_src).read_text(encoding="utf-8")
+            content = content.replace(
+                "PROJECTID", self.project_id
             ).replace("REGION", self.region
-            ).replace("TOPICSNAME", self.topic_name
-            ).replace("SERVICEACCOUNT", self.service_account)
-        function_file_dst.write_text(content, encoding="utf-8")
+            ).replace("TOPICSNAME", self.topic_name)
+            function_file_dst.write_text(content, encoding="utf-8")
 
-        package_file_src = source_path / "package.js"
+        package_file_src = source_path / "package.json"
         package_file_dst = destination_path / "package.json"
         if not package_file_dst.exists():
             shutil.copy(package_file_src, package_file_dst)
 
-        return destination_path
+        return destination_path.as_posix()
 
     def deploy(self):
         source_path = self._function_path()
@@ -57,12 +57,27 @@ class CloudFunction:
             f"--trigger-topic={self.topic_name}",
             f"--source={source_path}",
             f"--project={self.project_id}",
-            f"--service-account={self.service_account}"
+            f"--service-account={self.service_account}",
+            "--quiet",
+            "--no-allow-unauthenticated",
         ]
-        event = run_sh(command)
+        event = run_sh(command, timeout=600)
         logger.info(event)
         if "ERROR" in event:
             logger.error("Error occurred while creating cloud function.")
+    
+    def add_permissions_to_cloud_function(self, sa_email):
+        command = [
+            "gcloud", "run", "services", "add-iam-policy-binding", self.function_name,
+            f"--region={self.region}",
+            f"--member=serviceAccount:{sa_email}",
+            "--role=roles/run.invoker",
+        ]
+        event = run_sh(command)
+        if "Updated IAM policy" in event:
+            logger.info(f"✅ run.invoker granted on {self.function_name}")
+        else:
+            logger.error(f"❌ Failed on {self.function_name}: {event}")
 
     def describe(self):
         is_exist = False

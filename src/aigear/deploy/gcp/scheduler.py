@@ -1,17 +1,26 @@
 import json
+
 from aigear.common import run_sh
-from aigear.common.logger import Logging
 from aigear.common.config import AigearConfig, PipelinesConfig
+from aigear.common.logger import Logging
 from aigear.deploy.gcp.artifacts_image import get_artifacts_image
 
-
 logger = Logging(log_name=__name__).console_logging()
+
+# Step-level fields that are lifted directly from step_config into the message.
+# Any field listed here will be included in the message if present in the step config.
+_STEP_MESSAGE_FIELDS = (
+    "pipeline_step",
+    "model_class_path",
+)
+
 
 class Scheduler:
     def __init__(
         self,
         name: str,
         location: str,
+        project_id: str,
         schedule: str,
         topic_name: str,
         message: any,
@@ -19,6 +28,7 @@ class Scheduler:
     ):
         self.name = name
         self.location = location
+        self.project_id = project_id
         self.schedule = schedule
         self.topic_name = topic_name
         self.message = message
@@ -29,11 +39,12 @@ class Scheduler:
         command = [
             "gcloud", "scheduler", "jobs", "create", "pubsub",
             self.name,
-            "--location", self.location,
             "--schedule", self.schedule,
             "--topic", self.topic_name,
             "--message-body", message_body,
             "--time-zone", self.time_zone,
+            "--location", self.location,
+            "--project", self.project_id,
         ]
         event = run_sh(command)
         logger.info(event)
@@ -45,6 +56,7 @@ class Scheduler:
             "gcloud", "scheduler", "jobs", "delete",
             self.name,
             "--location", self.location,
+            "--project", self.project_id,
         ]
         event = run_sh(command, "yes\n")
         logger.info(event)
@@ -55,6 +67,7 @@ class Scheduler:
             "gcloud", "scheduler", "jobs", "describe",
             self.name,
             "--location", self.location,
+            "--project", self.project_id,
         ]
         event = run_sh(command)
         logger.info(event)
@@ -67,6 +80,7 @@ class Scheduler:
             "gcloud", "scheduler", "jobs", "list",
             "--location", self.location,
             f"--filter={self.name}",
+            "--project", self.project_id,
         ]
         event = run_sh(command)
         logger.info(f"\n{event}")
@@ -76,6 +90,7 @@ class Scheduler:
             "gcloud", "scheduler", "jobs", "run",
             self.name,
             "--location", self.location,
+            "--project", self.project_id,
         ]
         event = run_sh(command)
         if event:
@@ -88,6 +103,7 @@ class Scheduler:
             "gcloud", "scheduler", "jobs", "pause",
             self.name,
             "--location", self.location,
+            "--project", self.project_id,
         ]
         event = run_sh(command)
         logger.info(event)
@@ -97,6 +113,7 @@ class Scheduler:
             "gcloud", "scheduler", "jobs", "resume",
             self.name,
             "--location", self.location,
+            "--project", self.project_id,
         ]
         event = run_sh(command)
         logger.info(event)
@@ -104,6 +121,7 @@ class Scheduler:
     @staticmethod
     def update(
         name,
+        project_id,
         location,
         schedule,
         topic_name,
@@ -117,73 +135,90 @@ class Scheduler:
             "--schedule", schedule,
             "--topic", topic_name,
             "--message-body", message_body,
+            "--project", project_id,
         ]
         event = run_sh(command)
         logger.info(event)
         if "ERROR" in event:
             logger.info("Error occurred while creating cloud function.")
 
-def create_scheduler(pipeline_version, step_names):
-    aigear_config = AigearConfig.get_config()
-    pipelines_config = PipelinesConfig.get_config()
-    pipeline_config = pipelines_config.get(pipeline_version, {})
+
+def _build_step_message(
+    step_config: dict,
+    pipeline_version: str,
+    docker_image: str,
+    gke_cluster: str,
+    gke_zone: str,
+) -> dict:
+    """
+    Build a single task message for the Pub/Sub payload.
+
+    Field priority:
+      - Base: resources block (vm_name, spec, gpu, disk_size_gb, ...)
+      - Always added: docker_image, pipeline_version
+      - Conditionally added: pipeline_step, model_class_path (if present in step_config)
+      - Conditionally added: gke_cluster, gke_zone (only when model_class_path is present)
+    """
+    message = dict(step_config.get("resources", {}))
+
+    message["docker_image"]      = docker_image
+    message["pipeline_version"]  = pipeline_version
+
+    # Lift pipeline_step / model_class_path directly from step config
+    for field in _STEP_MESSAGE_FIELDS:
+        if field in step_config:
+            message[field] = step_config[field]
+
+    # GKE fields are only needed for steps that perform a model deploy
+    if "model_class_path" in step_config:
+        message["gke_cluster"] = gke_cluster
+        message["gke_zone"]    = gke_zone
+
+    return message
+
+
+def create_scheduler(pipeline_version: str, step_names: list[str]):
+    aigear_config   = AigearConfig.get_config()
+    pipeline_config = PipelinesConfig.get_version_config(pipeline_version)
+
+
+    docker_image = get_artifacts_image(aigear_config)
+    # GKE info comes from the global aigear config
+    kubernetes_config = aigear_config.gcp.kubernetes
+    gke_cluster = kubernetes_config.cluster_name
+    gke_zone    = aigear_config.gcp.location
 
     scheduler_messages = []
     for step_name in step_names:
         step_config = pipeline_config.get(step_name, {})
-        resources = step_config.get("resources", {})
-        if "docker_image" not in resources:
-            artifacts_image = get_artifacts_image(aigear_config)
-            resources["docker_image"] = artifacts_image
-        task_run_parameters = step_config.get("task_run_parameters", {})
-        message = {**resources, **task_run_parameters}
+
+        # Allow per-step docker_image override; fall back to the global artifacts image
+        step_docker_image = step_config.get("resources", {}).get("docker_image", docker_image)
+        if step_name == "model_service":
+            split_image = step_docker_image.split(":")
+            if len(split_image)==2:
+                step_docker_image = split_image[0] +"-service:" + split_image[1]
+
+        message = _build_step_message(
+            step_config    = step_config,
+            pipeline_version = pipeline_version,
+            docker_image   = step_docker_image,
+            gke_cluster    = gke_cluster,
+            gke_zone       = gke_zone,
+        )
         scheduler_messages.append(message)
 
-    scheduler_config = pipeline_config.get("scheduler", {})
-    scheduler_name = scheduler_config.get("name")
-    scheduler_location = scheduler_config.get("location")
-    scheduler_schedule = scheduler_config.get("schedule")
-    scheduler_time_zone = scheduler_config.get("time_zone")
+    scheduler_config  = pipeline_config.get("scheduler", {})
     scheduler = Scheduler(
-        name=scheduler_name,
-        location=scheduler_location,
-        schedule=scheduler_schedule,
-        topic_name=aigear_config.gcp.pub_sub.topic_name,
-        message=scheduler_messages,
-        time_zone=scheduler_time_zone,
+        name       = scheduler_config.get("name"),
+        location   = aigear_config.gcp.location,
+        project_id = aigear_config.gcp.gcp_project_id,
+        schedule   = scheduler_config.get("schedule"),
+        topic_name = aigear_config.gcp.pub_sub.topic_name,
+        message    = scheduler_messages,
+        time_zone  = scheduler_config.get("time_zone", "Etc/UTC"),
     )
+
     is_exist = scheduler.describe()
     if not is_exist:
         scheduler.create()
-
-if __name__ == "__main__":
-    message = [
-        {
-            "vm_name": "",
-            "disk_size_gb": "20",
-            "spec": "e2-standard-2",
-            "on_host_maintenance": "MIGRATE",
-            "pipeline_version": "",
-            "pipeline_step": "xxx.xxx.xxx"
-        },
-        {
-            "vm_name": "",
-            "disk_size_gb": "40",
-            "spec": "e2-highmem-8",
-            "on_host_maintenance": "MIGRATE",
-            "pipeline_version": "",
-            "pipeline_step": "xxx.xxx.xxx"
-        }
-    ]
-    scheduler = Scheduler(
-        name="ml_test",
-        location="",
-        schedule="45 21 * * 0",
-        topic_name="pipelines-pubsub",
-        message=message,
-        time_zone="Asia/Tokyo",
-    )
-    is_exist = scheduler.describe()
-    print(is_exist)
-    # if not is_exist:
-    #     scheduler.create()
