@@ -1,7 +1,8 @@
 from pathlib import Path
+
 from aigear.common.config import AigearConfig, get_project_name
-from aigear.deploy.gcp.artifacts_image import get_artifacts_image
 from aigear.common.logger import Logging
+from aigear.deploy.gcp.artifacts_image import get_artifacts_image
 
 logger = Logging(log_name=__name__).console_logging()
 
