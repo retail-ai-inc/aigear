@@ -1,6 +1,6 @@
 from aigear.common import run_sh, run_sh_stream
+from aigear.common.config import AigearConfig, get_project_name
 from aigear.common.logger import Logging
-from aigear.common.config import AigearConfig, get_project_name, PipelinesConfig
 
 logger = Logging(log_name=__name__).console_logging()
 
@@ -13,7 +13,7 @@ class ArtifactsImage:
         if dockerfile_path is None:
             logger.info("Please specify Dockerfile(Dockerfile.pl or Dockerfile.ms) to build the image.")
         command = [
-            "docker", "build", "-f", dockerfile_path, "-t", self.artifacts_image, "."
+            "docker", "build", "-f", dockerfile_path, "-t", self.artifacts_image, build_context
         ]
         event = run_sh_stream(command)
         logger.info(event)
