@@ -1,21 +1,21 @@
-import sys
-import grpc
-import platform
 import multiprocessing
-from typing import Type
+import platform
+import sys
 from concurrent import futures
-from grpc_health.v1 import health
+from typing import Type
+
+import grpc
 from google.protobuf import struct_pb2
-from sentry_sdk import init as sentry_init
-from grpc_health.v1 import health_pb2_grpc
 from google.protobuf.json_format import MessageToDict
+from grpc_health.v1 import health, health_pb2_grpc
+from sentry_sdk import init as sentry_init
 from sentry_sdk.integrations.grpc.server import ServerInterceptor
-from aigear.service.grpc.protos import grpc_pb2
-from aigear.service.grpc.protos import grpc_pb2_grpc
-from aigear.service.grpc.grpc_package import grpc_features
+
+from aigear.common.config import PipelinesConfig, get_environment
 from aigear.common.loading_module import LoadModule
-from aigear.common.config import PipelinesConfig
 from aigear.common.logger import Logging
+from aigear.service.grpc.grpc_package import grpc_features
+from aigear.service.grpc.protos import grpc_pb2, grpc_pb2_grpc
 
 logger = Logging(log_name=__name__).console_logging()
 
@@ -86,16 +86,16 @@ def grpc_service(pipeline_version, model_class_path):
     logger.info("gRPC load module successfully.")
 
     # Get environment variables
-    pipeline_config = PipelinesConfig.get_config()
-    pipeline_version_config = pipeline_config.get(pipeline_version)
+    environment = get_environment()
+    pipeline_version_config = PipelinesConfig.get_version_config(pipeline_version)
     if pipeline_version_config is None:
-        logger.error("No pipeline_version config found in `env.json`.")
+        logger.error(f"No pipeline_version({pipeline_version}) config found in `env.json`.")
         return
     logger.info(f"Environment variables: {pipeline_version_config}")
-    release_config = pipeline_version_config.get("release", {})
+    release_config = pipeline_version_config.get("model_service", {})
 
     # Release switch
-    release_switch = release_config.get("release_grpc", False)
+    release_switch = release_config.get("release", False)
     if not release_switch:
         logger.info(f"The Release parameter for pipeline_version({pipeline_version}) is not turned on.")
         return
@@ -109,7 +109,7 @@ def grpc_service(pipeline_version, model_class_path):
         sentry_init(
             dsn=sentry_cog.get("dsn"),
             traces_sample_rate=sentry_cog.get("traces_sample_rate"),
-            environment=pipeline_config.get("environment"),
+            environment=environment,
         )
 
     # grpc
