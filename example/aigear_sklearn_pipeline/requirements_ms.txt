@@ -1,0 +1,5 @@
+aigear==0.0.1
+grpcio>=1.54.2
+numpy==2.4.2
+protobuf>=4.21.5
+scikit_learn==1.8.0
