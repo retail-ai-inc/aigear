@@ -1,70 +1,61 @@
-from aigear.deploy.common.helm_chart import create_helm_chart
 from aigear.common import run_sh
+from aigear.common.config import AigearConfig, PipelinesConfig
 from aigear.common.logger import Logging
+from aigear.deploy.common.helm_chart import create_helm_file, get_helm_path
+from aigear.deploy.common.kubectl_command import helm_deploy, helm_deployment_delete
 
 logger = Logging(log_name=__name__).console_logging()
 
 
-def switch_gcp_context(cluster_name, zone):
+def switch_gcp_context(cluster_name, project_id, region):
     command = [
-        "gcloud", "container", "clusters", "get-credentials", cluster_name, f"--zone={zone}"
+        "gcloud", "container", "clusters", "get-credentials", 
+        cluster_name, 
+        f"--region={region}",
+        f"--project={project_id}",
     ]
     event = run_sh(command)
     logger.info(event)
-
-
-def helm_deploy(helm_location="."):
-    command = [
-        "kubectl", "apply", "-f", f"{helm_location}/grpc_deployment.yaml"
-    ]
-    event = run_sh(command)
-    logger.info(event)
-    return event
 
 
 def deploy_gcp_grpc(
-    cluster_name=None,
-    zone=None,
-    helm_location=".",
-    service_name=None,
-    service_image=None,
-    service_ports=None
+    pipeline_version: str=None,
+    model_class_path: str=None,
+    service_ports: str = "50051",
+    replicas: int = 1,
+    port: str = "50051",
 ):
-    switch_gcp_context(cluster_name, zone)
-    create_helm_chart(
-        helm_location=helm_location,
-        service_name=service_name,
-        service_image=service_image,
-        service_ports=service_ports
+    
+    helm_path = create_helm_file(
+        pipeline_version=pipeline_version,
+        model_class_path=model_class_path,
+        service_ports = service_ports,
+        replicas = replicas,
+        port = port,
     )
-    event = helm_deploy(helm_location=helm_location)
-    if "error" not in event:
-        logger.info("Deployment completed.")
-        logger.info(f"Methods of accessing services:\n"
-                    f"  kubectl get service grpc-server\n"
-                    f"  grpcurl -plaintext ExternalIP:port list\n"
-                    f"  grpcurl -plaintext ExternalIP:port 'service path'")
+
+    pipe_config = PipelinesConfig.get_version_config(pipeline_version)
+    release_switch = pipe_config.get("model_service", {}).get("release", False)
+    if release_switch:
+        aigear_config = AigearConfig.get_config()
+        switch_gcp_context(
+            cluster_name=aigear_config.gcp.kubernetes.cluster_name, 
+            project_id=aigear_config.gcp.gcp_project_id, 
+            region=aigear_config.gcp.location
+        )
+        event = helm_deploy(helm_path)
+        if "error" in event:
+            logger.info(f"Error: {event}.")
+        else:
+            logger.info("Deployment completed.")
+            logger.info("kubectl get service 'server name'.")
+    else:
+        logger.info("The publishing model service is not set in the configuration(model_service.release).")
 
 
-def delete_local_grpc(
-    helm_location="."
+def delete_gcp_grpc(
+    model_class_path=None
 ):
-    command = [
-        "kubectl", "delete", "-f", f"{helm_location}/grpc_deployment.yaml", "--wait=false"
-    ]
-    event = run_sh(command)
-    logger.info(event)
+    helm_path = get_helm_path(model_class_path=model_class_path)
+    helm_deployment_delete(helm_path)
 
-
-if __name__ == "__main__":
-    deploy_gcp_grpc(
-        cluster_name="my-grpc-cluster",
-        zone="asia-northeast1-a",
-        helm_location=".",
-        service_name="grpc-service",
-        service_image="asia-northeast1-docker.pkg.dev/ssc-ape-staging/test-pipelines-images/hello-world-grpc:latest",
-        service_ports="50051"
-    )
-    # delete_local_grpc(
-    #     helm_location="."
-    # )
