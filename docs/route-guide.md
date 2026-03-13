@@ -106,7 +106,7 @@
 
 ## 3. Pipeline Task Configuration (Pipelines)
 
-### 3.1 Pipeline Version Configuration (pipeline_version_1)
+### 3.1 Pipeline Version Configuration (e.g., v1)
 
 #### 3.1.1 Scheduler Configuration (scheduler)
 
@@ -117,53 +117,31 @@
 | `schedule` | `string` | Scheduling rule (Cron expression) | `0 2 * * *` |
 | `time_zone` | `string` | Time zone setting | `Asia/Tokyo` |
 
-#### 3.1.2 Fetch Store List Configuration (fetch_store_list)
-
-| Parameter | Type | Description | Example Value |
-| :--- | :--- | :--- | :--- |
-| `parameters` | `object` | Additional parameter dictionary | `{"store_list_base_uri": "https://sandbox.raicart.io/..."}` |
-
-##### 3.1.2.1 Task Resource Configuration (resources)
-
-| Parameter | Type | Description | Example Value |
-| :--- | :--- | :--- | :--- |
-| `vm_name` | `string` | Allocated Virtual Machine name | `fetch-store-task-vm` |
-| `disk_size_gb` | `string` | Allocated disk size (GB) | `50` |
-| `spec` | `string` | Computing resource specification | `e2-standard-4` |
-| `on_host_maintenance` | `string` | Host maintenance policy | `MIGRATE` |
-
-##### 3.1.2.2 Task Run Parameters (task_run_parameters)
-
-| Parameter | Type | Description | Example Value |
-| :--- | :--- | :--- | :--- |
-| `pipeline_version` | `string` | Specify the executed pipeline version | `pipeline_version_1` |
-| `pipeline_step` | `string` | Specify the executed concrete pipeline step | `fetch_store_list` |
-
-#### 3.1.3 Fetch Data Configuration (fetch_data)
+#### 3.1.2 Fetch Data Configuration (fetch_data)
 
 | Parameter | Type | Description | Example Value |
 | :--- | :--- | :--- | :--- |
 | `fetch_data` | `object` | Specific configuration for data fetching node | `{"mongo_uri_secret_name": "TRIAL_MONGO_URI"}` |
 
-#### 3.1.4 Preprocessing Configuration (preprocessing)
+#### 3.1.3 Preprocessing Configuration (preprocessing)
 
 | Parameter | Type | Description | Example Value |
 | :--- | :--- | :--- | :--- |
 | `preprocessing` | `object` | Configuration for data cleaning and preprocessing node | `{"train_test_split": 0.8}` |
 
-#### 3.1.5 Training Configuration (training)
+#### 3.1.4 Training Configuration (training)
 
 | Parameter | Type | Description | Example Value |
 | :--- | :--- | :--- | :--- |
 | `training` | `object` | Model training node configuration | `{"epochs": 35, "learning_rate": 0.1}` |
 
-#### 3.1.6 Release Configuration (release)
+#### 3.1.5 Model Service Configuration (model_service)
 
 | Parameter | Type | Description | Example Value |
 | :--- | :--- | :--- | :--- |
 | `release_grpc` | `boolean` | Whether model deployment is released as a gRPC service | `false` |
 
-##### 3.1.6.1 gRPC Detailed Configuration (grpc)
+##### 3.1.5.1 gRPC Detailed Configuration (grpc)
 
 | Parameter | Type | Description | Example Value |
 | :--- | :--- | :--- | :--- |
@@ -249,27 +227,12 @@ Below is the latest `env.sample.json` example reference with suggested populated
         }
     },
     "pipelines": {
-        "pipeline_version_1": {
+        "v1": {
             "scheduler": {
                 "name": "daily-sklearn-training",
                 "location": "asia-northeast1",
                 "schedule": "0 2 * * *",
                 "time_zone": "Asia/Tokyo"
-            },
-            "fetch_store_list": {
-                "parameters": {
-                    "store_list_base_uri": "https://sandbox.raicart.io/..."
-                },
-                "resources": {
-                    "vm_name": "fetch-store-task-vm",
-                    "disk_size_gb": "50",
-                    "spec": "e2-standard-4",
-                    "on_host_maintenance": "MIGRATE"
-                },
-                "task_run_parameters": {
-                    "pipeline_version": "pipeline_version_1",
-                    "pipeline_step": "fetch_store_list"
-                }
             },
             "fetch_data": {
                 "mongo_uri_secret_name": "TRIAL_MONGO_URI"
@@ -281,7 +244,7 @@ Below is the latest `env.sample.json` example reference with suggested populated
                  "epochs": 35,
                  "learning_rate": 0.1
             },
-            "release": {
+            "model_service": {
                 "release_grpc": false,
                 "grpc": {
                     "keep_alive": {
@@ -296,8 +259,8 @@ Below is the latest `env.sample.json` example reference with suggested populated
                         "thread_count": 10
                     },
                     "model_path": {
-                        "model_file": "/ape-model/${subsidiaryName}/ape4/LightSANs.pth",
-                        "dataset_file": "/ape-model/${subsidiaryName}/ape4/SequentialDataset.pth"
+                        "model_file": "/models/v1/model.pth",
+                        "dataset_file": "/models/v1/dataset.pth"
                     },
                     "sentry": {
                         "on": false,
