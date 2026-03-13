@@ -22,6 +22,19 @@ class PubSub:
         event = run_sh(command)
         logger.info(event)
 
+    def add_permissions_to_pubsub(self, sa_email):
+        topic = f"projects/{self.project_id}/topics/{self.topic_name}"
+        for role in ["roles/pubsub.publisher", "roles/pubsub.subscriber"]:
+            command = [
+                "gcloud", "pubsub", "topics", "add-iam-policy-binding",
+                topic,
+                f"--member=serviceAccount:{sa_email}",
+                f"--role={role}",
+                f"--project={self.project_id}",
+            ]
+            event = run_sh(command)
+            logger.info(event)
+
     def describe(self):
         is_exist = False
         command = [
