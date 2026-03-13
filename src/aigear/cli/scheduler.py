@@ -1,7 +1,7 @@
 import argparse
-from aigear.deploy.gcp.scheduler import create_scheduler
-from aigear.deploy.gcp.artifacts_image import create_artifacts_image
+
 from aigear.cli.artifacts_image import add_artifacts_args
+from aigear.deploy.gcp.scheduler import create_scheduler
 
 
 def add_scheduler_args(parser: argparse.ArgumentParser):
@@ -23,13 +23,5 @@ def get_argument():
 def scheduler_init():
     args = get_argument()
     step_names = args.step_names.split(",")
-    
-    # Create artifacts image before creating scheduler
-    create_artifacts_image(
-        dockerfile_path=args.dockerfile_path,
-        force=args.force,
-        image_name=args.image_name,
-        image_version = args.image_version
-    )
     
     create_scheduler(args.version, step_names)
