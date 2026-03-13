@@ -1,16 +1,17 @@
 import json
+
+from aigear.common.config import AigearConfig
 from aigear.common.logger import Logging
 from aigear.common.sh import run_sh
-from aigear.common.config import AigearConfig
+from aigear.infrastructure.gcp.artifacts import Artifacts
 from aigear.infrastructure.gcp.bucket import Bucket
 from aigear.infrastructure.gcp.build import CloudBuild
+from aigear.infrastructure.gcp.constant import entry_point_of_cloud_fuction
 from aigear.infrastructure.gcp.function import CloudFunction
 from aigear.infrastructure.gcp.iam import ServiceAccounts
-from aigear.infrastructure.gcp.pub_sub import PubSub
-from aigear.infrastructure.gcp.artifacts import Artifacts
-from aigear.infrastructure.gcp.pre_vm_image import PreVMImage
-from aigear.infrastructure.gcp.constant import entry_point_of_cloud_fuction
 from aigear.infrastructure.gcp.kubernetes import KubernetesCluster
+from aigear.infrastructure.gcp.pre_vm_image import PreVMImage
+from aigear.infrastructure.gcp.pub_sub import PubSub
 
 logger = Logging(log_name=__name__).console_logging()
 
@@ -87,16 +88,7 @@ class Infra:
 
         self.pre_vm_image = PreVMImage(
             project_id=self.project_id,
-            zone=self.location,
-            machine_type=self.aigear_config.gcp.pre_vm_image.machine_type,
-            gpu_type=self.aigear_config.gcp.pre_vm_image.gpu_type,
-            gpu_count=self.aigear_config.gcp.pre_vm_image.gpu_count,
-            boot_disk_gb=self.aigear_config.gcp.pre_vm_image.boot_disk_gb,
-            dlvm_family=self.aigear_config.gcp.pre_vm_image.dlvm_family,
-            bake_vm=self.aigear_config.gcp.pre_vm_image.bake_vm,
-            custom_image_name=self.aigear_config.gcp.pre_vm_image.custom_image_name,
-            bake_timeout_sec=self.aigear_config.gcp.pre_vm_image.bake_timeout_sec,
-            bake_poll_interval_sec=self.aigear_config.gcp.pre_vm_image.bake_poll_interval_sec,
+            zone=f"{self.location}-a",
         )
 
         self.kubernetes_cluster = KubernetesCluster(
@@ -277,15 +269,15 @@ class Infra:
         # Pre-VM Image
         if self.aigear_config.gcp.pre_vm_image.on:
             success = self._step(
-                f"Pre-VM Image ({self.aigear_config.gcp.pre_vm_image.custom_image_name})",
+                f"Pre-VM Image (pre_vm_image)",
                 self._ensure_pre_vm_image
             )
             if not success:
-                failed_steps.append(f"Pre-VM Image ({self.aigear_config.gcp.pre_vm_image.custom_image_name})")
+                failed_steps.append(f"Pre-VM Image (pre_vm_image)")
         else:
             logger.info(
                 f"Pre-VM Image creation is disabled in the configuration file. "
-                f"Skipping custom VM image ({self.aigear_config.gcp.pre_vm_image.custom_image_name}) creation."
+                f"Skipping custom VM image (pre_vm_image) creation."
             )
 
         # Kubernetes Cluster
@@ -342,6 +334,7 @@ class Infra:
                 f"({self.location}). Creating bucket..."
             )
             self.model_bucket.create()
+            self.model_bucket.add_permissions_to_gcs(sa_email=self.service_accounts.sa_email)
             logger.info(f"Model bucket ({self.aigear_config.gcp.bucket.bucket_name}) created successfully.")
         else:
             logger.info(
@@ -357,6 +350,7 @@ class Infra:
                 f"location ({self.location}). Creating bucket..."
             )
             self.release_model_bucket.create()
+            self.release_model_bucket.add_permissions_to_gcs(sa_email=self.service_accounts.sa_email)
             logger.info(
                 f"Release model bucket ({self.aigear_config.gcp.bucket.bucket_name_for_release}) created successfully."
             )
@@ -391,6 +385,7 @@ class Infra:
                 f"({self.project_id}). Creating topic..."
             )
             self.pubsub.create()
+            self.pubsub.add_permissions_to_pubsub(sa_email=self.service_accounts.sa_email)
             logger.info(f"Pub/Sub topic ({self.aigear_config.gcp.pub_sub.topic_name}) created successfully.")
         else:
             logger.info(
@@ -423,6 +418,7 @@ class Infra:
                 f"({self.location}). Deploying Cloud Function..."
             )
             self.cloud_function.deploy()
+            self.cloud_function.add_permissions_to_cloud_function(sa_email=self.service_accounts.sa_email)
             logger.info(
                 f"Cloud Function ({self.aigear_config.gcp.cloud_function.function_name}) deployed successfully."
             )
@@ -433,19 +429,35 @@ class Infra:
             )
 
     def _ensure_pre_vm_image(self):
-        exists = self.pre_vm_image.image_exists()
+        exists = self.pre_vm_image.cpu_image_exists()
         if not exists:
             logger.info(
-                f"Pre-VM custom image ({self.aigear_config.gcp.pre_vm_image.custom_image_name}) not found in project "
+                f"Pre-VM custom cpu image ({self.aigear_config.gcp.pre_vm_image.custom_image_name}) not found in project "
                 f"({self.project_id}). Starting VM image creation process (this may take several minutes)..."
             )
-            self.pre_vm_image.create_vm_image()
+            self.pre_vm_image.create_cpu_image()
             logger.info(
-                f"Pre-VM custom image ({self.aigear_config.gcp.pre_vm_image.custom_image_name}) created successfully."
+                f"Pre-VM custom cpu image ({self.aigear_config.gcp.pre_vm_image.custom_image_name}) created successfully."
             )
         else:
             logger.info(
-                f"Pre-VM custom image ({self.aigear_config.gcp.pre_vm_image.custom_image_name}) already exists in "
+                f"Pre-VM custom cpu image ({self.aigear_config.gcp.pre_vm_image.custom_image_name}) already exists in "
+                f"project ({self.project_id}). Skipping creation."
+            )
+
+        exists = self.pre_vm_image.gpu_image_exists()
+        if not exists:
+            logger.info(
+                f"Pre-VM custom gpu image ({self.aigear_config.gcp.pre_vm_image.custom_image_name}) not found in project "
+                f"({self.project_id}). Starting VM image creation process (this may take several minutes)..."
+            )
+            self.pre_vm_image.create_gpu_image()
+            logger.info(
+                f"Pre-VM custom gpu image ({self.aigear_config.gcp.pre_vm_image.custom_image_name}) created successfully."
+            )
+        else:
+            logger.info(
+                f"Pre-VM custom gpu image ({self.aigear_config.gcp.pre_vm_image.custom_image_name}) already exists in "
                 f"project ({self.project_id}). Skipping creation."
             )
 
@@ -456,7 +468,7 @@ class Infra:
                 f"Kubernetes Cluster ({self.aigear_config.gcp.kubernetes.cluster_name}) not found in region "
                 f"({self.location}). Creating Kubernetes Cluster..."
             )
-            self.kubernetes_cluster.cluster_name()
+            self.kubernetes_cluster.create()
             logger.info(
                 f"Kubernetes Cluster ({self.aigear_config.gcp.kubernetes.cluster_name}) created successfully."
             )

@@ -49,13 +49,8 @@ class ServiceAccounts:
     def add_iam_policy_binding(self):
         roles = [
             "roles/compute.instanceAdmin.v1",
-            "roles/storage.objectViewer",
-            "roles/storage.objectCreator",
             "roles/artifactregistry.reader",
-            "roles/pubsub.publisher",
-            "roles/pubsub.subscriber",
-            "roles/run.invoker",
-            "roles/container.developer"
+            "roles/container.developer",
         ]
 
         for role in roles:
@@ -67,9 +62,23 @@ class ServiceAccounts:
             ]
             event = run_sh(command)
             if "Updated IAM policy" in event:
-                logger.info(f"✅Successfully granted: {role}")
+                logger.info(f"✅ Successfully granted: {role}")
             else:
-                logger.error(f"❌Failed: {event}")
+                logger.error(f"❌ Failed: {event}")
+
+        # SA level self binding, precise authorization
+        command = [
+            "gcloud", "iam", "service-accounts", "add-iam-policy-binding",
+            self.sa_email,
+            f"--member=serviceAccount:{self.sa_email}",
+            "--role=roles/iam.serviceAccountUser",
+            f"--project={self.project_id}",
+        ]
+        event = run_sh(command)
+        if "Updated IAM policy" in event:
+            logger.info("✅ Successfully granted: roles/iam.serviceAccountUser (self-binding)")
+        else:
+            logger.error(f"❌ Failed self-binding: {event}")
 
     def describe(self):
         is_exist = False
@@ -88,20 +97,18 @@ class ServiceAccounts:
 
     def check_iam(self):
         is_owner = False
+        account_cmd = run_sh(["gcloud", "config", "get-value", "account"]).strip()
         command = [
-            "gcloud", "projects", "get-iam-policy",
-            self.project_id,
+            "gcloud", "projects", "get-iam-policy", self.project_id,
             "--flatten=bindings[].members",
             "--format=table(bindings.role)",
-            "--filter=bindings.members:$(gcloud config get-value account)",
+            f"--filter=bindings.members:{account_cmd}",
         ]
         event = run_sh(command)
         if "roles/owner" in event:
             is_owner = True
-        elif event == "":
-            logger.info("The currently logged in GCP account does not have owner privileges.")
         else:
-            logger.info(event)
+            logger.info(event or "No owner role found.")
         return is_owner
 
 if __name__ == "__main__":
