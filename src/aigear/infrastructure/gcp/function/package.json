@@ -1,9 +1,7 @@
 {
   "dependencies": {
-    "@google-cloud/functions-framework": "^3.0.0",
-    "@google-cloud/compute": "2.4.1",
-    "@google-cloud/pubsub": "^0.18.0",
-    "ssh2": "^0.6.0",
-    "safe-buffer": "^5.1.2"
+    "safe-buffer": "^5.2.1",
+    "googleapis": "^144.0.0",
+    "@google-cloud/functions-framework": "^3.0.0"
   }
 }

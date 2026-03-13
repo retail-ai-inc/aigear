@@ -1,6 +1,6 @@
-from typing import Optional, List
-from pathlib import Path
 import shutil
+from pathlib import Path
+from typing import List, Optional
 
 
 class Project:
@@ -32,17 +32,31 @@ class Project:
         (project_path / "src" / "pipelines").mkdir(exist_ok=True)
 
         (project_path / ".gitignore").touch(exist_ok=True)
-        (project_path / "docker-compose.yml").touch(exist_ok=True)
-        (project_path / "Dockerfile").touch(exist_ok=True)
+        (project_path / "docker-compose-ms.yml").touch(exist_ok=True)
+        (project_path / "Dockerfile.ms").touch(exist_ok=True)
+        (project_path / "Dockerfile.ms.dockerignore").touch(exist_ok=True)
+        (project_path / "requirements_ms.txt").touch(exist_ok=True)
+
+        (project_path / "docker-compose-pl.yml").touch(exist_ok=True)
+        (project_path / "Dockerfile.pl").touch(exist_ok=True)
+        (project_path / "Dockerfile.pl.dockerignore").touch(exist_ok=True)
+        (project_path / "requirements_pl.txt").touch(exist_ok=True)
+
         (project_path / "env.sample.json").touch(exist_ok=True)
         (project_path / "README.md").touch(exist_ok=True)
-        (project_path / "requirements.txt").touch(exist_ok=True)
-
-        self._print_tree(project_path)
 
         self._copy_file(self._template_path, project_path / "cloudbuild" / "cloudbuild.yaml")
-        self._copy_file(self._template_path, project_path / "docker-compose.yml")
-        self._copy_file(self._template_path, project_path / "Dockerfile")
+
+        self._copy_file(self._template_path, project_path / "docker-compose-ms.yml")
+        self._copy_file(self._template_path, project_path / "Dockerfile.ms")
+        self._copy_file(self._template_path, project_path / "Dockerfile.ms.dockerignore")
+        self._copy_file(self._template_path, project_path / "requirements_ms.txt")
+
+        self._copy_file(self._template_path, project_path / "docker-compose-pl.yml")
+        self._copy_file(self._template_path, project_path / "Dockerfile.pl")
+        self._copy_file(self._template_path, project_path / "Dockerfile.pl.dockerignore")
+        self._copy_file(self._template_path, project_path / "requirements_pl.txt")
+
         self._copy_file(self._template_path, project_path / "env.sample.json")
 
         for pipeline_version in self.pipeline_versions:
@@ -55,20 +69,10 @@ class Project:
             feature_preprocessing_dir.mkdir(parents=True, exist_ok=True)
             training_dir = pipeline_dir / "training"
             training_dir.mkdir(parents=True, exist_ok=True)
-
-            grpc_dir = pipeline_dir / "grpc"
-            grpc_dir.mkdir(parents=True, exist_ok=True)
-
-            (grpc_dir / "docker-compose.yml").touch(exist_ok=True)
-            (grpc_dir / "Dockerfile").touch(exist_ok=True)
-            (grpc_dir / "env.sample.json").touch(exist_ok=True)
-            (grpc_dir / "requirements.txt").touch(exist_ok=True)
-
-            self._print_tree(grpc_dir)
-
-            self._copy_file(self._template_path / "grpc", grpc_dir / "docker-compose.yml")
-            self._copy_file(self._template_path / "grpc", grpc_dir / "Dockerfile")
-            self._copy_file(self._template_path / "grpc", grpc_dir / "docker-compose.yml")
+            model_service = pipeline_dir / "model_service"
+            model_service.mkdir(parents=True, exist_ok=True)
+        
+        self._print_tree(project_path)
 
     def _print_tree(self, path: Path, prefix=""):
         if path.is_dir():

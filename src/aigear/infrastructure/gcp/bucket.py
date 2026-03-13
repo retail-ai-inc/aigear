@@ -1,7 +1,6 @@
 from aigear.common import run_sh
 from aigear.common.logger import Logging
 
-
 logger = Logging(log_name=__name__).console_logging()
 
 class Bucket:
@@ -21,6 +20,17 @@ class Bucket:
             self.bucket_gs,
             f"--location={self.location}",
             "--uniform-bucket-level-access",
+            f"--project={self.project_id}",
+        ]
+        event = run_sh(command)
+        logger.info(event)
+
+    def add_permissions_to_gcs(self, sa_email):
+        command = [
+            "gcloud", "storage", "buckets", "add-iam-policy-binding",
+            self.bucket_gs,
+            f"--member=serviceAccount:{sa_email}",
+            "--role=roles/storage.admin",
             f"--project={self.project_id}",
         ]
         event = run_sh(command)

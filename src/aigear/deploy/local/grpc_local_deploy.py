@@ -1,6 +1,8 @@
-from aigear.deploy.common.helm_chart import create_helm_chart
 from aigear.common import run_sh
+from aigear.common.config import PipelinesConfig
 from aigear.common.logger import Logging
+from aigear.deploy.common.helm_chart import create_helm_file, get_helm_path
+from aigear.deploy.common.kubectl_command import helm_deploy, helm_deployment_delete
 
 logger = Logging(log_name=__name__).console_logging()
 
@@ -12,57 +14,36 @@ def switch_local_context():
     event = run_sh(command)
     logger.info(event)
 
-
-def helm_deploy(helm_location="."):
-    command = [
-        "kubectl", "apply", "-f", f"{helm_location}/grpc_deployment.yaml"
-    ]
-    event = run_sh(command)
-    logger.info(event)
-    return event
-
-
 def deploy_local_grpc(
-        helm_location=".",
-        service_name=None,
-        service_image=None,
-        service_ports=None
+        pipeline_version: str=None,
+        model_class_path: str=None,
+        service_ports: str = "50051",
+        replicas: int = 1,
+        port: str = "50051",
 ):
-    switch_local_context()
-    create_helm_chart(
-        helm_location=helm_location,
-        service_name=service_name,
-        service_image=service_image,
-        service_ports=service_ports
+    helm_path = create_helm_file(
+        pipeline_version=pipeline_version,
+        model_class_path=model_class_path,
+        service_ports = service_ports,
+        replicas = replicas,
+        port = port,
     )
-    event = helm_deploy(helm_location=helm_location)
-    if "error" not in event:
-        logger.info("Deployment completed.")
-        logger.info(f"Methods of accessing services:\n"
-                    f"  grpcurl -plaintext localhost:50051 list\n"
-                    f"  grpcurl -plaintext localhost:50051 'service path'")
+
+    pipe_config = PipelinesConfig.get_version_config(pipeline_version)
+    release_switch = pipe_config.get("model_service", {}).get("release", False)
+    if release_switch:
+        switch_local_context()
+        event = helm_deploy(helm_path)
+        if "error" in event:
+            logger.info(f"Error: {event}.")
+        else:
+            logger.info("Deployment completed.")
+    else:
+        logger.info("The publishing model service is not set in the configuration(model_service.release).")
 
 
 def delete_local_grpc(
-        helm_location="."
+        model_class_path=None
 ):
-    command = [
-        "kubectl", "delete", "-f", f"{helm_location}/grpc_deployment.yaml"
-    ]
-    event = run_sh(command)
-    logger.info(event)
-
-
-if __name__ == "__main__":
-    deploy_local_grpc(
-        helm_location=".",
-        service_name="grpc-service",
-        service_image="aguilbau/hello-world-grpc:latest",
-        service_ports="50051"
-    )
-    # delete_local_grpc(
-    #     helm_location="."
-    # )
-
-    # grpcurl -plaintext localhost:50051 list
-    # grpcurl -plaintext localhost:50051 helloworld.Greeter/SayHello
+    helm_path = get_helm_path(model_class_path=model_class_path)
+    helm_deployment_delete(helm_path)

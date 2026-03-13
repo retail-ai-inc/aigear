@@ -1,12 +1,10 @@
-import glob
 import importlib
-import inspect
 from aigear.common.logger import Logging
 
 logger = Logging(log_name=__name__).console_logging()
 
 
-class MLModule:
+class LoadModule:
     def __init__(self, model_path: str | None):
         self.model_path = model_path
 
@@ -22,10 +20,12 @@ class MLModule:
 
         parts = self.model_path.rsplit(".", 1)
         if len(parts) == 1:
-            logger.error("Please add the correct model class path: xxx.xxx(class)")
+            logger.error(
+                "Please add the correct model class path: xxx.xxx.xxx(function or class)."
+            )
             return None
         else:
             module_part, class_part = parts
             module = importlib.import_module(module_part)
-            model_service = getattr(module, class_part)
-            return model_service
+            class_module = getattr(module, class_part)
+            return class_module

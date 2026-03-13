@@ -1,0 +1,24 @@
+__pycache__
+.idea
+.vscode
+.config
+tests/
+data/
+docs/
+kms/
+cloudbuild/
+cloud_function/
+
+*.md
+.gitignore
+env.sample.json
+
+# Fix
+src/*
+!src/pipelines/**/model_service/
+!src/pipelines/**/model_service_modules/
+!src/pipelines/common/*
+Dockerfile.pl
+requirements_pl.txt
+docker-compose-pl.yml
+Dockerfile.pl.dockerignore

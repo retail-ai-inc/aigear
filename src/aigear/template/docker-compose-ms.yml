@@ -1,0 +1,19 @@
+services:
+  pipeline-version:
+    build:
+      context: .
+      dockerfile: Dockerfile.ms
+#    image: ms_test:latest
+    working_dir: /ms
+    ports:
+      - 50051:50051
+    command:  |
+      sh -c "
+      aigear-grpc --version logistic_regression --model_class_path src.pipelines.logistic_regression.model_service.logistic_regression_service.ModelService
+      tail -f /dev/null
+      "
+    volumes:
+      - .:/ms:rw
+      - ./.config/gcloud:/root/.config/gcloud:r
+
+# docker compose -f docker-compose-ms.yml up -d
