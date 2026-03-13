@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Literal
-from aigear.db.bucket import RealGCS, LocalGCSMock
+
+from aigear.db.bucket import LocalGCSMock, RealGCS
 
 
 class AssetManagement:
@@ -16,12 +17,12 @@ class AssetManagement:
         self.projrct_dir = Path.cwd()
         self.data_type = data_type
 
+        self.local_asset_path = self.projrct_dir / "asset"
         if bucket_on:
             self.bucket_client = RealGCS(project_id, bucket_name)
         else:
-            self.local_asset_path = self.projrct_dir / "asset"
-            self.local_bucket_mock_path = self.projrct_dir / "asset" / bucket_name
-            self.bucket_client = LocalGCSMock(project_id, self.local_bucket_mock_path)
+            local_bucket_mock_path = self.projrct_dir / "asset" / bucket_name
+            self.bucket_client = LocalGCSMock(project_id, local_bucket_mock_path)
 
     def download(self, file_name):
         local_blob_path = self.get_local_path(file_name)
