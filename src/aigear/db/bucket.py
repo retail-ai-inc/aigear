@@ -19,8 +19,9 @@ class RealGCS(BucketABC):
             self.bucket_client.close()
 
     def download(self, bucket_blob_name, local_blob_path):
-        download_path = Path(local_blob_path)
-        download_path.parent.mkdir(parents=True, exist_ok=True)
+        if isinstance(local_blob_path, str):
+            local_blob_path = Path(local_blob_path)
+        local_blob_path.parent.mkdir(parents=True, exist_ok=True)
 
         blob = self.bucket.blob(bucket_blob_name)
         blob.download_to_filename(local_blob_path)
@@ -47,7 +48,7 @@ class LocalGCSMock(BucketABC):
         super().__init__(project_id, bucket_name)
         if not bucket_name:
             bucket_name = "gcs_mock"
-            print(f"'bucket_name' is not set in env.json, default 'gcs_mock'.")
+            print("'bucket_name' is not set in env.json, default 'gcs_mock'.")
         self.bucket_path = bucket_name
         self.bucket_path.mkdir(parents=True, exist_ok=True)
 
