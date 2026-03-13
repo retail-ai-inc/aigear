@@ -1,4 +1,5 @@
 import argparse
+
 from aigear.deploy.gcp.artifacts_image import create_artifacts_image
 
 
@@ -32,37 +33,35 @@ def create_image():
     parser = add_artifacts_args(parser)
     args = parser.parse_args()
 
-    create_artifacts_image(
-        dockerfile_path=args.dockerfile_path,
-        build_context=args.build_context,
-        force=args.force,
-        image_name=args.image_name,
-        image_version=args.image_version,
-        is_service=args.is_service,
-        is_push=args.push
-    )
-
-
-def create_all_image_in_default_env():
-    parser = argparse.ArgumentParser(
-        description=__doc__,
-        formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser = general_args(parser)
-    args = parser.parse_args()
-
-    for dockerfile in ["Dockerfile.pl", "Dockerfile.ms"]:
-        print(f"Building '{dockerfile}'...")
-        is_service = False
-        if dockerfile == "Dockerfile.ms":
-            is_service = True
+    if args.dockerfile_path is None:
+        print("The 'dockerfile_math' has not been entered, and default mode will be used to create all images.")
+        for dockerfile in ["Dockerfile.pl", "Dockerfile.ms"]:
+            print(f"Building image: '{dockerfile}'...")
+            is_service = False
+            if dockerfile == "Dockerfile.ms":
+                is_service = True
+            
+            create_artifacts_image(
+                dockerfile_path=dockerfile,
+                build_context=args.build_context,
+                force=args.force,
+                image_name=args.image_name,
+                image_version=args.image_version,
+                is_service=is_service,
+                is_push=args.push
+            )
+            print(f"The image({dockerfile}) creation completed.")
+            print("-----------------------------------")
+    else:
+        print(f"Building image: '{args.dockerfile_path}'...")
         create_artifacts_image(
-            dockerfile_path=dockerfile,
-            build_context=".",
+            dockerfile_path=args.dockerfile_path,
+            build_context=args.build_context,
             force=args.force,
-            image_name=None,
-            image_version="latest",
-            is_service=is_service,
+            image_name=args.image_name,
+            image_version=args.image_version,
+            is_service=args.is_service,
             is_push=args.push
         )
-        print(f"'{dockerfile}' creation completed.")
+        print(f"The image({args.dockerfile_path}) creation completed.")
         print("-----------------------------------")
