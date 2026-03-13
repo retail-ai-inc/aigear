@@ -27,15 +27,6 @@ class CloudBuild(BaseModel):
 
 class PreVmImage(BaseModel):
     on: bool
-    machine_type: str
-    gpu_type: str
-    gpu_count: int
-    boot_disk_gb: int
-    dlvm_family: str
-    bake_vm: str
-    custom_image_name: str
-    bake_timeout_sec: int
-    bake_poll_interval_sec: int
 
 
 class CloudFunction(BaseModel):

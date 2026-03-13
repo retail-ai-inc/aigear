@@ -1,7 +1,7 @@
 import json
 import logging
 from pathlib import Path
-from datamodel_code_generator import generate, DataModelType, InputFileType, Formatter
+from datamodel_code_generator import generate, DataModelType, InputFileType
 
 
 def generate_schema(
