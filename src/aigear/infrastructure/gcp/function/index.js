@@ -188,7 +188,9 @@ fi
 set -euo pipefail
 
 # Authenticate Docker to Artifact Registry (gcloud pre-installed in custom image)
-gcloud auth configure-docker asia-northeast1-docker.pkg.dev --quiet
+# Extract registry hostname from the image path (e.g. asia-northeast1-docker.pkg.dev)
+REGISTRY=$(echo '${esc(dockerImage)}' | cut -d/ -f1)
+gcloud auth configure-docker "$REGISTRY" --quiet
 
 docker pull '${esc(dockerImage)}'
 ${runPipeline}

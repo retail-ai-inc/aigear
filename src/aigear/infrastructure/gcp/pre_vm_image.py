@@ -210,7 +210,6 @@ class PreVMImage:
         "STOCKOUT",
         "stockout",
         "SERVICE UNAVAILABLE",
-        # GPU type not available in this zone (e.g. T4 absent from asia-northeast1-b)
         "acceleratorTypes",
     )
 
