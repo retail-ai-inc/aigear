@@ -269,15 +269,15 @@ class Infra:
         # Pre-VM Image
         if self.aigear_config.gcp.pre_vm_image.on:
             success = self._step(
-                f"Pre-VM Image (pre_vm_image)",
+                "Pre-VM Image (pre_vm_image)",
                 self._ensure_pre_vm_image
             )
             if not success:
-                failed_steps.append(f"Pre-VM Image (pre_vm_image)")
+                failed_steps.append("Pre-VM Image (pre_vm_image)")
         else:
             logger.info(
-                f"Pre-VM Image creation is disabled in the configuration file. "
-                f"Skipping custom VM image (pre_vm_image) creation."
+                "Pre-VM Image creation is disabled in the configuration file. "
+                "Skipping custom VM image (pre_vm_image) creation."
             )
 
         # Kubernetes Cluster
@@ -474,6 +474,6 @@ class Infra:
             )
         else:
             logger.info(
-                f"Kubernetes Cluster ({self.aigear_config.gcp.cloud_function.function_name}) already exists in region "
+                f"Kubernetes Cluster ({self.aigear_config.gcp.kubernetes.cluster_name}) already exists in region "
                 f"({self.location})."
             )
