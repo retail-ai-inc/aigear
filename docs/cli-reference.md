@@ -35,10 +35,14 @@ aigear-init [--name NAME] [--pipeline_versions VERSIONS]
 Read `env.json` and create all defined GCP resources (buckets, Pub/Sub topics, Cloud Scheduler jobs, service accounts, etc.).
 
 ```
-aigear-gcp-infra
+aigear-gcp-infra [--create]
 ```
 
-No arguments. Reads configuration from `env.json` in the current directory.
+| Argument | Description |
+|---|---|
+| `--create` | Initialize GCP infrastructure resources. Runs by default if omitted. |
+
+> Future commands: `--delete`, `--update`
 
 ---
 
@@ -62,17 +66,18 @@ aigear-workflow --version VERSION --step STEP
 Create a Cloud Scheduler job that triggers the given pipeline steps.
 
 ```
-aigear-scheduler --version VERSION --step_names STEPS [image options]
+aigear-scheduler --version VERSION --step_names STEPS [--create]
 ```
 
 | Argument | Default | Description |
 |---|---|---|
-| `--version` | `""` | Pipeline version |
-| `--step_names` | `""` | Comma-separated step names, e.g. `fetch_data,training` |
-| `--image_name` | `None` | Docker image name |
-| `--image_version` | `latest` | Docker image version tag |
-| `--force` | `false` | Force recreate image even if it already exists |
-| `--push` | `false` | Push image to registry after build |
+| `--create` | — | Create GCP scheduler job. Runs by default if omitted. |
+| `--version` | — | Pipeline version (required) |
+| `--step_names` | — | Comma-separated step names, e.g. `fetch_data,training` (required) |
+
+> `--version` and `--step_names` are required; the command will print a reminder and exit if either is missing.
+>
+> Future commands: `--delete`, `--update`, `--run`...
 
 ---
 
@@ -81,13 +86,15 @@ aigear-scheduler --version VERSION --step_names STEPS [image options]
 Build Docker images for the pipeline (`Dockerfile.pl`) and/or model service (`Dockerfile.ms`), and optionally push to Artifact Registry.
 
 ```
-aigear-image [--dockerfile_path PATH] [--build_context DIR]
+aigear-image [--create]
+             [--dockerfile_path PATH] [--build_context DIR]
              [--image_name NAME] [--image_version TAG]
              [--is_service] [--force] [--push]
 ```
 
 | Argument | Default | Description |
 |---|---|---|
+| `--create` | — | Build and push Docker image(s) to Artifact Registry. Runs by default if omitted. |
 | `--dockerfile_path` | `None` | Path to a specific Dockerfile. If omitted, builds both `Dockerfile.pl` and `Dockerfile.ms` |
 | `--build_context` | `.` | Docker build context directory |
 | `--image_name` | `None` | Override image name |
@@ -95,6 +102,8 @@ aigear-image [--dockerfile_path PATH] [--build_context DIR]
 | `--is_service` | `false` | Mark image as a model service image (auto-set when building `Dockerfile.ms`) |
 | `--force` | `false` | Rebuild even if the image already exists |
 | `--push` | `false` | Push to Artifact Registry after build |
+
+> Future commands: `--delete`, `--update`
 
 ---
 
@@ -140,9 +149,12 @@ aigear-deploy-model --version VERSION --model_class_path CLASS_PATH
 Auto-generate a Pydantic schema file from the current `env.json`.
 
 ```
-aigear-env-schema [--force]
+aigear-env-schema [--generate] [--force]
 ```
 
 | Argument | Description |
 |---|---|
+| `--generate` | Generate environment schema file. Runs by default if omitted. |
 | `--force` | Regenerate the schema even if one already exists |
+
+> Future commands: `--delete`, `--update`
