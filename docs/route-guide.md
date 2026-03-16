@@ -1,251 +1,266 @@
 # Configuration Parameter Guide
 
+## 1. Basic Configuration
 
-## 1. Basic Configuration (Basic)
-
-### 1.1 Project Information
-
-| Parameter | Type | Description | Example Value |
+| Parameter | Type | Description | Example |
 | :--- | :--- | :--- | :--- |
-| `project_name` | `string` | Project name | `test_sklearn_pipeline` |
-| `environment`  | `string` | Operating environment | `local` |
+| `project_name` | `string` | Project name | `aigear_sklearn_pipeline` |
+| `environment` | `string` | Operating environment | `local` |
 
 ---
 
-## 2. AIGear Configuration
+## 2. AIGear Configuration (`aigear`)
 
-### 2.1 GCP Cloud Services Configuration
+### 2.1 GCP Configuration (`aigear.gcp`)
 
-| Parameter | Type | Description | Example Value |
+| Parameter | Type | Description | Example |
 | :--- | :--- | :--- | :--- |
-| `gcp_project_id` | `string` | GCP Project ID | `xxx-ape-staging` |
-| `location`       | `string` | GCP resource region | `asia-northeast1` |
+| `gcp_project_id` | `string` | GCP Project ID | `my-project-staging` |
+| `location` | `string` | Default GCP resource region | `asia-northeast1` |
 
-#### 2.1.1 Storage Bucket Configuration (bucket)
+#### 2.1.1 Storage Bucket (`bucket`)
 
-| Parameter | Type | Description | Example Value |
+| Parameter | Type | Description | Example |
 | :--- | :--- | :--- | :--- |
-| `on` | `boolean` | Whether to enable storage bucket | `true` |
-| `bucket_name` | `string` | Storage bucket name | `medovik-xxx-staging` |
-| `bucket_name_for_release` | `string` | Release storage bucket name | `medovik-xxx-staging` |
+| `on` | `boolean` | Enable GCS bucket creation | `true` |
+| `bucket_name` | `string` | Bucket used by pipeline jobs | `test-sklearn-pipeline` |
+| `bucket_name_for_release` | `string` | Bucket used by model serving | `test-sklearn-pipeline-service` |
 
-#### 2.1.2 Cloud Build Configuration (cloud_build)
+#### 2.1.2 Cloud Build (`cloud_build`)
 
-| Parameter | Type | Description | Example Value |
+| Parameter | Type | Description | Example |
 | :--- | :--- | :--- | :--- |
-| `on` | `boolean` | Whether to enable Cloud Build | `false` |
-| `trigger_name` | `string` | Build trigger name | `test-pipeline-trigger` |
-| `description` | `string` | Build trigger description | `Trigger for sklearn pipeline` |
-| `repository` | `string` | Code repository address | `github.com/my-org/my-repo` |
+| `on` | `boolean` | Enable Cloud Build trigger creation | `false` |
+| `trigger_name` | `string` | Trigger name | `my-pipeline-trigger` |
+| `description` | `string` | Trigger description | `Trigger for sklearn pipeline` |
+| `repository` | `string` | Repository address | `github.com/my-org/my-repo` |
 | `repo_owner` | `string` | Repository owner | `my-org` |
 | `repo_name` | `string` | Repository name | `my-repo` |
-| `branch_pattern` | `string` | Branch matching pattern | `^main$` |
-| `build_config` | `string` | Build configuration file | `cloudbuild.yaml` |
-| `substitutions` | `string` | Build variable substitution | `_ENV=staging,_REGION=asia-northeast1` |
+| `branch_pattern` | `string` | Branch regex pattern | `^main$` |
+| `build_config` | `string` | Build config file | `cloudbuild.yaml` |
+| `substitutions` | `string` | Build variable substitutions | `_ENV=staging,_REGION=asia-northeast1` |
 
-#### 2.1.3 Pre-configured VM Image Configuration (pre_vm_image)
+#### 2.1.3 Pre-built VM Image (`pre_vm_image`)
 
-| Parameter | Type | Description | Example Value |
+| Parameter | Type | Description | Example |
 | :--- | :--- | :--- | :--- |
-| `on` | `boolean` | Whether to enable pre-installed VM images | `false` |
-| `machine_type` | `string` | Machine type | `n1-standard-4` |
-| `gpu_type` | `string` | GPU type | `nvidia-tesla-t4` |
-| `gpu_count` | `integer` | Number of GPUs | `1` |
-| `boot_disk_gb` | `integer` | Boot disk size (GB) | `50` |
-| `dlvm_family` | `string` | Deep Learning VM family | `tf2-latest-gpu` |
-| `bake_vm` | `string` | VM baking configuration | `ml-image-bake-config` |
-| `custom_image_name` | `string` | Custom image name | `my-custom-ml-image` |
-| `bake_timeout_sec` | `integer` | Baking timeout (seconds) | `1200` |
-| `bake_poll_interval_sec` | `integer` | Baking poll interval (seconds) | `20` |
+| `on` | `boolean` | Enable pre-baked VM image | `false` |
 
-#### 2.1.4 Cloud Function Configuration (cloud_function)
+> More creation parameters, use `aigear.infrastructure.gcp.pre_vm_image.PreVMImage`.
 
-| Parameter | Type | Description | Example Value |
+#### 2.1.4 Cloud Function (`cloud_function`)
+
+| Parameter | Type | Description | Example |
 | :--- | :--- | :--- | :--- |
-| `on` | `boolean` | Whether to enable Cloud Functions | `true` |
-| `function_name` | `string` | Function name | `test-pipeline-run` |
+| `on` | `boolean` | Enable Cloud Function creation | `true` |
+| `function_name` | `string` | Function name | `test-sklearn-pipeline-run` |
 
-#### 2.1.5 IAM Permissions Configuration (iam)
+#### 2.1.5 IAM (`iam`)
 
-| Parameter | Type | Description | Example Value |
+| Parameter | Type | Description | Example |
 | :--- | :--- | :--- | :--- |
-| `on` | `boolean` | Whether to enable IAM permissions configuration | `true` |
-| `account_name` | `string` | Bound service account name | `test-pipeline-sa` |
+| `on` | `boolean` | Enable service account creation | `true` |
+| `account_name` | `string` | Service account name | `test-sklearn-pipeline` |
 
-#### 2.1.6 Message Queue Configuration (pub_sub)
+#### 2.1.6 Pub/Sub (`pub_sub`)
 
-| Parameter | Type | Description | Example Value |
+| Parameter | Type | Description | Example |
 | :--- | :--- | :--- | :--- |
-| `on` | `boolean` | Whether to enable Pub/Sub | `true` |
-| `topic_name` | `string` | Topic name | `test-pipelines-pubsub` |
+| `on` | `boolean` | Enable Pub/Sub topic creation | `true` |
+| `topic_name` | `string` | Topic name | `test-sklearn-pipeline-pubsub` |
 
-#### 2.1.7 Artifact Repository Configuration (artifacts)
+#### 2.1.7 Artifact Registry (`artifacts`)
 
-| Parameter | Type | Description | Example Value |
+| Parameter | Type | Description | Example |
 | :--- | :--- | :--- | :--- |
-| `on` | `boolean` | Whether to enable Artifact Repository | `true` |
-| `repository_name` | `string` | Repository name | `test-pipelines-image-whn` |
+| `on` | `boolean` | Enable Artifact Registry creation | `true` |
+| `repository_name` | `string` | Repository name | `test-sklearn-pipeline-images` |
 
-#### 2.1.8 Kubernetes Cluster Configuration (kubernetes)
+#### 2.1.8 Kubernetes (`kubernetes`)
 
-| Parameter | Type | Description | Example Value |
+| Parameter | Type | Description | Example |
 | :--- | :--- | :--- | :--- |
-| `on` | `boolean` | Whether to enable Kubernetes | `true` |
-| `cluster_name` | `string` | Cluster name | `my-grpc-cluster` |
-| `num_nodes` | `integer` | Default number of nodes | `3` |
-| `min_nodes` | `integer` | Autoscaling minimum node count | `1` |
-| `max_nodes` | `integer` | Autoscaling maximum node count | `5` |
+| `on` | `boolean` | Enable GKE cluster creation | `true` |
+| `cluster_name` | `string` | Cluster name | `test-sklearn-pipeline-service-cluster` |
+| `num_nodes` | `integer` | Default node count | `1` |
+| `min_nodes` | `integer` | Autoscaling minimum | `1` |
+| `max_nodes` | `integer` | Autoscaling maximum | `5` |
 
-#### 2.1.9 Logging Configuration (logging)
+#### 2.1.9 Logging
 
-| Parameter | Type | Description | Example Value |
+| Parameter | Type | Description | Example |
 | :--- | :--- | :--- | :--- |
-| `logging` | `boolean` | Whether to enable verbose logging | `false` |
+| `logging` | `boolean` | Enable verbose GCP logging | `false` |
 
 ---
 
-## 3. Pipeline Task Configuration (Pipelines)
+### 2.2 Slack Configuration (`aigear.slack`)
 
-### 3.1 Pipeline Version Configuration (e.g., v1)
-
-#### 3.1.1 Scheduler Configuration (scheduler)
-
-| Parameter | Type | Description | Example Value |
+| Parameter | Type | Description | Example |
 | :--- | :--- | :--- | :--- |
-| `name` | `string` | Scheduled task name | `daily-sklearn-training` |
-| `location` | `string` | Scheduler region | `asia-northeast1` |
-| `schedule` | `string` | Scheduling rule (Cron expression) | `0 2 * * *` |
-| `time_zone` | `string` | Time zone setting | `Asia/Tokyo` |
+| `on` | `boolean` | Enable Slack notifications | `false` |
+| `webhook_url` | `string` | Slack incoming webhook URL | `https://hooks.slack.com/...` |
 
-#### 3.1.2 Fetch Data Configuration (fetch_data)
+---
 
-| Parameter | Type | Description | Example Value |
+## 3. Pipeline Configuration (`pipelines`)
+
+Pipelines are keyed by version name (e.g., `logistic_regression`, `v1`). Each version contains a scheduler and one or more pipeline steps.
+
+### 3.1 Scheduler (`scheduler`)
+
+| Parameter | Type | Description | Example |
 | :--- | :--- | :--- | :--- |
-| `fetch_data` | `object` | Specific configuration for data fetching node | `{"mongo_uri_secret_name": "TRIAL_MONGO_URI"}` |
+| `name` | `string` | Cloud Scheduler job name | `test-sklearn-pipeline` |
+| `schedule` | `string` | Cron expression — [reference](https://cloud.google.com/scheduler/docs/configuring/cron-job-schedules) | `45 21 * * 0` |
+| `time_zone` | `string` | Scheduler time zone (IANA format) — [reference](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) | `Asia/Tokyo` |
 
-#### 3.1.3 Preprocessing Configuration (preprocessing)
+### 3.2 Pipeline Steps
 
-| Parameter | Type | Description | Example Value |
+Each pipeline step (e.g., `fetch_data`, `preprocessing`, `training`) shares the same structure:
+
+| Field | Type | Description | Example |
 | :--- | :--- | :--- | :--- |
-| `preprocessing` | `object` | Configuration for data cleaning and preprocessing node | `{"train_test_split": 0.8}` |
+| `parameters` | `object` | Step-specific input parameters | `{"data_file_name": "breast_cancer.pkl"}` |
+| `resources.vm_name` | `string` | Ephemeral VM name for this step | `test-sklearn-fetch-data-vm` |
+| `resources.disk_size_gb` | `string` | Boot disk size (GB) | `"50"` |
+| `resources.spec` | `string` | Machine type | `e2-medium` |
+| `resources.gpu` | `boolean` | Whether to attach a GPU | `false` |
+| `pipeline_step` | `string` | Python dotted path to the step function | `src.pipelines.logistic_regression.fetch_data.data_from_sklearn.fetch_data` |
 
-#### 3.1.4 Training Configuration (training)
+### 3.3 Model Service (`model_service`)
 
-| Parameter | Type | Description | Example Value |
+| Parameter | Type | Description | Example |
 | :--- | :--- | :--- | :--- |
-| `training` | `object` | Model training node configuration | `{"epochs": 35, "learning_rate": 0.1}` |
+| `release` | `boolean` | Deploy as a gRPC service after training | `true` |
+| `model_class_path` | `string` | Python dotted path to the ModelService class | `src.pipelines.logistic_regression.model_service.logistic_regression_service.ModelService` |
+| `resources.vm_name` | `string` | VM name for deploy command | `test-sklearn-model-service-vm` |
+| `resources.disk_size_gb` | `string` | Disk size (GB) | `"50"` |
+| `resources.spec` | `string` | Machine type | `e2-medium` |
+| `resources.gpu` | `boolean` | Whether to attach a GPU | `false` |
 
-#### 3.1.5 Model Service Configuration (model_service)
+#### 3.3.1 gRPC Configuration (`model_service.grpc`)
 
-| Parameter | Type | Description | Example Value |
+| Parameter | Type | Description | Example |
 | :--- | :--- | :--- | :--- |
-| `release_grpc` | `boolean` | Whether model deployment is released as a gRPC service | `false` |
-
-##### 3.1.5.1 gRPC Detailed Configuration (grpc)
-
-| Parameter | Type | Description | Example Value |
-| :--- | :--- | :--- | :--- |
-| `keep_alive.time` | `integer` | Keep alive heartbeat interval (seconds) | `60` |
-| `keep_alive.timeout` | `integer` | Keep alive timeout (seconds) | `5` |
-| `service_host` | `string` | Listening host address | `0.0.0.0` |
+| `keep_alive.time` | `integer` | Keepalive ping interval (seconds) | `60` |
+| `keep_alive.timeout` | `integer` | Keepalive timeout (seconds) | `5` |
+| `service_host` | `string` | Listening host | `0.0.0.0` |
 | `port` | `string` | Listening port | `50051` |
-| `multi_processing.on` | `boolean` | Enable multi-processing mechanism | `false` |
-| `multi_processing.process_count` | `integer` | Process count | `2` |
-| `multi_processing.thread_count` | `integer` | Thread count | `10` |
-| `model_path.model_file` | `string` | Mount/Load path of the trained model file | `/ape-model/${subsidiaryName}/ape4/LightSANs.pth` |
-| `model_path.dataset_file` | `string` | Full path of the training set/dictionary associate data file | `/ape-model/${subsidiaryName}/ape4/SequentialDataset.pth` |
-| `sentry.on` | `boolean` | Enable Sentry exception monitoring | `false` |
-| `sentry.dsn` | `string` | Sentry DSN address | `https://examplePublicKey@o0.ingest.sentry.io/0` |
-| `sentry.traces_sample_rate` | `float` | Sentry tracing sample rate | `1.0` |
+| `multi_processing.on` | `boolean` | Enable multi-processing | `false` |
+| `multi_processing.process_count` | `integer` | Number of processes | `2` |
+| `multi_processing.thread_count` | `integer` | Threads per process | `10` |
+| `sentry.on` | `boolean` | Enable Sentry error monitoring | `false` |
+| `sentry.dsn` | `string` | Sentry DSN | `https://...@o0.ingest.sentry.io/0` |
+| `sentry.traces_sample_rate` | `float` | Sentry trace sample rate | `1.0` |
 
 ---
 
-## 4. Complete Configuration File Example (`env.json`)
-
-Below is the latest `env.sample.json` example reference with suggested populated values:
+## 4. Complete `env.json` Example
 
 ```json
 {
-    "project_name": "test_sklearn_pipeline",
+    "project_name": "aigear_sklearn_pipeline",
     "environment": "local",
     "aigear": {
         "gcp": {
-            "gcp_project_id": "xxx-ape-staging",
+            "gcp_project_id": "",
             "location": "asia-northeast1",
             "bucket": {
                 "on": true,
-                "bucket_name": "medovik-xxx-staging",
-                "bucket_name_for_release": "medovik-xxx-staging"
+                "bucket_name": "test-sklearn-pipeline",
+                "bucket_name_for_release": "test-sklearn-pipeline-service"
             },
             "cloud_build": {
                 "on": false,
-                "trigger_name": "test-pipeline-trigger",
-                "description": "Trigger for sklearn pipeline",
-                "repository": "github.com/my-org/my-repo",
-                "repo_owner": "my-org",
-                "repo_name": "my-repo",
-                "branch_pattern": "^main$",
+                "trigger_name": "",
+                "description": "",
+                "repository": "***/***",
+                "repo_owner": "***",
+                "repo_name": "",
+                "branch_pattern": "",
                 "build_config": "cloudbuild.yaml",
-                "substitutions": "_ENV=staging,_REGION=asia-northeast1"
+                "substitutions": "***=***,***=****"
             },
             "pre_vm_image": {
-                "on": false,
-                "machine_type": "n1-standard-4",
-                "gpu_type": "nvidia-tesla-t4",
-                "gpu_count": 1,
-                "boot_disk_gb": 50,
-                "dlvm_family": "tf2-latest-gpu",
-                "bake_vm": "ml-image-bake-config",
-                "custom_image_name": "my-custom-ml-image",
-                "bake_timeout_sec": 1200,
-                "bake_poll_interval_sec": 20
+                "on": false
             },
             "cloud_function": {
                 "on": true,
-                "function_name": "test-pipeline-run"
+                "function_name": "test-sklearn-pipeline-run"
             },
             "iam": {
                 "on": true,
-                "account_name": "test-pipeline-sa"
+                "account_name": "test-sklearn-pipeline"
             },
             "pub_sub": {
                 "on": true,
-                "topic_name": "test-pipelines-pubsub"
+                "topic_name": "test-sklearn-pipeline-pubsub"
             },
             "artifacts": {
                 "on": true,
-                "repository_name": "test-pipelines-image-whn"
+                "repository_name": "test-sklearn-pipeline-images"
             },
             "kubernetes": {
                 "on": true,
-                "cluster_name": "my-grpc-cluster",
-                "num_nodes": 3,
+                "cluster_name": "test-sklearn-pipeline-service-cluster",
+                "num_nodes": 1,
                 "min_nodes": 1,
                 "max_nodes": 5
             },
             "logging": false
+        },
+        "slack": {
+            "on": false,
+            "webhook_url": ""
         }
     },
     "pipelines": {
-        "v1": {
+        "logistic_regression": {
             "scheduler": {
-                "name": "daily-sklearn-training",
-                "location": "asia-northeast1",
-                "schedule": "0 2 * * *",
+                "name": "test-sklearn-pipeline",
+                "schedule": "45 21 * * 0",
                 "time_zone": "Asia/Tokyo"
             },
             "fetch_data": {
-                "mongo_uri_secret_name": "TRIAL_MONGO_URI"
+                "parameters": {
+                    "data_file_name": "breast_cancer.pkl"
+                },
+                "resources": {
+                    "vm_name": "test-sklearn-fetch-data-vm",
+                    "disk_size_gb": "50",
+                    "spec": "e2-medium",
+                    "gpu": false
+                },
+                "pipeline_step": "src.pipelines.logistic_regression.fetch_data.data_from_sklearn.fetch_data"
             },
             "preprocessing": {
-                 "train_test_split": 0.8
+                "parameters": {
+                    "feature_file_name": "features_data.pkl",
+                    "scaler_model": "scaler_model.pkl"
+                },
+                "resources": {
+                    "vm_name": "test-sklearn-preprocessing-vm",
+                    "disk_size_gb": "50",
+                    "spec": "e2-medium",
+                    "gpu": false
+                },
+                "pipeline_step": "src.pipelines.logistic_regression.preprocessing.feature_processing.feature_processing"
             },
             "training": {
-                 "epochs": 35,
-                 "learning_rate": 0.1
+                "parameters": {
+                    "logistic_model": "logistic_regression.pkl"
+                },
+                "resources": {
+                    "vm_name": "test-sklearn-training-vm",
+                    "disk_size_gb": "50",
+                    "spec": "e2-medium",
+                    "gpu": false
+                },
+                "pipeline_step": "src.pipelines.logistic_regression.training.train.train_model"
             },
             "model_service": {
-                "release_grpc": false,
+                "release": true,
                 "grpc": {
                     "keep_alive": {
                         "time": 60,
@@ -258,16 +273,19 @@ Below is the latest `env.sample.json` example reference with suggested populated
                         "process_count": 2,
                         "thread_count": 10
                     },
-                    "model_path": {
-                        "model_file": "/models/v1/model.pth",
-                        "dataset_file": "/models/v1/dataset.pth"
-                    },
                     "sentry": {
                         "on": false,
-                        "dsn": "https://examplePublicKey@o0.ingest.sentry.io/0",
+                        "dsn": "",
                         "traces_sample_rate": 1.0
                     }
-                }
+                },
+                "resources": {
+                    "vm_name": "test-sklearn-model-service-vm",
+                    "disk_size_gb": "50",
+                    "spec": "e2-medium",
+                    "gpu": false
+                },
+                "model_class_path": "src.pipelines.logistic_regression.model_service.logistic_regression_service.ModelService"
             }
         }
     }
@@ -276,25 +294,42 @@ Below is the latest `env.sample.json` example reference with suggested populated
 
 ---
 
-## 5. Configuration Usage Instructions
+## 5. CLI Command Reference
 
-> [!TIP]
-> It is recommended to read the following steps to quickly use and apply configurations:
+All CLI commands read `env.json` from the current working directory.
 
-1. Guarantee that the configuration file is saved as `env.json` and placed securely in the project **root directory**.
-2. Modify the corresponding parameter values according to your actual environment (e.g., Development/Test/Production) and requirements.
-3. If a certain service is enabled (i.e., setting `on: true`), ensure that related permissions and dependencies are well-configured in the cloud.
-4. For GCP-related configurations to take effect, ensure the local or CI/CD environment has the `gcloud` CLI tool installed and properly logged in.
-5. Kubernetes-related configs require `kubectl` installed alongside access to the corresponding K8s cluster certificates and permissions.
+| Command | Arguments | Description |
+| :--- | :--- | :--- |
+| `aigear-init` | `--name`, `--pipeline_versions` | Scaffold a new project |
+| `aigear-gcp-infra` | `--create` | Provision all GCP infrastructure defined in `env.json` |
+| `aigear-env-schema` | `--generate`, `--force` | Auto-generate a Pydantic schema from `env.json` |
+| `aigear-image` | `--create`, `--dockerfile_path`, `--build_context`, `--image_name`, `--image_version`, `--is_service`, `--force`, `--push` | Build and push Docker images to Artifact Registry |
+| `aigear-scheduler` | `--create`, `--version`, `--step_names` | Create Cloud Scheduler jobs for pipeline steps |
+| `aigear-workflow` | `--version`, `--step` | Run a single pipeline step locally |
+| `aigear-grpc` | `--version`, `--model_class_path` | Start a gRPC model serving server |
+| `aigear-deploy-model` | `--version`, `--model_class_path`, `--service_ports`, `--replicas`, `--port`, `--gcp`, `--delete` | Deploy or delete a gRPC model service (local or GCP) |
 
 ---
 
-## 6. Precautions & Best Practices
+## 6. Usage Instructions
+
+> [!TIP]
+> Follow these steps to get started quickly:
+
+1. Save the configuration as `env.json` in the project **root directory**.
+2. Fill in `gcp_project_id` and other environment-specific values.
+3. Set `on: true` only for services you intend to use — unused services should remain `false`.
+4. Run `aigear-gcp-infra --create` to provision infrastructure (requires GCP owner-level permissions; recommended to run in Cloud Shell).
+5. Run pipeline steps with `aigear-workflow --version <version> --step <dotted.path>`.
+
+---
+
+## 7. Security Best Practices
 
 > [!WARNING]
-> To ensure the secure and stable operation of the project, please strictly observe the following security conventions:
+> Observe the following conventions to keep the project secure:
 
-- **Sensitive Information Governance**: It is highly recommended NOT to **hardcode** sensitive information such as API Keys and Webhook URL callback addresses into the code repository. Inject them via GCP Secret Manager or environmental variables.
-- **Environment Isolation**: The `env.json` files for the Production environment and the Development/Staging environment must be isolated from each other, strictly prohibiting cross-usage.
-- **Configuration Backup**: Important environmental parameter files are recommended to be regularly backed up using secure tools or isolated branches in the code repository.
-- **Update Activation**: After modifying the `env.json` file, it is generally required to **restart the application or container services** to ensure the latest configuration is fully loaded and applied.
+- **`env.json` encryption**: `env.json` will be encrypted and decrypted via GCP KMS in a future release. Until then, add `env.json` to `.gitignore` to prevent accidental commits.
+- **Permission separation**: Infrastructure creation (`aigear-gcp-infra`) requires owner-level GCP permissions and should be run in Cloud Shell. Day-to-day pipeline commands require only developer-level permissions.
+- **Environment isolation**: Keep separate `env.json` files for production and staging; never share them across environments.
+- **Restart after changes**: After modifying `env.json`, restart the application or container to load the updated configuration.
