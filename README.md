@@ -82,13 +82,15 @@ Copy `env.sample.json` to `env.json` and fill in your GCP project, bucket, servi
 ### 3. Create GCP infrastructure
 
 ```bash
-aigear-gcp-infra
+aigear-gcp-infra --create
 ```
 
 ### 4. Generate env schema (optional)
 
 ```bash
-aigear-env-schema
+aigear-env-schema --generate
+# Force regenerate
+aigear-env-schema --generate --force
 ```
 
 Auto-generates a Pydantic model from your `env.json`. This gives you full type hints and IDE auto-complete when reading configuration, so you can navigate from any variable directly back to its definition in `env.json` instead of looking up string keys manually.
@@ -105,10 +107,10 @@ Fill in the generated scaffold with your own code:
 
 ```bash
 # Build both pipeline and model service images (default)
-aigear-image
+aigear-image --create
 
 # Build and push a specific image
-aigear-image --dockerfile_path Dockerfile.pl --image_name my-pipeline --image_version v1 --push
+aigear-image --create --dockerfile_path Dockerfile.pl --image_name my-pipeline --image_version v1 --push
 ```
 
 ### 7. Schedule pipeline steps
@@ -116,7 +118,7 @@ aigear-image --dockerfile_path Dockerfile.pl --image_name my-pipeline --image_ve
 Creates a Cloud Scheduler job on GCP that triggers the specified pipeline steps on a cron schedule defined in `env.json`.
 
 ```bash
-aigear-scheduler --version v1 --step_names fetch_data,preprocessing,training
+aigear-scheduler --create --version v1 --step_names fetch_data,preprocessing,training
 ```
 
 > **Tip:** Once created, you can go to [Cloud Scheduler](https://console.cloud.google.com/cloudscheduler) in the GCP Console to manually trigger an immediate run. A `--run` flag for triggering directly from the CLI is planned but not yet available (`aigear-scheduler --version v1 --run`).
@@ -150,59 +152,15 @@ aigear-scheduler --version v1 --step_names fetch_data,preprocessing,training
 
 ---
 
-## Why Aigear? Real-World Scenarios
+## Why Aigear?
 
-### Story 1: No More "Waiting in Line for Deployment"
-**Before Aigear:**
-You're a data scientist with a trained model ready to deploy. You hand it off to MLOps, who depend on DevOps to set up buckets, permissions, and schedulers. DevOps has ten projects in the queue. "Maybe next week," they say. Your model sits idle.
-
-**After Aigear:**
-You open your terminal and run:
-```bash
-aigear-gcp-infra
-```
-By the next morning, your entire infrastructure is ready—cloud storage, service accounts, scheduler, deployment environment. No tickets. No waiting. No dependencies.
-
-**Result:** What used to take weeks now takes less than a day—and you did it yourself.
-
-### Story 2: Multiple Teams, Consistent Infrastructure (Enterprise)
-**Before Aigear:**
-At a large company, multiple teams run different ML pipelines—recommendation, pricing, forecasting. Each requests new GCP buckets, IAM roles, and scheduler jobs. Every setup goes through DevOps; every small mistake (wrong IAM role, mismatched bucket name) causes delays. A single project takes weeks of back-and-forth.
-
-**After Aigear:**
-Each team uses a single configuration file (`env.json`) and runs:
-```bash
-aigear-gcp-infra
-aigear-scheduler --version v1 --step_names fetch_data,training,evaluate
-```
-Aigear automatically creates what's missing, verifies what exists, and keeps naming and permissions consistent across teams.
-
-**Result:** One shared pattern, no manual approval steps, fully auditable infrastructure creation.
-**Who wins:** DevOps (less manual provisioning), ML Engineers (instant setup), Product (faster iteration).
-
-### Story 3: "It Worked on My Laptop" → Perfect Reproducibility
-**Before Aigear:**
-You're prototyping new models daily. Your teammate's code fails on your machine because dependencies differ. Someone uses Python 3.8, someone else 3.11. Secrets live in random `.env` files. It's impossible to reproduce a successful experiment from two months ago.
-
-**After Aigear:**
-Every pipeline runs inside a Docker container with the exact same environment each time. Secrets are stored securely, configurations are validated, and results are logged automatically.
-```bash
-aigear-workflow --version v1 --step src.pipelines.v1.training.run
-```
-Aigear spins up a temporary VM, runs the container, stores the output in cloud storage, and shuts everything down.
-
-**Result:** Perfect reproducibility—the same run, same results, every time.
-**Who wins:** Data scientists (less debugging), QA teams (easy re-runs), management (consistent experiments).
-
-### Story 4: Cost Control with Ephemeral Infrastructure
-**Before Aigear:**
-A team launches several training VMs and forgets to turn them off. The next month, the cloud bill explodes—unused machines kept running all week.
-
-**After Aigear:**
-Every VM created by Aigear is ephemeral—it spins up when a job starts, runs your container, and deletes itself right after. Schedulers ensure no resources stay idle.
-
-**Result:** You only pay for what actually runs. No idle servers. No surprise bills.
-**Who wins:** Finance teams (predictable billing), engineering (no cleanup scripts).
+| Scenario | Without Aigear | With Aigear |
+|---|---|---|
+| **Security & permissions** | No clear permission boundaries — access control becomes unmanageable as the team grows | Clear separation of two roles: **owner** (full GCP access for infrastructure provisioning, recommended to run in Cloud Shell) and **developer** (limited permissions for day-to-day pipeline work) |
+| **Deploy a model** | Wait days/weeks for DevOps to provision buckets, IAM, and schedulers | Run `aigear-gcp-infra --create` — infrastructure ready in approximately 2 hours |
+| **Multi-team consistency** | Each team requests resources manually; mismatched names and roles cause repeated delays | One `env.json` config shared across teams; Aigear creates what's missing and validates the rest |
+| **Reproducibility** | "Works on my laptop" — Python version mismatches, scattered secrets, failed re-runs | Every pipeline runs in a versioned Docker container with validated config and automatic result logging |
+| **Cost control** | Forgotten VMs run all week; surprise cloud bills | All VMs are ephemeral — spin up for the job, delete on completion; pay only for what runs |
 
 ---
 
@@ -228,22 +186,18 @@ See the full [CLI Reference](docs/cli-reference.md) for all commands and argumen
 **Currently supported:**
 - **Cloud:** Google Cloud Platform (GCS, Pub/Sub, Cloud Scheduler, Cloud Functions, Compute Engine, Kubernetes Engine, Artifact Registry)
 - **Notifications:** Slack
-- **Databases:** MongoDB (via URI or GCP Secret Manager)
-- **Compute:** Ephemeral VMs and Cloud Run (self-terminating after each job)
+- **Compute:** Ephemeral VMs(self-terminating after each job)
 
 **Known limitations:**
-- Requires broad GCP IAM permissions (Storage Admin, Pub/Sub Admin, Scheduler Admin, Cloud Functions Developer, Service Account Admin)
-- Pipeline orchestration is step-based only—no DAG/dependency analysis yet
-- No built-in SQL or BigQuery connector
-- IAM bootstrap requires elevated roles; run infrastructure creation in a dedicated staging project before production
+- Some commands only support creation — update and delete operations are not yet available for all resources
+- Resource management is incomplete — version tracking and lifecycle management are missing
+- No Cloud Build support yet
+- Pipeline orchestration is step-based only — no DAG/dependency analysis yet
 
 **Planned:**
+- Improve functionality
 - AWS and Azure support
-- Broader database support (Postgres, BigQuery)
-- More execution environments (Cloud Run jobs, GKE, hybrid)
 - DAG/task dependency parsing for controlled parallel execution
-- Improved error handling and task retry
-
 ---
 
 ## Contributing & Contact
