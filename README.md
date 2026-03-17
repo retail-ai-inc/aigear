@@ -2,7 +2,7 @@
 
 # Cloud-Native ML Deployment & Automation Framework
 
-[**Installation**](#installation) · [**Quick Start**](#quick-start) · [**CLI Reference**](docs/cli-reference.md) · [**View Demo**](docs/full-guide.md) · [**Configuration Guide**](docs/route-guide.md)
+[**Installation**](#installation) · [**Quick Start**](#quick-start) · [**CLI Reference**](docs/cli-reference.md) · [**Tutorial**](docs/tutorial.md) · [**Configuration Guide**](docs/route-guide.md)
 
 </div>
 

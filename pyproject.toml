@@ -82,5 +82,6 @@ include = [
 [tool.setuptools.package-data]
 "aigear" = [
     "template/**/*",
+    "template/**/.*",
     "infrastructure/gcp/function/*"
 ]

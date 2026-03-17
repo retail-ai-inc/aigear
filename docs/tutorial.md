@@ -1,9 +1,21 @@
-# View Demo: Sklearn Pipeline
+# Tutorial: Sklearn Pipeline
 
-> [!NOTE]
-> This tutorial walks through a complete, end-to-end example — training a **Logistic Regression** classifier on the breast cancer dataset and deploying it as a **gRPC microservice** — using the `aigear_sklearn_pipeline` demo located in `example/aigear_sklearn_pipeline/`.
->
-> For a quick reference of all configuration parameters, see the [Configuration Guide](route-guide.md). For full CLI documentation, see the [CLI Reference](cli-reference.md).
+This tutorial walks through a complete, end-to-end example — training a **Logistic Regression** classifier on the breast cancer dataset and deploying it as a **gRPC microservice** — using the `aigear_sklearn_pipeline` demo located in `example/aigear_sklearn_pipeline/`.
+
+For a quick reference of all configuration parameters, see the [Configuration Guide](route-guide.md). For full CLI documentation, see the [CLI Reference](cli-reference.md).
+
+---
+
+## Prerequisites
+
+Before starting, make sure the following tools are installed and authenticated:
+
+- **Python 3.9+** with `pip install -U aigear`
+- **[Docker Desktop](https://www.docker.com/products/docker-desktop/)** — with **Kubernetes enabled** (Settings → Kubernetes → Enable Kubernetes)
+- **[gcloud CLI](https://cloud.google.com/sdk/docs/install)** — authenticated via `gcloud auth login`
+- **[kubectl](https://kubernetes.io/docs/tasks/tools/)** — for Kubernetes deployments
+
+> **No GCP account?** You can still follow Steps 1–7 locally by setting `gcs_switch = False` in `src/pipelines/common/constant.py`. GCS, Cloud Scheduler, and GKE steps require a GCP project.
 
 ---
 
@@ -545,76 +557,41 @@ docker compose -f docker-compose-ms.yml down
 ### Local Kubernetes (Docker Desktop)
 Before deploying to GKE, validate the Kubernetes deployment locally using **Docker Desktop's built-in Kubernetes**. Enable it via **Settings → Kubernetes → Enable Kubernetes**.
 
-`grpc_deployment.yaml` is written for GKE production use. One field must be adjusted for local Docker Desktop:
+> **Tip:** Docker Desktop uses **kubeadm** to provision its local cluster and shares the same Docker daemon as the host. This means any image built with `docker build` (or `aigear-image --create`) is immediately available to the cluster — no registry push required. `imagePullPolicy: Never` is set automatically for local deployments to enforce this behaviour.
 
-`aigear-image --create` builds the image with the full Artifact Registry tag and stores it in the local Docker daemon. Docker Desktop's Kubernetes cluster shares the same Docker daemon, so the image is already available locally under that tag. Setting `imagePullPolicy: IfNotPresent` tells Kubernetes to use the local cache instead of pulling from the registry.
+**Prerequisites**
 
-Edit `src/pipelines/logistic_regression/model_service/grpc_deployment.yaml`:
+- Build the local Docker image (Step 6): `aigear-image --create`
+- Run the training pipeline with `gcs_switch = False` (Step 7) so model files are written to `asset/`
 
-```yaml
-containers:
-- name: aigear-pipeline-service
-  image: asia-northeast1-docker.pkg.dev/{gcp project id}/test-sklearn-pipeline-images/aigear-sklearn-pipeline-service:latest
-  imagePullPolicy: IfNotPresent   # was Always — use local Docker cache instead (already set)
-  command: ["aigear-grpc"]
-  args:
-    - "--version"
-    - "logistic_regression"
-    - "--model_class_path"
-    - "src.pipelines.logistic_regression.model_service.logistic_regression_service.ModelService"
-  ports:
-  - containerPort: 50051
-```
-
-**Mount local models from Step 7 (no GCS required)**
-
-Set `gcs_switch = False` in `src/pipelines/common/constant.py` **before running Step 7**. With `LocalGCSMock`, the pipeline writes model files to the local mock bucket:
-
-```
-asset/test-sklearn-pipeline/logistic_regression/feature/scaler_model.pkl
-asset/test-sklearn-pipeline/logistic_regression/training/logistic_regression.pkl
-```
-
-At startup, `ModelService.load_all_model()` calls `AssetManagement.download()` which — with `gcs_switch = False` — does a local `shutil.copy` from the same `asset/test-sklearn-pipeline/...` path. No GCS connection is made.
-
-Mount the host `asset/` directory into the pod via a `hostPath` volume. Add to `grpc_deployment.yaml`:
-
-```yaml
-containers:
-- name: aigear-pipeline-service
-  # ... existing fields ...
-  volumeMounts:
-  - name: local-asset
-    mountPath: /ms/asset
-volumes:
-- name: local-asset
-  hostPath:
-    path: /run/desktop/mnt/host/d/PATH/TO/aigear_sklearn_pipeline/asset
-    type: Directory
-```
-
-> **Windows hostPath:** Docker Desktop exposes host drives under `/run/desktop/mnt/host/<drive-letter>/...`. Run `wsl wslpath -u "$(pwd)/asset"` from the project directory to get the exact path.
-
-Rebuild the ms image with `gcs_switch = False` baked in, then deploy:
+**Deploy**
 
 ```bash
-# Switch kubectl context to Docker Desktop's local cluster
-kubectl config use-context docker-desktop
-
-# Apply the manifest
-kubectl apply -f src/pipelines/logistic_regression/model_service/grpc_deployment.yaml
-
-# Verify the pod is running
-kubectl get pods
-kubectl logs -l app=aigear-pipeline-service -f
+aigear-deploy-model --version logistic_regression --model_class_path src.pipelines.logistic_regression.model_service.logistic_regression_service.ModelService
 ```
 
-The gRPC server is reachable at `localhost:50051` once the pod status shows `Running`.
+This command generates `grpc_deployment_local.yaml` (if it does not yet exist), switches kubectl context to `docker-desktop`, and applies the manifest. The local `asset/` directory is automatically mounted into the pod at `/ms/asset`, so no GCS connection is required.
 
-Tear down:
+**Verify**
+
+Check the pod logs (replace the pod suffix with the actual value from `kubectl get pods`):
 
 ```bash
-kubectl delete -f src/pipelines/logistic_regression/model_service/grpc_deployment.yaml
+kubectl logs aigear-sklearn-pipeline-logistic-regression-service-<pod-suffix>
+```
+
+Check the external IP (Docker Desktop assigns `localhost`):
+
+```bash
+kubectl get service aigear-sklearn-pipeline-logistic-regression-service
+```
+
+The gRPC server is reachable at `localhost:50051` once `EXTERNAL-IP` shows `localhost`.
+
+**Delete**
+
+```bash
+aigear-deploy-model --version logistic_regression --model_class_path src.pipelines.logistic_regression.model_service.logistic_regression_service.ModelService --delete
 ```
 
 ---
@@ -663,30 +640,33 @@ docker compose -f docker-compose-pl.yml logs -f
 docker compose -f docker-compose-ms.yml up -d
 
 # ── Local Kubernetes Testing (Docker Desktop) ─────────────────────────────────
+# Docker Desktop shares the host Docker daemon (kubeadm), so locally built
+# images are available to the cluster without pushing to a registry.
 
-# 7. Switch to Docker Desktop's local cluster
-kubectl config use-context docker-desktop
-
-# 8. Build local image and deploy to local K8s
-#    Prerequisites: set gcs_switch = False in constant.py before step 5 and before this build
-#    Edit grpc_deployment.yaml: imagePullPolicy: IfNotPresent + hostPath volume (image field unchanged)
+# 7. Build local image (set gcs_switch = False in constant.py before this step)
 aigear-image --create
-kubectl apply -f src/pipelines/logistic_regression/model_service/grpc_deployment.yaml
-kubectl get pods
-kubectl logs -l app=aigear-pipeline-service -f
+
+# 8. Deploy to local Kubernetes
+aigear-deploy-model --version logistic_regression --model_class_path src.pipelines.logistic_regression.model_service.logistic_regression_service.ModelService
+
+# Verify deployment
+kubectl get service aigear-sklearn-pipeline-logistic-regression-service
+kubectl logs aigear-sklearn-pipeline-logistic-regression-service-<pod-suffix>
+
+# Delete deployment
+aigear-deploy-model --version logistic_regression --model_class_path src.pipelines.logistic_regression.model_service.logistic_regression_service.ModelService --delete
 
 # ── GKE（GCP） ─────────────────────────────────────────────────────────
 
-# 10. Push image to Artifact Registry
+# 9. Push image to Artifact Registry
 aigear-image --create --push
 
-# 11. Deploy gRPC model service to GKE
-#     (Restore grpc_deployment.yaml to original registry image + imagePullPolicy: Always)
+# 10. Deploy gRPC model service to GKE
 aigear-deploy-model \
     --version logistic_regression \
     --model_class_path src.pipelines.logistic_regression.model_service.logistic_regression_service.ModelService \
     --gcp
 
-# 12. Schedule recurring pipeline runs (after end-to-end validation)
+# 11. Schedule recurring pipeline runs (after end-to-end validation)
 aigear-scheduler --create --version logistic_regression --step_names fetch_data,preprocessing,training
 ```
