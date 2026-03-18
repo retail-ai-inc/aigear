@@ -430,7 +430,7 @@ class ModelService:
 
 ---
 
-## 6. Docker Images
+## 6. Docker Images(Artifact Registry)
 
 The demo uses two separate Dockerfiles with [uv](https://github.com/astral-sh/uv) for fast dependency installation:
 
@@ -464,77 +464,36 @@ Build both images:
 ```bash
 # Build locally (no push)
 aigear-image --create
-
-# Build and push to Artifact Registry
-aigear-image --create --push
 ```
+
+> **Local build:** Make sure `gcs_switch = False` in `src/pipelines/common/constant.py`. When running locally, files are stored under `asset/` instead of GCS.
 
 ---
 
 ## 7. Run Pipeline Steps Locally
 
-Running inside Docker validates your `Dockerfile` and dependency installation in one step, giving you the closest approximation of the production environment before pushing to GCP.
+Run docker compose to test the pipeline and model service in a containerized environment.
 
-#### Prerequisites — mount your gcloud credentials (required when using GCS)
-
-Both compose files mount your local gcloud credentials into the container as read-only:
+By default, `docker-compose-pl.yml` builds a fresh image from `Dockerfile.pl` on every run. If you already built the image in Step 6, you can reuse it by commenting out the `build:` block and uncommenting the `image:` line in `docker-compose-pl.yml`:
 
 ```yaml
-volumes:
-  - ./.config/gcloud:/root/.config/gcloud:r
+services:
+  pipeline_training:
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile.pl
+    image: pl_test:latest   # reuse the image built in Step 6
 ```
 
-**Step 1 — Log in to GCloud**
+This skips the rebuild and speeds up the startup. Either approach works.
 
 ```bash
-gcloud auth application-default login
-```
-
-This opens a browser window to authenticate. Once complete, the credentials file is written to:
-
-- **Linux / macOS:** `~/.config/gcloud/application_default_credentials.json`
-- **Windows:** `C:\Users\<your-username>\AppData\Roaming\gcloud\application_default_credentials.json`
-
-**Step 2 — Copy credentials into the project directory**
-
-```bash
-# Linux / macOS
-mkdir -p .config/gcloud
-cp ~/.config/gcloud/application_default_credentials.json .config/gcloud/
-
-# Windows (PowerShell)
-New-Item -ItemType Directory -Force -Path .config\gcloud
-Copy-Item "$env:APPDATA\gcloud\application_default_credentials.json" .config\gcloud\
-```
-
-> **Skip GCS entirely:** Set `gcs_switch = False` in `src/pipelines/common/constant.py` to store all files locally. In this case no gcloud credentials are needed and you can skip both steps above.
-
-#### Run the training pipeline (`docker-compose-pl.yml`)
-
-`docker-compose-pl.yml` builds `Dockerfile.pl` and runs all three pipeline steps sequentially in one container:
-
-```yaml
-image: asia-northeast1-docker.pkg.dev/{gcp project id}/test-sklearn-pipeline-images/aigear-sklearn-pipeline-service:latest  # uses the docker image of Step 6, avoid duplicate bulding
-command: |
-  sh -c "
-  aigear-workflow --version logistic_regression --step src.pipelines.logistic_regression.fetch_data.data_from_sklearn.fetch_data &&
-  aigear-workflow --version logistic_regression --step src.pipelines.logistic_regression.preprocessing.feature_processing.feature_processing &&
-  aigear-workflow --version logistic_regression --step src.pipelines.logistic_regression.training.train.train_model
-  tail -f /dev/null
-  "
-```
-
-Start it:
-
-```bash
+# Run the training pipeline (fetch_data → preprocessing → training)
 docker compose -f docker-compose-pl.yml up -d
 # Follow the logs to watch progress
 docker compose -f docker-compose-pl.yml logs -f
-```
 
-The same settings apply to model services:
-
-```bash
+# Run the gRPC model service
 docker compose -f docker-compose-ms.yml up -d
 ```
 
@@ -563,6 +522,11 @@ Before deploying to GKE, validate the Kubernetes deployment locally using **Dock
 
 - Build the local Docker image (Step 6): `aigear-image --create`
 - Run the training pipeline with `gcs_switch = False` (Step 7) so model files are written to `asset/`
+- Verify the `image:` field in `grpc_deployment_local.yaml` matches the image name built in Step 6. Since `imagePullPolicy: Never`, Kubernetes will only look for the image locally — the name must match exactly:
+
+  ```yaml
+  image: asia-northeast1-docker.pkg.dev/<your-project>/test-sklearn-pipeline-images/aigear-sklearn-pipeline-service:latest
+  ```
 
 **Deploy**
 
@@ -596,77 +560,87 @@ aigear-deploy-model --version logistic_regression --model_class_path src.pipelin
 
 ---
 
-## 9. Schedule on GCP
+## 9. Push Images to Artifact Registry
+
+Once the pipeline has been validated locally, push the images to GCP Artifact Registry:
+
+```bash
+aigear-image --create --push
+```
+
+> **Before pushing to GCP:** Make sure `gcs_switch = True` in `src/pipelines/common/constant.py`. Pipeline steps running on GCP need to read and write files via GCS.
+
+---
+
+## 10. Schedule on GCP
 
 Once the pipeline has been validated end-to-end, create a Cloud Scheduler job to run all steps automatically every Sunday at 21:45 JST (as configured in `env.json`):
 
 ```bash
-aigear-scheduler --create \
-    --version logistic_regression \
-    --step_names fetch_data,preprocessing,training
+aigear-scheduler --create  --version logistic_regression  --step_names fetch_data,preprocessing,training,model_service
 ```
 
 After creation, go to [Cloud Scheduler](https://console.cloud.google.com/cloudscheduler) in the GCP Console to manually trigger an immediate run and confirm everything works in production.
 
 ---
 
-## 10. End-to-End Command Reference
+## 11. End-to-End Command Reference
 
 ```bash
 cd example/aigear_sklearn_pipeline
 
-# ── Setup ────────────────────────────────────────────────────────────────────
-
-# 1. Configure env.json
+# ── Step 2: Configure env.json ────────────────────────────────────────────────
 cp env.sample.json env.json
-# ... edit env.json: set gcp_project_id, bucket_name, etc. ...
+# Edit env.json: set gcp_project_id, bucket_name, etc.
 
-# 2. Generate typed config schema
+# ── Step 3: Generate typed config schema ──────────────────────────────────────
 aigear-env-schema --generate
 
-# 3. Provision GCP infrastructure (owner-level GCP access required)
+# ── Step 4: Provision GCP infrastructure (owner-level access required) ────────
 aigear-gcp-infra --create
 
-# ── Local Testing (Docker Compose) ───────────────────────────────────────────
+# ── Step 5: Implement pipeline code ───────────────────────────────────────────
+# Fill in src/pipelines/logistic_regression/{fetch_data,preprocessing,training,model_service}/
 
-# 4. Mount gcloud credentials into the project directory (required when gcs_switch = True)
-cp -r ~/.config/gcloud ./.config/gcloud
-
-# 5. Build pipeline image and run all training steps
-docker compose -f docker-compose-pl.yml up -d
-docker compose -f docker-compose-pl.yml logs -f
-
-# 6. Test the gRPC model service
-docker compose -f docker-compose-ms.yml up -d
-
-# ── Local Kubernetes Testing (Docker Desktop) ─────────────────────────────────
-# Docker Desktop shares the host Docker daemon (kubeadm), so locally built
-# images are available to the cluster without pushing to a registry.
-
-# 7. Build local image (set gcs_switch = False in constant.py before this step)
+# ── Step 6: Build Docker images locally ───────────────────────────────────────
+# Requires: gcs_switch = False in src/pipelines/common/constant.py
 aigear-image --create
 
-# 8. Deploy to local Kubernetes
-aigear-deploy-model --version logistic_regression --model_class_path src.pipelines.logistic_regression.model_service.logistic_regression_service.ModelService
+# ── Step 7: Run pipeline and model service locally (Docker Compose) ───────────
+# Option A (default): build fresh image from Dockerfile on every run
+docker compose -f docker-compose-pl.yml up -d
+docker compose -f docker-compose-ms.yml up -d
 
-# Verify deployment
+# Option B: reuse the image built in Step 6
+# → In docker-compose-pl.yml, comment out build: and uncomment image:
+# docker compose -f docker-compose-pl.yml up -d
+
+# Tear down
+docker compose -f docker-compose-pl.yml down
+docker compose -f docker-compose-ms.yml down
+
+# ── Step 8: Deploy gRPC model service to local Kubernetes (Docker Desktop) ────
+# Requires: image from Step 6, gcs_switch = False (model files in asset/)
+aigear-deploy-model \
+    --version logistic_regression \
+    --model_class_path src.pipelines.logistic_regression.model_service.logistic_regression_service.ModelService
+
+# Verify
 kubectl get service aigear-sklearn-pipeline-logistic-regression-service
 kubectl logs aigear-sklearn-pipeline-logistic-regression-service-<pod-suffix>
 
-# Delete deployment
-aigear-deploy-model --version logistic_regression --model_class_path src.pipelines.logistic_regression.model_service.logistic_regression_service.ModelService --delete
-
-# ── GKE（GCP） ─────────────────────────────────────────────────────────
-
-# 9. Push image to Artifact Registry
-aigear-image --create --push
-
-# 10. Deploy gRPC model service to GKE
+# Delete
 aigear-deploy-model \
     --version logistic_regression \
     --model_class_path src.pipelines.logistic_regression.model_service.logistic_regression_service.ModelService \
-    --gcp
+    --delete
 
-# 11. Schedule recurring pipeline runs (after end-to-end validation)
-aigear-scheduler --create --version logistic_regression --step_names fetch_data,preprocessing,training
+# ── Step 9: Push images to Artifact Registry ──────────────────────────────────
+# Requires: gcs_switch = True in src/pipelines/common/constant.py
+aigear-image --create --push
+
+# ── Step 10: Schedule recurring pipeline runs on GCP ──────────────────────────
+aigear-scheduler --create \
+    --version logistic_regression \
+    --step_names fetch_data,preprocessing,training
 ```
