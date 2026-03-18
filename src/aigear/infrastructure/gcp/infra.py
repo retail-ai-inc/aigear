@@ -432,32 +432,32 @@ class Infra:
         exists = self.pre_vm_image.cpu_image_exists()
         if not exists:
             logger.info(
-                f"Pre-VM custom cpu image ({self.aigear_config.gcp.pre_vm_image.custom_image_name}) not found in project "
+                f"Pre-VM custom cpu image ({self.pre_vm_image.cpu_image_name}) not found in project "
                 f"({self.project_id}). Starting VM image creation process (this may take several minutes)..."
             )
             self.pre_vm_image.create_cpu_image()
             logger.info(
-                f"Pre-VM custom cpu image ({self.aigear_config.gcp.pre_vm_image.custom_image_name}) created successfully."
+                f"Pre-VM custom cpu image ({self.pre_vm_image.cpu_image_name}) created successfully."
             )
         else:
             logger.info(
-                f"Pre-VM custom cpu image ({self.aigear_config.gcp.pre_vm_image.custom_image_name}) already exists in "
+                f"Pre-VM custom cpu image ({self.pre_vm_image.cpu_image_name}) already exists in "
                 f"project ({self.project_id}). Skipping creation."
             )
 
         exists = self.pre_vm_image.gpu_image_exists()
         if not exists:
             logger.info(
-                f"Pre-VM custom gpu image ({self.aigear_config.gcp.pre_vm_image.custom_image_name}) not found in project "
+                f"Pre-VM custom gpu image ({self.pre_vm_image.gpu_image_name}) not found in project "
                 f"({self.project_id}). Starting VM image creation process (this may take several minutes)..."
             )
             self.pre_vm_image.create_gpu_image()
             logger.info(
-                f"Pre-VM custom gpu image ({self.aigear_config.gcp.pre_vm_image.custom_image_name}) created successfully."
+                f"Pre-VM custom gpu image ({self.pre_vm_image.gpu_image_name}) created successfully."
             )
         else:
             logger.info(
-                f"Pre-VM custom gpu image ({self.aigear_config.gcp.pre_vm_image.custom_image_name}) already exists in "
+                f"Pre-VM custom gpu image ({self.pre_vm_image.gpu_image_name}) already exists in "
                 f"project ({self.project_id}). Skipping creation."
             )
 
