@@ -2,19 +2,19 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: aigear-pipeline-service
+  name: aigear-sklearn-pipeline-logistic-regression-service
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: aigear-pipeline-service
+      app: aigear-sklearn-pipeline-logistic-regression-service
   template:
     metadata:
       labels:
-        app: aigear-pipeline-service
+        app: aigear-sklearn-pipeline-logistic-regression-service
     spec:
       containers:
-      - name: aigear-pipeline-service
+      - name: aigear-sklearn-pipeline-logistic-regression-service
         image: asia-northeast1-docker.pkg.dev/{gcp project id}/test-sklearn-pipeline-images/aigear-sklearn-pipeline-service:latest
         imagePullPolicy: Always
         
@@ -32,7 +32,7 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: aigear-pipeline-service
+  name: aigear-sklearn-pipeline-logistic-regression-service
 spec:
   type: LoadBalancer
   ports:
@@ -40,4 +40,4 @@ spec:
       targetPort: 50051
       protocol: TCP
   selector:
-    app: aigear-pipeline-service
+    app: aigear-sklearn-pipeline-logistic-regression-service
