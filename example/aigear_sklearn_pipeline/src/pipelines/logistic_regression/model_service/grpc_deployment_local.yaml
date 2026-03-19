@@ -16,7 +16,7 @@ spec:
       containers:
       - name: aigear-sklearn-pipeline-logistic-regression-service
         image: asia-northeast1-docker.pkg.dev/{gcp project id}/test-sklearn-pipeline-images/aigear-sklearn-pipeline-service:latest
-        imagePullPolicy: Always
+        imagePullPolicy: Never
         
         command: ["aigear-grpc"]
         args:
@@ -27,6 +27,14 @@ spec:
 
         ports:
         - containerPort: 50051
+        volumeMounts:
+        - name: asset-volume
+          mountPath: /ms/asset
+      volumes:
+      - name: asset-volume
+        hostPath:
+          path: /run/desktop/mnt/host/d/git_work/aigear_sklearn_pipeline/asset
+          type: DirectoryOrCreate
 ---
 
 apiVersion: v1

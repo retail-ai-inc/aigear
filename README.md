@@ -1,126 +1,205 @@
-# Aigear
-Aigear is an MLOps work orchestration framework that is serverless and aims to help you build pipelines more quickly.
-It will not change the programming style of Python and provides an optimized out-of-the-box toolbox.
+<div align="center">
 
-Aigear believes that everything is a task, and it allows you to make any extensions according to the task.
-Within Aigear, it performs topology analysis on tasks to achieve optimal parallel execution.
+# Cloud-Native ML Deployment & Automation Framework
 
-You need to note that aigear only executes functions created by yourself in parallel.
+[**Installation**](#installation) · [**Quick Start**](#quick-start) · [**Tutorial**](docs/tutorial.md) · [**CLI Reference**](docs/cli-reference.md) · [**Configuration Guide**](docs/route-guide.md)
 
-## Getting started
+</div>
 
-Aigear requires Python 3.8 or later. To install the latest or upgrade to the latest version of Aigear, run the following command:
+## What is Aigear?
+
+Aigear is a Python package that closes the gap between model development and production deployment. Instead of coordinating across data science, MLOps, and DevOps teams to set up cloud infrastructure, containerize pipelines, and expose model APIs, you describe your project once in `env.json` and let Aigear handle the rest—provisioning GCP resources, building Docker images, scheduling pipeline runs on ephemeral compute, and deploying models as gRPC microservices.
+
+---
+
+## Installation
+
+### Prerequisites
+
+Aigear provisions GCP resources and manages Kubernetes deployments. The following CLI tools must be installed and authenticated before use:
+
+- **[gcloud CLI](https://cloud.google.com/sdk/docs/install)** — required for all GCP operations (infrastructure, Cloud Scheduler, Artifact Registry, etc.)
+  ```bash
+  gcloud auth login
+  gcloud config set project YOUR_PROJECT_ID
+  ```
+- **[kubectl](https://kubernetes.io/docs/tasks/tools/)** — required only if deploying the gRPC model service to GCP Kubernetes (`aigear-deploy-model`)
+
+### Install Aigear
 
 ```bash
 pip install -U aigear
 ```
 
-With just two decorators(`@task` and `@workflow`), you can create a pipeline.
-Please refer to `/aigear/example/pipeline`.
+---
 
-Here is an example of iris classification:
-```python
-from sklearn.datasets import load_iris
-from sklearn.model_selection import train_test_split
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score
-from aigear.pipeline import workflow, task
-import pickle
-import json
-import os
+## Quick Start
 
+### 1. Initialize a project
 
-@task
-def load_data():
-    iris = load_iris()
-    return iris
-
-
-@task
-def split_dataset(iris):
-    X_train, X_test, y_train, y_test = train_test_split(iris.data, iris.target, test_size=0.2, random_state=42)
-    return X_train, X_test, y_train, y_test
-
-
-@task
-def fit_model(X_train, y_train):
-    clf = LogisticRegression(random_state=0, max_iter=1000, solver="lbfgs")
-    model = clf.fit(X_train, y_train)
-    return model
-
-
-@task
-def evaluate(clf, X_test, y_test):
-    y_pred = clf.predict(X_test)
-    accuracy = accuracy_score(y_test, y_pred)
-    return y_pred, accuracy
-
-
-@task
-def get_env_variables():
-    with open("env.json", "r") as f:
-        env = json.load(f)
-    model_path = env.get("grpc", {}).get("servers", {}).get("demo", {}).get("modelPath")
-    return model_path
-
-
-@task
-def save_model(model, model_path):
-    with open(model_path, "wb") as md:
-        pickle.dump(model, md)
-
-
-@workflow
-def my_pipeline():
-    iris = load_data()
-    X_train, X_test, y_train, y_test = split_dataset(iris)
-    model = fit_model(X_train, y_train)
-    y_pred, accuracy = evaluate(model, X_test, y_test)
-    print("accuracy：", accuracy)
-
-    model_path = get_env_variables()
-    save_model(model, model_path)
-
-
-if __name__ == '__main__':
-    # # Run the pipeline directly
-    # my_pipeline()
-    
-    # Run pipeline in parallel
-    my_pipeline.run_in_executor()
+```bash
+aigear-init --name my_ml_service --pipeline_versions v1,v2
 ```
 
-Similarly, the task can also be executed in two ways.
-```python
-if __name__ == "__main__":
-    # # Run the pipeline directly
-    # load_data()
-    
-    # Run pipeline in parallel
-    load_data.run_in_executor()
+This creates the following project structure:
+
+```
+my_ml_service/
+├── cloudbuild/
+│   └── cloudbuild.yaml
+├── docs/
+├── kms/
+├── src/
+│   └── pipelines/
+│       ├── v1/
+│       │   ├── fetch_data/
+│       │   ├── preprocessing/
+│       │   ├── training/
+│       │   └── model_service/
+│       └── v2/
+│           ├── fetch_data/
+│           ├── preprocessing/
+│           ├── training/
+│           └── model_service/
+├── Dockerfile.pl               # Pipeline container
+├── Dockerfile.pl.dockerignore
+├── docker-compose-pl.yml
+├── requirements_pl.txt
+├── Dockerfile.ms               # Model service container
+├── Dockerfile.ms.dockerignore
+├── docker-compose-ms.yml
+├── requirements_ms.txt
+├── env.sample.json
+└── README.md
 ```
 
-If you want to deploy a pipeline or create a model service in local docker, it's quite simple.
+> **Two Dockerfiles:** `Dockerfile.pl` is for the training pipeline; `Dockerfile.ms` is for the gRPC model serving service.
 
-```python
-if __name__ == '__main__':
-    current_directory = os.getcwd()
-    volumes = {
-        current_directory: {'bind': "/pipeline", 'mode': 'rw'}
-    }
-    hostname = "demo-host"
-    ports = {'50051/tcp': 50051}
-    service_dir = "demo"
+### 2. Configure `env.json`
 
-    my_pipeline.deploy(
-        volumes=volumes,
-        skip_build_image=False
-    ).to_service(
-        hostname=hostname,
-        ports=ports,
-        volumes=volumes,
-        tag=service_dir,
-    )
+Copy `env.sample.json` to `env.json` and fill in your GCP project, bucket, service accounts, etc. See the [configuration guide](docs/route-guide.md).
+
+### 3. Create GCP infrastructure
+
+```bash
+aigear-gcp-infra --create
 ```
 
+### 4. Generate env schema (optional)
 
+```bash
+aigear-env-schema --generate
+# Force regenerate
+aigear-env-schema --generate --force
+```
+
+Auto-generates a Pydantic model from your `env.json`. This gives you full type hints and IDE auto-complete when reading configuration, so you can navigate from any variable directly back to its definition in `env.json` instead of looking up string keys manually.
+
+### 5. Implement your pipeline
+
+Fill in the generated scaffold with your own code:
+
+- **Pipeline steps** — implement each stage under `src/pipelines/v1/` (e.g., `fetch_data/`, `preprocessing/`, `training/`, `model_service/`).
+- **Dockerfiles** — edit `Dockerfile.pl` (training pipeline) and `Dockerfile.ms` (model service) to install your dependencies. The generated files include working templates you can build on.
+- **Dependencies** — add your Python packages to `requirements_pl.txt` and/or `requirements_ms.txt`.
+
+### 6. Build Docker images
+
+```bash
+# Build both pipeline and model service images (default)
+aigear-image --create
+
+# Build and push a specific image
+aigear-image --create --dockerfile_path Dockerfile.pl --image_name my-pipeline --image_version v1 --push
+```
+
+### 7. Schedule pipeline steps
+
+Creates a Cloud Scheduler job on GCP that triggers the specified pipeline steps on a cron schedule defined in `env.json`.
+
+```bash
+aigear-scheduler --create --version v1 --step_names fetch_data,preprocessing,training
+```
+
+> **Tip:** Once created, you can go to [Cloud Scheduler](https://console.cloud.google.com/cloudscheduler) in the GCP Console to manually trigger an immediate run. A `--run` flag for triggering directly from the CLI is planned but not yet available (`aigear-scheduler --version v1 --run`).
+
+---
+
+## Key Features
+
+- **Infrastructure Automation**: Automatically create GCS buckets, Pub/Sub topics, Cloud Scheduler jobs, Service Accounts, and more.
+- **Containerized Reproducible Runs**: Execute tasks inside predictable container environments to ensure reproducibility.
+- **Scheduling & Auto-Retraining**: Support cron schedules, dependency steps, and automated retraining pipelines.
+- **Versioning & Secrets**: Model versioning and configuration management with support for GCP Secret Manager.
+- **Ephemeral Compute**: Launch short-lived VMs or Cloud Functions to run tasks and tear them down after completion.
+- **gRPC Model Serving**: Deploy ML models as gRPC microservices locally or on GCP.
+
+---
+
+## Architecture
+
+![Aigear Architecture](docs/images/architecture.png)
+
+---
+
+## Core Principles
+
+- **Everything is a Task**: Model training, evaluation, packaging, and deployment are modeled as composable tasks.
+- **Reproducible & Auditable**: Each run executes in a controlled container or ephemeral instance; configurations and outputs are traceable.
+- **Least Privilege & Ephemeral Resources**: Use short-lived VMs or instances for jobs and automatically clean them up after completion to control cost and risk.
+- **Centralized, Not Scattered**: Training pipeline and model service code live together under a single versioned project. Configuration, secrets, and infrastructure definitions are consolidated in one `env.json`—no more hunting across repos, scripts, and dashboards.
+- **You Own the Code**: Aigear scaffolds the structure and handles infrastructure, but your pipeline logic runs as plain Python. No proprietary SDK to wrap your code in, no lock-in to a platform's execution model—making it easy to understand, extend, and debug compared to more opinionated MLOps platforms.
+
+---
+
+## Why Aigear?
+
+| Scenario | Without Aigear | With Aigear |
+|---|---|---|
+| **Security & permissions** | No clear permission boundaries — access control becomes unmanageable as the team grows | Clear separation of two roles: **owner** (full GCP access for infrastructure provisioning, recommended to run in Cloud Shell) and **developer** (limited permissions for day-to-day pipeline work) |
+| **Deploy a model** | Wait days/weeks for DevOps to provision buckets, IAM, and schedulers | Run `aigear-gcp-infra --create` — infrastructure ready in approximately 2 hours |
+| **Multi-team consistency** | Each team requests resources manually; mismatched names and roles cause repeated delays | One `env.json` config shared across teams; Aigear creates what's missing and validates the rest |
+| **Reproducibility** | "Works on my laptop" — Python version mismatches, scattered secrets, failed re-runs | Every pipeline runs in a versioned Docker container with validated config and automatic result logging |
+| **Cost control** | Forgotten VMs run all week; surprise cloud bills | All VMs are ephemeral — spin up for the job, delete on completion; pay only for what runs |
+
+---
+
+## CLI Reference
+
+See the full [CLI Reference](docs/cli-reference.md) for all commands and arguments.
+
+| Command | Description |
+|---|---|
+| `aigear-init` | Initialize a new project scaffold |
+| `aigear-gcp-infra` | Create GCP infrastructure (buckets, IAM, Pub/Sub, schedulers) |
+| `aigear-workflow` | Run a single pipeline step locally |
+| `aigear-scheduler` | Create a Cloud Scheduler job for pipeline steps |
+| `aigear-image` | Build and optionally push Docker images to Artifact Registry |
+| `aigear-grpc` | Start a gRPC model serving server |
+| `aigear-deploy-model` | Deploy or delete a gRPC model service (local or GCP) |
+| `aigear-env-schema` | Auto-generate a Pydantic schema from `env.json` |
+
+---
+
+## Supported Platforms & Roadmap
+
+**Currently supported:**
+- **Cloud:** Google Cloud Platform (GCS, Pub/Sub, Cloud Scheduler, Cloud Functions, Compute Engine, Kubernetes Engine, Artifact Registry)
+- **Notifications:** Slack
+- **Compute:** Ephemeral VMs(self-terminating after each job)
+
+**Known limitations:**
+- Some commands only support creation — update and delete operations are not yet available for all resources
+- Resource management is incomplete — version tracking and lifecycle management are missing
+- No Cloud Build support yet
+- Pipeline orchestration is step-based only — no DAG/dependency analysis yet
+
+**Planned:**
+- Improve functionality
+- AWS and Azure support
+- DAG/task dependency parsing for controlled parallel execution
+---
+
+## Contributing & Contact
+
+Contributions, issues, and PRs are welcome. Share internal use-cases to help evolve common conventions. For questions or feature requests, open an issue in the repository or contact the maintainers.

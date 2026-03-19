@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aigear"
-version = "0.0.1"
+version = "0.0.2"
 #dynamic = ["version"]
 description = "Machine learning microservices based on gRPC"
 keywords = ["MLOps", "AI", "ML", "Model Serving", "Model Deployment", "Model Training"]
@@ -64,13 +64,14 @@ gcp = [
 
 [project.scripts]
 aigear-init = "aigear.cli.project_cli:project_init"
-aigear-gcp-infra = "aigear.cli.gcp_cli:gcp_infra_init"
-aigear-workflow = "aigear.cli.task_running:task_run"
-aigear-scheduler = "aigear.cli.scheduler:scheduler_init"
-aigear-image = "aigear.cli.artifacts_image:create_image"
-aigear-grpc = "aigear.cli.grpc_service:grpc_run"
-aigear-env-schema = "aigear.cli.generate_env_schema:auto_generate_env_schema"
+aigear-gcp-infra = "aigear.cli.gcp_cli:gcp_infra"
+aigear-env-schema = "aigear.cli.env_schema:env_schema"
+aigear-image = "aigear.cli.artifacts_image:docker_image"
+aigear-scheduler = "aigear.cli.gcp_scheduler:gcp_scheduler"
 aigear-deploy-model = "aigear.cli.model_service:deploy_grpc_service"
+aigear-workflow = "aigear.cli.task_running:task_run"
+aigear-grpc = "aigear.cli.grpc_service:grpc_run"
+
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -81,5 +82,6 @@ include = [
 [tool.setuptools.package-data]
 "aigear" = [
     "template/**/*",
+    "template/**/.*",
     "infrastructure/gcp/function/*"
 ]

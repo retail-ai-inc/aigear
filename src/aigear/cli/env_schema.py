@@ -1,5 +1,5 @@
 import argparse
-from aigear.infrastructure.gcp import Infra
+from aigear.common.config import EnvConfig
 
 
 def get_argument():
@@ -8,24 +8,29 @@ def get_argument():
         formatter_class=argparse.RawDescriptionHelpFormatter)
     group = parser.add_mutually_exclusive_group(required=False)
     group.add_argument(
-        "--create",
+        "--generate",
         action="store_true",
-        help="Initialize GCP infrastructure resources."
+        help="Generate environment schema file."
     )
     # Future commands:
     # group.add_argument("--delete", action="store_true", help="...")
     # group.add_argument("--update", action="store_true", help="...")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Force recreate schema even if it already exists."
+    )
     return parser.parse_args()
 
 
-def gcp_infra():
+def env_schema():
     args = get_argument()
-    if args.create:
-        Infra().create()
+    if args.generate:
+        EnvConfig.generative_env_schema(forced_generate=args.force)
     # Future commands:
     # elif args.delete:
-    #     Infra().delete()
+    #     EnvConfig.delete_env_schema()
     # elif args.update:
-    #     Infra().update()
+    #     EnvConfig.update_env_schema(forced_generate=args.force)
     else:
-        Infra().create()
+        EnvConfig.generative_env_schema(forced_generate=args.force)

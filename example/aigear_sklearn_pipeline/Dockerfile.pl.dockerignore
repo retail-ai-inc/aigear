@@ -8,6 +8,7 @@ docs/
 kms/
 cloudbuild/
 cloud_function/
+asset/
 
 *.md
 .gitignore

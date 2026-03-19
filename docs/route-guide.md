@@ -1,0 +1,335 @@
+# Configuration Parameter Guide
+
+## 1. Basic Configuration
+
+| Parameter | Type | Description | Example |
+| :--- | :--- | :--- | :--- |
+| `project_name` | `string` | Project name | `aigear_sklearn_pipeline` |
+| `environment` | `string` | Operating environment | `local` |
+
+---
+
+## 2. AIGear Configuration (`aigear`)
+
+### 2.1 GCP Configuration (`aigear.gcp`)
+
+| Parameter | Type | Description | Example |
+| :--- | :--- | :--- | :--- |
+| `gcp_project_id` | `string` | GCP Project ID | `my-project-staging` |
+| `location` | `string` | Default GCP resource region | `asia-northeast1` |
+
+#### 2.1.1 Storage Bucket (`bucket`)
+
+| Parameter | Type | Description | Example |
+| :--- | :--- | :--- | :--- |
+| `on` | `boolean` | Enable GCS bucket creation | `true` |
+| `bucket_name` | `string` | Bucket used by pipeline jobs | `test-sklearn-pipeline` |
+| `bucket_name_for_release` | `string` | Bucket used by model serving | `test-sklearn-pipeline-service` |
+
+#### 2.1.2 Cloud Build (`cloud_build`)
+
+| Parameter | Type | Description | Example |
+| :--- | :--- | :--- | :--- |
+| `on` | `boolean` | Enable Cloud Build trigger creation | `false` |
+| `trigger_name` | `string` | Trigger name | `my-pipeline-trigger` |
+| `description` | `string` | Trigger description | `Trigger for sklearn pipeline` |
+| `repository` | `string` | Repository address | `github.com/my-org/my-repo` |
+| `repo_owner` | `string` | Repository owner | `my-org` |
+| `repo_name` | `string` | Repository name | `my-repo` |
+| `branch_pattern` | `string` | Branch regex pattern | `^main$` |
+| `build_config` | `string` | Build config file | `cloudbuild.yaml` |
+| `substitutions` | `string` | Build variable substitutions | `_ENV=staging,_REGION=asia-northeast1` |
+
+#### 2.1.3 Pre-built VM Image (`pre_vm_image`)
+
+| Parameter | Type | Description | Example |
+| :--- | :--- | :--- | :--- |
+| `on` | `boolean` | Enable pre-baked VM image | `false` |
+
+> More creation parameters, use `aigear.infrastructure.gcp.pre_vm_image.PreVMImage`.
+
+#### 2.1.4 Cloud Function (`cloud_function`)
+
+| Parameter | Type | Description | Example |
+| :--- | :--- | :--- | :--- |
+| `on` | `boolean` | Enable Cloud Function creation | `true` |
+| `function_name` | `string` | Function name | `test-sklearn-pipeline-run` |
+
+#### 2.1.5 IAM (`iam`)
+
+| Parameter | Type | Description | Example |
+| :--- | :--- | :--- | :--- |
+| `on` | `boolean` | Enable service account creation | `true` |
+| `account_name` | `string` | Service account name | `test-sklearn-pipeline` |
+
+#### 2.1.6 Pub/Sub (`pub_sub`)
+
+| Parameter | Type | Description | Example |
+| :--- | :--- | :--- | :--- |
+| `on` | `boolean` | Enable Pub/Sub topic creation | `true` |
+| `topic_name` | `string` | Topic name | `test-sklearn-pipeline-pubsub` |
+
+#### 2.1.7 Artifact Registry (`artifacts`)
+
+| Parameter | Type | Description | Example |
+| :--- | :--- | :--- | :--- |
+| `on` | `boolean` | Enable Artifact Registry creation | `true` |
+| `repository_name` | `string` | Repository name | `test-sklearn-pipeline-images` |
+
+#### 2.1.8 Kubernetes (`kubernetes`)
+
+| Parameter | Type | Description | Example |
+| :--- | :--- | :--- | :--- |
+| `on` | `boolean` | Enable GKE cluster creation | `true` |
+| `cluster_name` | `string` | Cluster name | `test-sklearn-pipeline-service-cluster` |
+| `num_nodes` | `integer` | Default node count | `1` |
+| `min_nodes` | `integer` | Autoscaling minimum | `1` |
+| `max_nodes` | `integer` | Autoscaling maximum | `5` |
+
+#### 2.1.9 Logging
+
+| Parameter | Type | Description | Example |
+| :--- | :--- | :--- | :--- |
+| `logging` | `boolean` | Enable verbose GCP logging | `false` |
+
+---
+
+### 2.2 Slack Configuration (`aigear.slack`)
+
+| Parameter | Type | Description | Example |
+| :--- | :--- | :--- | :--- |
+| `on` | `boolean` | Enable Slack notifications | `false` |
+| `webhook_url` | `string` | Slack incoming webhook URL | `https://hooks.slack.com/...` |
+
+---
+
+## 3. Pipeline Configuration (`pipelines`)
+
+Pipelines are keyed by version name (e.g., `logistic_regression`, `v1`). Each version contains a scheduler and one or more pipeline steps.
+
+### 3.1 Scheduler (`scheduler`)
+
+| Parameter | Type | Description | Example |
+| :--- | :--- | :--- | :--- |
+| `name` | `string` | Cloud Scheduler job name | `test-sklearn-pipeline` |
+| `schedule` | `string` | Cron expression — [reference](https://cloud.google.com/scheduler/docs/configuring/cron-job-schedules) | `45 21 * * 0` |
+| `time_zone` | `string` | Scheduler time zone (IANA format) — [reference](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) | `Asia/Tokyo` |
+
+### 3.2 Pipeline Steps
+
+Each pipeline step (e.g., `fetch_data`, `preprocessing`, `training`) shares the same structure:
+
+| Field | Type | Description | Example |
+| :--- | :--- | :--- | :--- |
+| `parameters` | `object` | Step-specific input parameters | `{"data_file_name": "breast_cancer.pkl"}` |
+| `resources.vm_name` | `string` | Ephemeral VM name for this step | `test-sklearn-fetch-data-vm` |
+| `resources.disk_size_gb` | `string` | Boot disk size (GB) | `"50"` |
+| `resources.spec` | `string` | Machine type | `e2-medium` |
+| `resources.gpu` | `boolean` | Whether to attach a GPU | `false` |
+| `pipeline_step` | `string` | Python dotted path to the step function | `src.pipelines.logistic_regression.fetch_data.data_from_sklearn.fetch_data` |
+
+### 3.3 Model Service (`model_service`)
+
+| Parameter | Type | Description | Example |
+| :--- | :--- | :--- | :--- |
+| `release` | `boolean` | Deploy as a gRPC service after training | `true` |
+| `model_class_path` | `string` | Python dotted path to the ModelService class | `src.pipelines.logistic_regression.model_service.logistic_regression_service.ModelService` |
+| `resources.vm_name` | `string` | VM name for deploy command | `test-sklearn-model-service-vm` |
+| `resources.disk_size_gb` | `string` | Disk size (GB) | `"50"` |
+| `resources.spec` | `string` | Machine type | `e2-medium` |
+| `resources.gpu` | `boolean` | Whether to attach a GPU | `false` |
+
+#### 3.3.1 gRPC Configuration (`model_service.grpc`)
+
+| Parameter | Type | Description | Example |
+| :--- | :--- | :--- | :--- |
+| `keep_alive.time` | `integer` | Keepalive ping interval (seconds) | `60` |
+| `keep_alive.timeout` | `integer` | Keepalive timeout (seconds) | `5` |
+| `service_host` | `string` | Listening host | `0.0.0.0` |
+| `port` | `string` | Listening port | `50051` |
+| `multi_processing.on` | `boolean` | Enable multi-processing | `false` |
+| `multi_processing.process_count` | `integer` | Number of processes | `2` |
+| `multi_processing.thread_count` | `integer` | Threads per process | `10` |
+| `sentry.on` | `boolean` | Enable Sentry error monitoring | `false` |
+| `sentry.dsn` | `string` | Sentry DSN | `https://...@o0.ingest.sentry.io/0` |
+| `sentry.traces_sample_rate` | `float` | Sentry trace sample rate | `1.0` |
+
+---
+
+## 4. Complete `env.json` Example
+
+```json
+{
+    "project_name": "aigear_sklearn_pipeline",
+    "environment": "local",
+    "aigear": {
+        "gcp": {
+            "gcp_project_id": "",
+            "location": "asia-northeast1",
+            "bucket": {
+                "on": true,
+                "bucket_name": "test-sklearn-pipeline",
+                "bucket_name_for_release": "test-sklearn-pipeline-service"
+            },
+            "cloud_build": {
+                "on": false,
+                "trigger_name": "",
+                "description": "",
+                "repository": "***/***",
+                "repo_owner": "***",
+                "repo_name": "",
+                "branch_pattern": "",
+                "build_config": "cloudbuild.yaml",
+                "substitutions": "***=***,***=****"
+            },
+            "pre_vm_image": {
+                "on": false
+            },
+            "cloud_function": {
+                "on": true,
+                "function_name": "test-sklearn-pipeline-run"
+            },
+            "iam": {
+                "on": true,
+                "account_name": "test-sklearn-pipeline"
+            },
+            "pub_sub": {
+                "on": true,
+                "topic_name": "test-sklearn-pipeline-pubsub"
+            },
+            "artifacts": {
+                "on": true,
+                "repository_name": "test-sklearn-pipeline-images"
+            },
+            "kubernetes": {
+                "on": true,
+                "cluster_name": "test-sklearn-pipeline-service-cluster",
+                "num_nodes": 1,
+                "min_nodes": 1,
+                "max_nodes": 5
+            },
+            "logging": false
+        },
+        "slack": {
+            "on": false,
+            "webhook_url": ""
+        }
+    },
+    "pipelines": {
+        "logistic_regression": {
+            "scheduler": {
+                "name": "test-sklearn-pipeline",
+                "schedule": "45 21 * * 0",
+                "time_zone": "Asia/Tokyo"
+            },
+            "fetch_data": {
+                "parameters": {
+                    "data_file_name": "breast_cancer.pkl"
+                },
+                "resources": {
+                    "vm_name": "test-sklearn-fetch-data-vm",
+                    "disk_size_gb": "50",
+                    "spec": "e2-medium",
+                    "gpu": false
+                },
+                "pipeline_step": "src.pipelines.logistic_regression.fetch_data.data_from_sklearn.fetch_data"
+            },
+            "preprocessing": {
+                "parameters": {
+                    "feature_file_name": "features_data.pkl",
+                    "scaler_model": "scaler_model.pkl"
+                },
+                "resources": {
+                    "vm_name": "test-sklearn-preprocessing-vm",
+                    "disk_size_gb": "50",
+                    "spec": "e2-medium",
+                    "gpu": false
+                },
+                "pipeline_step": "src.pipelines.logistic_regression.preprocessing.feature_processing.feature_processing"
+            },
+            "training": {
+                "parameters": {
+                    "logistic_model": "logistic_regression.pkl"
+                },
+                "resources": {
+                    "vm_name": "test-sklearn-training-vm",
+                    "disk_size_gb": "50",
+                    "spec": "e2-medium",
+                    "gpu": false
+                },
+                "pipeline_step": "src.pipelines.logistic_regression.training.train.train_model"
+            },
+            "model_service": {
+                "release": true,
+                "grpc": {
+                    "keep_alive": {
+                        "time": 60,
+                        "timeout": 5
+                    },
+                    "service_host": "0.0.0.0",
+                    "port": "50051",
+                    "multi_processing": {
+                        "on": false,
+                        "process_count": 2,
+                        "thread_count": 10
+                    },
+                    "sentry": {
+                        "on": false,
+                        "dsn": "",
+                        "traces_sample_rate": 1.0
+                    }
+                },
+                "resources": {
+                    "vm_name": "test-sklearn-model-service-vm",
+                    "disk_size_gb": "50",
+                    "spec": "e2-medium",
+                    "gpu": false
+                },
+                "model_class_path": "src.pipelines.logistic_regression.model_service.logistic_regression_service.ModelService"
+            }
+        }
+    }
+}
+```
+
+---
+
+## 5. CLI Command Reference
+
+All CLI commands read `env.json` from the current working directory.
+
+| Command | Arguments | Description |
+| :--- | :--- | :--- |
+| `aigear-init` | `--name`, `--pipeline_versions` | Scaffold a new project |
+| `aigear-gcp-infra` | `--create` | Provision all GCP infrastructure defined in `env.json` |
+| `aigear-env-schema` | `--generate`, `--force` | Auto-generate a Pydantic schema from `env.json` |
+| `aigear-image` | `--create`, `--dockerfile_path`, `--build_context`, `--image_name`, `--image_version`, `--is_service`, `--force`, `--push` | Build and push Docker images to Artifact Registry |
+| `aigear-scheduler` | `--create`, `--version`, `--step_names` | Create Cloud Scheduler jobs for pipeline steps |
+| `aigear-workflow` | `--version`, `--step` | Run a single pipeline step locally |
+| `aigear-grpc` | `--version`, `--model_class_path` | Start a gRPC model serving server |
+| `aigear-deploy-model` | `--version`, `--model_class_path`, `--service_ports`, `--replicas`, `--port`, `--gcp`, `--delete` | Deploy or delete a gRPC model service (local or GCP) |
+
+---
+
+## 6. Usage Instructions
+
+> [!TIP]
+> Follow these steps to get started quickly:
+
+1. Save the configuration as `env.json` in the project **root directory**.
+2. Fill in `gcp_project_id` and other environment-specific values.
+3. Set `on: true` only for services you intend to use — unused services should remain `false`.
+4. Run `aigear-gcp-infra --create` to provision infrastructure (requires GCP owner-level permissions; recommended to run in Cloud Shell).
+5. Run pipeline steps with `aigear-workflow --version <version> --step <dotted.path>`.
+
+---
+
+## 7. Security Best Practices
+
+> [!WARNING]
+> Observe the following conventions to keep the project secure:
+
+- **`env.json` encryption**: `env.json` will be encrypted and decrypted via GCP KMS in a future release. Until then, add `env.json` to `.gitignore` to prevent accidental commits.
+- **Permission separation**: Infrastructure creation (`aigear-gcp-infra`) requires owner-level GCP permissions and should be run in Cloud Shell. Day-to-day pipeline commands require only developer-level permissions.
+- **Environment isolation**: Keep separate `env.json` files for production and staging; never share them across environments.
+- **Restart after changes**: After modifying `env.json`, restart the application or container to load the updated configuration.
