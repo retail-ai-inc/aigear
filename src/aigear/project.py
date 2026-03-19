@@ -58,6 +58,7 @@ class Project:
         self._copy_file(self._template_path, project_path / "requirements_pl.txt")
 
         self._copy_file(self._template_path, project_path / "env.sample.json")
+        self._copy_file(self._template_path, project_path / ".gitignore")
 
         for pipeline_version in self.pipeline_versions:
             pipeline_dir = project_path / "src" / "pipelines" / pipeline_version

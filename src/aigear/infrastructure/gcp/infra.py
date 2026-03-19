@@ -269,15 +269,15 @@ class Infra:
         # Pre-VM Image
         if self.aigear_config.gcp.pre_vm_image.on:
             success = self._step(
-                f"Pre-VM Image (pre_vm_image)",
+                "Pre-VM Image (pre_vm_image)",
                 self._ensure_pre_vm_image
             )
             if not success:
-                failed_steps.append(f"Pre-VM Image (pre_vm_image)")
+                failed_steps.append("Pre-VM Image (pre_vm_image)")
         else:
             logger.info(
-                f"Pre-VM Image creation is disabled in the configuration file. "
-                f"Skipping custom VM image (pre_vm_image) creation."
+                "Pre-VM Image creation is disabled in the configuration file. "
+                "Skipping custom VM image (pre_vm_image) creation."
             )
 
         # Kubernetes Cluster
@@ -432,32 +432,32 @@ class Infra:
         exists = self.pre_vm_image.cpu_image_exists()
         if not exists:
             logger.info(
-                f"Pre-VM custom cpu image ({self.aigear_config.gcp.pre_vm_image.custom_image_name}) not found in project "
+                f"Pre-VM custom cpu image ({self.pre_vm_image.cpu_image_name}) not found in project "
                 f"({self.project_id}). Starting VM image creation process (this may take several minutes)..."
             )
             self.pre_vm_image.create_cpu_image()
             logger.info(
-                f"Pre-VM custom cpu image ({self.aigear_config.gcp.pre_vm_image.custom_image_name}) created successfully."
+                f"Pre-VM custom cpu image ({self.pre_vm_image.cpu_image_name}) created successfully."
             )
         else:
             logger.info(
-                f"Pre-VM custom cpu image ({self.aigear_config.gcp.pre_vm_image.custom_image_name}) already exists in "
+                f"Pre-VM custom cpu image ({self.pre_vm_image.cpu_image_name}) already exists in "
                 f"project ({self.project_id}). Skipping creation."
             )
 
         exists = self.pre_vm_image.gpu_image_exists()
         if not exists:
             logger.info(
-                f"Pre-VM custom gpu image ({self.aigear_config.gcp.pre_vm_image.custom_image_name}) not found in project "
+                f"Pre-VM custom gpu image ({self.pre_vm_image.gpu_image_name}) not found in project "
                 f"({self.project_id}). Starting VM image creation process (this may take several minutes)..."
             )
             self.pre_vm_image.create_gpu_image()
             logger.info(
-                f"Pre-VM custom gpu image ({self.aigear_config.gcp.pre_vm_image.custom_image_name}) created successfully."
+                f"Pre-VM custom gpu image ({self.pre_vm_image.gpu_image_name}) created successfully."
             )
         else:
             logger.info(
-                f"Pre-VM custom gpu image ({self.aigear_config.gcp.pre_vm_image.custom_image_name}) already exists in "
+                f"Pre-VM custom gpu image ({self.pre_vm_image.gpu_image_name}) already exists in "
                 f"project ({self.project_id}). Skipping creation."
             )
 
@@ -474,6 +474,6 @@ class Infra:
             )
         else:
             logger.info(
-                f"Kubernetes Cluster ({self.aigear_config.gcp.cloud_function.function_name}) already exists in region "
+                f"Kubernetes Cluster ({self.aigear_config.gcp.kubernetes.cluster_name}) already exists in region "
                 f"({self.location})."
             )

@@ -24,9 +24,10 @@ def deploy_local_grpc(
     helm_path = create_helm_file(
         pipeline_version=pipeline_version,
         model_class_path=model_class_path,
-        service_ports = service_ports,
-        replicas = replicas,
-        port = port,
+        service_ports=service_ports,
+        replicas=replicas,
+        port=port,
+        is_local=True,
     )
 
     pipe_config = PipelinesConfig.get_version_config(pipeline_version)
@@ -45,5 +46,8 @@ def deploy_local_grpc(
 def delete_local_grpc(
         model_class_path=None
 ):
-    helm_path = get_helm_path(model_class_path=model_class_path)
+    helm_path = get_helm_path(
+        model_class_path=model_class_path, 
+        is_local=True
+    )
     helm_deployment_delete(helm_path)
