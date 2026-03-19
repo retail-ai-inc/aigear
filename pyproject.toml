@@ -1,11 +1,10 @@
 [build-system]
-requires = ["setuptools>=46.4.0", "wheel>=0.36.2"]
+requires = ["setuptools>=46.4.0", "wheel>=0.36.2", "setuptools-scm>=8.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "aigear"
-version = "0.0.2"
-#dynamic = ["version"]
+dynamic = ["version"]
 description = "Machine learning microservices based on gRPC"
 keywords = ["MLOps", "AI", "ML", "Model Serving", "Model Deployment", "Model Training"]
 authors = [{ name = "Retail AI Groups Inc." }]
@@ -85,3 +84,5 @@ include = [
     "template/**/.*",
     "infrastructure/gcp/function/*"
 ]
+
+[tool.setuptools_scm]
