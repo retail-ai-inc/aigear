@@ -14,10 +14,11 @@ from sentry_sdk.integrations.grpc.server import ServerInterceptor
 from aigear.common.config import PipelinesConfig, get_environment
 from aigear.common.loading_module import LoadModule
 from aigear.common.logger import Logging
-from aigear.service.grpc.grpc_package import grpc_features
+from aigear.service.grpc.grpc_package import grpc_features, thread_config
 from aigear.service.grpc.protos import grpc_pb2, grpc_pb2_grpc
 
 logger = Logging(log_name=__name__).console_logging()
+thread_config.configure_frameworks()
 
 
 class MLServicer(grpc_pb2_grpc.MLServicer):
