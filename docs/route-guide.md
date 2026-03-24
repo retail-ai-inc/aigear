@@ -124,7 +124,7 @@ Each pipeline step (e.g., `fetch_data`, `preprocessing`, `training`) shares the 
 | `parameters` | `object` | Step-specific input parameters | `{"data_file_name": "breast_cancer.pkl"}` |
 | `resources.vm_name` | `string` | Ephemeral VM name for this step | `test-sklearn-fetch-data-vm` |
 | `resources.disk_size_gb` | `string` | Boot disk size (GB) | `"50"` |
-| `resources.spec` | `string` | Machine type | `e2-medium` |
+| `resources.spec` | `string` | Machine type — [reference](https://docs.cloud.google.com/compute/docs/general-purpose-machines#e2-shared-core) | `e2-medium` |
 | `resources.gpu` | `boolean` | Whether to attach a GPU | `false` |
 | `pipeline_step` | `string` | Python dotted path to the step function | `src.pipelines.logistic_regression.fetch_data.data_from_sklearn.fetch_data` |
 
@@ -136,7 +136,7 @@ Each pipeline step (e.g., `fetch_data`, `preprocessing`, `training`) shares the 
 | `model_class_path` | `string` | Python dotted path to the ModelService class | `src.pipelines.logistic_regression.model_service.logistic_regression_service.ModelService` |
 | `resources.vm_name` | `string` | VM name for deploy command | `test-sklearn-model-service-vm` |
 | `resources.disk_size_gb` | `string` | Disk size (GB) | `"50"` |
-| `resources.spec` | `string` | Machine type | `e2-medium` |
+| `resources.spec` | `string` | Machine type — [reference](https://docs.cloud.google.com/compute/docs/general-purpose-machines#e2-shared-core) | `e2-medium` |
 | `resources.gpu` | `boolean` | Whether to attach a GPU | `false` |
 
 #### 3.3.1 gRPC Configuration (`model_service.grpc`)
