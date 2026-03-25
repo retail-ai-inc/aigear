@@ -1,23 +1,31 @@
 import os
+from contextlib import contextmanager
 
 # ---------------------------------------------------------------------------
 # Number of threads per framework — override via INFERENCE_NUM_THREADS env var
 # ---------------------------------------------------------------------------
-_N = int(os.environ.get("INFERENCE_NUM_THREADS", "1"))
+_N = os.environ.get("INFERENCE_NUM_THREADS", "1")
 
 # ---------------------------------------------------------------------------
 # Set environment variables immediately on import
 # Must happen before numpy / torch / tensorflow / sklearn are imported
 # ---------------------------------------------------------------------------
-os.environ["OMP_NUM_THREADS"] = str(_N)       # OpenMP (sklearn, CatBoost, XGBoost, LightGBM)
-os.environ["MKL_NUM_THREADS"] = str(_N)       # Intel MKL (numpy, sklearn-intelex)
-os.environ["OPENBLAS_NUM_THREADS"] = str(_N)  # OpenBLAS (numpy on non-Intel)
-os.environ["NUMEXPR_NUM_THREADS"] = str(_N)   # NumExpr (pandas eval)
-os.environ["VECLIB_MAXIMUM_THREADS"] = str(_N)# Apple Accelerate (macOS)
-os.environ["BLIS_NUM_THREADS"] = str(_N)      # BLIS BLAS
+def set_ml_thread_env_vars(n: str = _N) -> None:
+    """
+    Set thread-limit environment variables for all ML/BLAS backends.
+
+    Must be called before numpy / torch / tensorflow / sklearn are imported.
+    """
+
+    os.environ["OMP_NUM_THREADS"] = n        # OpenMP (sklearn, CatBoost, XGBoost, LightGBM)
+    os.environ["MKL_NUM_THREADS"] = n        # Intel MKL (numpy, sklearn-intelex)
+    os.environ["OPENBLAS_NUM_THREADS"] = n   # OpenBLAS (numpy on non-Intel)
+    os.environ["NUMEXPR_NUM_THREADS"] = n    # NumExpr (pandas eval)
+    os.environ["VECLIB_MAXIMUM_THREADS"] = n # Apple Accelerate (macOS)
+    os.environ["BLIS_NUM_THREADS"] = n       # BLIS BLAS
 
 
-def configure_frameworks(n: int = _N) -> None:
+def configure_framework_threads(n: str = _N) -> None:
     """
     Apply framework-specific thread limits via Python APIs.
 
@@ -27,8 +35,27 @@ def configure_frameworks(n: int = _N) -> None:
     Args:
         n: Number of threads (defaults to INFERENCE_NUM_THREADS env var, or 1).
     """
-    _configure_torch(n)
-    _configure_tensorflow(n)
+    n_int = int(n)
+    _configure_torch(n_int)
+    _configure_tensorflow(n_int)
+
+
+@contextmanager
+def ml_thread_scope(enabled: bool = True):
+    """
+    Context manager that sets ML thread env vars before the block
+    and applies framework-level thread limits after.
+
+    Usage::
+
+        with ml_thread_scope(disable_omp):
+            model = load_model(...)
+    """
+    if enabled:
+        set_ml_thread_env_vars()
+    yield
+    if enabled:
+        configure_framework_threads()
 
 
 def _configure_torch(n: int) -> None:
