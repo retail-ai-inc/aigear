@@ -108,7 +108,11 @@ class CloudKMS:
     #  Encrypt / Decrypt generic files                                     #
     # ------------------------------------------------------------------ #
 
-    def encrypt(self, plaintext_file: str | Path, ciphertext_file: str | Path):
+    def encrypt(
+        self, 
+        plaintext_file: str | Path, 
+        ciphertext_file: str | Path
+    ):
         command = [
             "gcloud", "kms", "encrypt",
             f"--key={self.key_name}",
@@ -121,7 +125,11 @@ class CloudKMS:
         event = run_sh(command)
         logger.info(event)
 
-    def decrypt(self, ciphertext_file: str | Path, plaintext_file: str | Path):
+    def decrypt(
+        self, 
+        ciphertext_file: str | Path, 
+        plaintext_file: str | Path
+    ):
         command = [
             "gcloud", "kms", "decrypt",
             f"--key={self.key_name}",
@@ -140,10 +148,14 @@ class CloudKMS:
 
     def encrypt_env(
         self,
-        env_path: str | Path,
-        output_path: str | Path,
+        env_path: str | Path = "env.json",
+        output_path: str | Path = "staging-env.bin",
     ):
-        """Encrypt env.json → env.json.enc using Cloud KMS."""
+        """Encrypt env.json → env.bin using Cloud KMS."""
+        if isinstance(env_path, str):
+            env_path = Path(env_path)
+        if isinstance(output_path, str):
+            output_path = Path(output_path)
         env_path = Path(env_path)
         output_path = Path(output_path)
         if not env_path.exists():
@@ -153,12 +165,14 @@ class CloudKMS:
 
     def decrypt_env(
         self,
-        input_path: str | Path,
-        output_path: str | Path,
+        input_path: str | Path = "staging-env.bin",
+        output_path: str | Path = "env.json",
     ):
-        """Decrypt env.json.enc → env.json using Cloud KMS."""
-        input_path = Path(input_path)
-        output_path = Path(output_path)
+        """Decrypt env.bin → env.json using Cloud KMS."""
+        if isinstance(input_path, str):
+            input_path = Path(input_path)
+        if isinstance(output_path, str):
+            output_path = Path(output_path)
         if not input_path.exists():
             raise FileNotFoundError(f"Encrypted env file not found: {input_path}")
         self.decrypt(ciphertext_file=input_path, plaintext_file=output_path)
@@ -170,8 +184,6 @@ if __name__ == "__main__":
     location = ""
     keyring_name = ""
     key_name = ""
-    ENV_JSON = "env.json"
-    ENV_JSON_ENC = "local-env.bin"
 
     cloud_kms = CloudKMS(
         project_id=project_id,

@@ -11,6 +11,7 @@ from aigear.infrastructure.gcp.function import CloudFunction
 from aigear.infrastructure.gcp.iam import ServiceAccounts
 from aigear.infrastructure.gcp.kubernetes import KubernetesCluster
 from aigear.infrastructure.gcp.pre_vm_image import PreVMImage
+from aigear.infrastructure.gcp.kms import CloudKMS
 from aigear.infrastructure.gcp.pub_sub import PubSub
 
 logger = Logging(log_name=__name__).console_logging()
@@ -98,6 +99,13 @@ class Infra:
             min_nodes=self.aigear_config.gcp.kubernetes.min_nodes,
             max_nodes=self.aigear_config.gcp.kubernetes.max_nodes,
             project_id=self.project_id,
+        )
+
+        self.cloud_kms = CloudKMS(
+            project_id=self.project_id,
+            location=self.location,
+            keyring_name=self.aigear_config.gcp.kms.keyring_name,
+            key_name=self.aigear_config.gcp.kms.key_name,
         )
 
     # ================================================================
@@ -236,6 +244,21 @@ class Infra:
             logger.info(
                 f"Pub/Sub creation is disabled in the configuration file. "
                 f"Skipping Pub/Sub topic ({self.aigear_config.gcp.pub_sub.topic_name}) setup."
+            )
+
+        # Cloud KMS
+        if self.aigear_config.gcp.kms.on:
+            success = self._step(
+                f"Cloud KMS ({self.aigear_config.gcp.kms.keyring_name}/{self.aigear_config.gcp.kms.key_name})",
+                self._ensure_kms
+            )
+            if not success:
+                failed_steps.append(f"Cloud KMS ({self.aigear_config.gcp.kms.keyring_name}/{self.aigear_config.gcp.kms.key_name})")
+        else:
+            logger.info(
+                f"Cloud KMS creation is disabled in the configuration file. "
+                f"Skipping keyring ({self.aigear_config.gcp.kms.keyring_name}) and "
+                f"key ({self.aigear_config.gcp.kms.key_name}) setup."
             )
 
         # Cloud Build
@@ -391,6 +414,32 @@ class Infra:
             logger.info(
                 f"Pub/Sub topic ({self.aigear_config.gcp.pub_sub.topic_name}) already exists in project "
                 f"({self.project_id}). Skipping creation."
+            )
+
+    def _ensure_kms(self):
+        if not self.cloud_kms.describe_keyring():
+            logger.info(
+                f"KMS keyring ({self.aigear_config.gcp.kms.keyring_name}) not found in location "
+                f"({self.location}). Creating keyring..."
+            )
+            self.cloud_kms.create_keyring()
+            logger.info(f"KMS keyring ({self.aigear_config.gcp.kms.keyring_name}) created successfully.")
+        else:
+            logger.info(
+                f"KMS keyring ({self.aigear_config.gcp.kms.keyring_name}) already exists in location "
+                f"({self.location}). Skipping creation."
+            )
+
+        if not self.cloud_kms.describe_key():
+            logger.info(
+                f"KMS key ({self.aigear_config.gcp.kms.key_name}) not found. Creating key..."
+            )
+            self.cloud_kms.create_key()
+            self.cloud_kms.add_permissions(sa_email=self.service_account)
+            logger.info(f"KMS key ({self.aigear_config.gcp.kms.key_name}) created successfully.")
+        else:
+            logger.info(
+                f"KMS key ({self.aigear_config.gcp.kms.key_name}) already exists. Skipping creation."
             )
 
     def _ensure_cloud_build(self):

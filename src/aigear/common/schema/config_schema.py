@@ -17,12 +17,17 @@ class CloudBuild(BaseModel):
     on: bool
     trigger_name: str
     description: str
-    repository: str
     repo_owner: str
     repo_name: str
     branch_pattern: str
     build_config: str
     substitutions: str
+
+
+class Kms(BaseModel):
+    on: bool
+    keyring_name: str
+    key_name: str
 
 
 class PreVmImage(BaseModel):
@@ -62,6 +67,7 @@ class Gcp(BaseModel):
     location: str
     bucket: Bucket
     cloud_build: CloudBuild
+    kms: Kms
     pre_vm_image: PreVmImage
     cloud_function: CloudFunction
     iam: Iam
