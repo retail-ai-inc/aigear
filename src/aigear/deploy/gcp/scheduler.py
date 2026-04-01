@@ -2,8 +2,8 @@ import json
 
 from aigear.common import run_sh
 from aigear.common.config import AigearConfig, PipelinesConfig
+from aigear.common.image import get_image_path
 from aigear.common.logger import Logging
-from aigear.deploy.gcp.artifacts_image import get_artifacts_image
 
 logger = Logging(log_name=__name__).console_logging()
 
@@ -182,7 +182,8 @@ def create_scheduler(pipeline_version: str, step_names: list[str]):
     pipeline_config = PipelinesConfig.get_version_config(pipeline_version)
 
 
-    docker_image = get_artifacts_image(aigear_config)
+    pl_image = get_image_path(is_service=False)
+    ms_image = get_image_path(is_service=True)
     # GKE info comes from the global aigear config
     kubernetes_config = aigear_config.gcp.kubernetes
     gke_cluster = kubernetes_config.cluster_name
@@ -192,12 +193,8 @@ def create_scheduler(pipeline_version: str, step_names: list[str]):
     for step_name in step_names:
         step_config = pipeline_config.get(step_name, {})
 
-        # Allow per-step docker_image override; fall back to the global artifacts image
-        step_docker_image = step_config.get("resources", {}).get("docker_image", docker_image)
-        if step_name == "model_service":
-            split_image = step_docker_image.split(":")
-            if len(split_image)==2:
-                step_docker_image = split_image[0] +"-service:" + split_image[1]
+        # model_service uses ms image, all other steps use pl image
+        step_docker_image = ms_image if step_name == "model_service" else pl_image
 
         message = _build_step_message(
             step_config    = step_config,

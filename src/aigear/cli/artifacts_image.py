@@ -20,10 +20,6 @@ def get_argument():
                         help="Path of Dockerfile. If omitted, builds all default images.")
     parser.add_argument("--build_context", default=".",
                         help="Docker build context path.")
-    parser.add_argument("--image_name", default=None,
-                        help="The name of the Docker image.")
-    parser.add_argument("--image_version", default="latest",
-                        help="The version of the Docker image.")
     parser.add_argument("--is_service", action="store_true",
                         help="Determine whether it is a model service image.")
     parser.add_argument("--force", action="store_true",
@@ -42,8 +38,6 @@ def _build_images(args):
                 dockerfile_path=dockerfile,
                 build_context=args.build_context,
                 force=args.force,
-                image_name=args.image_name,
-                image_version=args.image_version,
                 is_service=is_service,
                 is_push=args.push,
             )
@@ -55,8 +49,6 @@ def _build_images(args):
             dockerfile_path=args.dockerfile_path,
             build_context=args.build_context,
             force=args.force,
-            image_name=args.image_name,
-            image_version=args.image_version,
             is_service=args.is_service,
             is_push=args.push,
         )

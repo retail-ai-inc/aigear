@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Optional
+
 from pydantic import BaseModel
 
 
@@ -21,7 +23,6 @@ class CloudBuild(BaseModel):
     repo_name: str
     branch_pattern: str
     build_config: str
-    substitutions: str
 
 
 class Kms(BaseModel):
@@ -52,6 +53,9 @@ class PubSub(BaseModel):
 class Artifacts(BaseModel):
     on: bool
     repository_name: str
+    ms_image_name: Optional[str] = None
+    pl_image_name: Optional[str] = None
+    image_tag: Optional[str] = "latest"
 
 
 class Kubernetes(BaseModel):

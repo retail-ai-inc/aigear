@@ -1,5 +1,6 @@
 from aigear.common import run_sh, run_sh_stream
-from aigear.common.config import AigearConfig, get_project_name
+from aigear.common.config import AigearConfig
+from aigear.common.image import get_image_path
 from aigear.common.logger import Logging
 
 logger = Logging(log_name=__name__).console_logging()
@@ -45,42 +46,17 @@ class ArtifactsImage:
         return is_exist
 
 
-def define_image_name(image_name, repository_name, is_service=False):
-    if image_name is None:
-        image_name = get_project_name()
-        image_name = image_name.replace("_", "-")
-    if image_name is None:
-        image_name = repository_name
-    if is_service:
-        image_name += "-service"
-    return image_name
-
-
-def get_artifacts_image(aigear_config, image_name=None, image_version="latest", is_service=False):
-    project_id = aigear_config.gcp.gcp_project_id
-    zone = aigear_config.gcp.location
-    repository_name = aigear_config.gcp.artifacts.repository_name
-    image_name = define_image_name(image_name, repository_name, is_service)
-    artifacts_image = f"{zone}-docker.pkg.dev/{project_id}/{repository_name}/{image_name}:{image_version}"
-    return artifacts_image
-
-
 def create_artifacts_image(
     dockerfile_path=None,
     build_context=".",
     force=False,
-    image_name=None,
-    image_version="latest",
     is_service=False,
     is_push=False
 ):
-    if is_service:
-        log_tag = "model servicr"
-    else:
-        log_tag = "pipeline"
+    log_tag = "model service" if is_service else "pipeline"
 
     aigear_config = AigearConfig.get_config()
-    artifacts_image = get_artifacts_image(aigear_config, image_name, image_version, is_service)
+    artifacts_image = get_image_path(is_service=is_service)
     artifacts_image_instance = ArtifactsImage(artifacts_image=artifacts_image)
     if is_push:
         is_exist = artifacts_image_instance.image_exist_in_artifacts()
