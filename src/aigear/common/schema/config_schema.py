@@ -21,7 +21,9 @@ class CloudBuild(BaseModel):
     description: str
     repo_owner: str
     repo_name: str
-    branch_pattern: str
+    event: str = "push" # push | tag | pull
+    branch_pattern: Optional[str] = None
+    tag_pattern: Optional[str] = None
     build_config: str
 
 
