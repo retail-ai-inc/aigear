@@ -1,15 +1,12 @@
-from .project import Project
-from ._version import __version__
+from importlib.metadata import version
+from aigear.infrastructure import Infra
 from .common import (
     Logging,
+    SecretManager,
     generate_schema,
     generate_schema_for_json,
-    SecretManager,
 )
-from aigear.infrastructure import Infra
-from aigear.deploy.gcp.scheduler import create_scheduler
-from aigear.common import AigearConfig
-
+from .project import Project
 
 __all__ = [
     "Logging",
@@ -19,6 +16,7 @@ __all__ = [
     "Infra",
 ]
 
+__version__ = version("aigear")
 __all__.extend(
     [
         Project,
