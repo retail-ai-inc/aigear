@@ -14,14 +14,14 @@ class AssetManagement:
         bucket_on: bool = True
     ):
         self.pipeline_version = pipeline_version
-        self.projrct_dir = Path.cwd()
+        self.project_dir = Path.cwd()
         self.data_type = data_type
 
-        self.local_asset_path = self.projrct_dir / "asset"
+        self.local_asset_path = self.project_dir / "asset"
         if bucket_on:
             self.bucket_client = RealGCS(project_id, bucket_name)
         else:
-            local_bucket_mock_path = self.projrct_dir / "asset" / bucket_name
+            local_bucket_mock_path = self.project_dir / "asset" / bucket_name
             self.bucket_client = LocalGCSMock(project_id, local_bucket_mock_path)
 
     def download(self, file_name):
@@ -45,5 +45,5 @@ class AssetManagement:
         dir_path.mkdir(parents=True, exist_ok=True)
         return dir_path / local_file_name
 
-    def get_bucket_blob(self, bucket_file_name) -> Path:
+    def get_bucket_blob(self, bucket_file_name) -> str:
         return f"{self.pipeline_version}/{self.data_type}/{bucket_file_name}"
