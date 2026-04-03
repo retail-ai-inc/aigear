@@ -107,7 +107,7 @@ Fill in the generated scaffold with your own code:
 
 ```bash
 # Build both pipeline and model service images (default)
-aigear-image --create
+aigear-image --create --push
 
 # Build and push a specific image
 aigear-image --create --dockerfile_path Dockerfile.pl --image_name my-pipeline --image_version v1 --push

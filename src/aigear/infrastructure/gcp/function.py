@@ -75,7 +75,7 @@ class CloudFunction:
         event = run_sh(command)
         if "Updated IAM policy" in event:
             logger.info(f"✅ run.invoker granted on {self.function_name}")
-        else:
+        elif "ERROR" in event:
             logger.error(f"❌ Failed on {self.function_name}: {event}")
 
     def describe(self):

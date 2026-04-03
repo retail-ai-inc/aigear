@@ -76,7 +76,7 @@ class ServiceAccounts:
             event = run_sh(command)
             if "Updated IAM policy" in event:
                 logger.info(f"✅ Successfully granted: {role}")
-            else:
+            elif "ERROR" in event:
                 logger.error(f"❌ Failed: {event}")
 
         # SA level self binding, precise authorization
@@ -90,7 +90,7 @@ class ServiceAccounts:
         event = run_sh(command)
         if "Updated IAM policy" in event:
             logger.info("✅ Successfully granted: roles/iam.serviceAccountUser (self-binding)")
-        else:
+        elif "ERROR" in event:
             logger.error(f"❌ Failed self-binding: {event}")
 
     def describe(self):

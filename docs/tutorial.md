@@ -97,6 +97,11 @@ The key sections in `env.json` for this demo:
                 "bucket_name": "test-sklearn-pipeline",
                 "bucket_name_for_release": "test-sklearn-pipeline-service"
             },
+            "kms": {
+                "on": true,
+                "keyring_name": "test-sklearn-pipeline-keyring",
+                "key_name": "test-sklearn-pipeline-key"
+            },
             "cloud_function": {
                 "on": true,
                 "function_name": "test-sklearn-pipeline-run"
@@ -111,7 +116,10 @@ The key sections in `env.json` for this demo:
             },
             "artifacts": {
                 "on": true,
-                "repository_name": "test-sklearn-pipeline-images"
+                "repository_name": "test-sklearn-pipeline-images",
+                "ms_image_name": "test-sklearn-model-service",
+                "pl_image_name": "test-sklearn",
+                "image_tag": "latest"
             },
             "kubernetes": {
                 "on": true,
@@ -153,7 +161,7 @@ The key sections in `env.json` for this demo:
                 "grpc": {
                     "service_host": "0.0.0.0",
                     "port": "50051",
-                    "multi_processing": { "on": false, "process_count": 2, "thread_count": 10 },
+                    "multi_processing": { "on": false, "process_count": 3, "thread_count": 1, "disable_omp": true },
                     "sentry": { "on": false, "dsn": "", "traces_sample_rate": 1.0 }
                 },
                 "resources": { "vm_name": "test-sklearn-model-service-vm", "disk_size_gb": "50", "spec": "e2-medium", "gpu": false },
@@ -194,11 +202,19 @@ data_file    = env_config.pipelines.logistic_regression.fetch_data.parameters.da
 
 ## 4. Create GCP Infrastructure
 
-This single command provisions all GCP resources declared in `env.json` — the GCS bucket, Service Account, Pub/Sub topic, Artifact Registry repository, and GKE cluster:
+This single command provisions all GCP resources declared in `env.json`:
 
 ```bash
 aigear-gcp-infra --create
 ```
+
+Resources are created in three phases:
+
+1. **Service Account** — created first; IAM bindings wait for propagation automatically
+2. **Buckets, Artifact Registry, Pub/Sub, KMS, Kubernetes** — run in **parallel**
+3. **Cloud Function** — created last (depends on the Pub/Sub topic from Phase 2)
+
+Each step is idempotent — re-running the command safely skips already-existing resources. The log output uses structured JSON and shows only meaningful status per step.
 
 > **Requires owner-level GCP access.** Infrastructure creation takes approximately 2 hours for a full GKE cluster. Run this from Cloud Shell or a machine with `gcloud auth login` completed.
 

@@ -33,14 +33,26 @@
 | `on` | `boolean` | Enable Cloud Build trigger creation | `false` |
 | `trigger_name` | `string` | Trigger name | `my-pipeline-trigger` |
 | `description` | `string` | Trigger description | `Trigger for sklearn pipeline` |
-| `repository` | `string` | Repository address | `github.com/my-org/my-repo` |
 | `repo_owner` | `string` | Repository owner | `my-org` |
 | `repo_name` | `string` | Repository name | `my-repo` |
-| `branch_pattern` | `string` | Branch regex pattern | `^main$` |
-| `build_config` | `string` | Build config file | `cloudbuild.yaml` |
+| `event` | `string` | Trigger event type (`push` or `tag`) | `push` |
+| `branch_pattern` | `string` | Branch name or regex pattern (used when `event` is `push`) | `^main$` |
+| `tag_pattern` | `string` | Tag pattern (used when `event` is `tag`) | `^v.*$` |
 | `substitutions` | `string` | Build variable substitutions | `_ENV=staging,_REGION=asia-northeast1` |
 
-#### 2.1.3 Pre-built VM Image (`pre_vm_image`)
+> The Cloud Build config file path is fixed at `/cloudbuild/cloudbuild.yaml` and cannot be changed. `aigear-init` generates this file automatically.
+
+#### 2.1.3 Cloud KMS (`kms`)
+
+| Parameter | Type | Description | Example |
+| :--- | :--- | :--- | :--- |
+| `on` | `boolean` | Enable KMS keyring and key creation | `true` |
+| `keyring_name` | `string` | KMS keyring name | `my-pipeline-keyring` |
+| `key_name` | `string` | KMS encryption key name | `my-pipeline-key` |
+
+> Used to encrypt and decrypt `env.json`. The pre-commit hook installed by `aigear-init` enforces that `env.json` is encrypted before committing.
+
+#### 2.1.4 Pre-built VM Image (`pre_vm_image`)
 
 | Parameter | Type | Description | Example |
 | :--- | :--- | :--- | :--- |
@@ -48,35 +60,38 @@
 
 > More creation parameters, use `aigear.infrastructure.gcp.pre_vm_image.PreVMImage`.
 
-#### 2.1.4 Cloud Function (`cloud_function`)
+#### 2.1.5 Cloud Function (`cloud_function`)
 
 | Parameter | Type | Description | Example |
 | :--- | :--- | :--- | :--- |
 | `on` | `boolean` | Enable Cloud Function creation | `true` |
 | `function_name` | `string` | Function name | `test-sklearn-pipeline-run` |
 
-#### 2.1.5 IAM (`iam`)
+#### 2.1.6 IAM (`iam`)
 
 | Parameter | Type | Description | Example |
 | :--- | :--- | :--- | :--- |
 | `on` | `boolean` | Enable service account creation | `true` |
 | `account_name` | `string` | Service account name | `test-sklearn-pipeline` |
 
-#### 2.1.6 Pub/Sub (`pub_sub`)
+#### 2.1.7 Pub/Sub (`pub_sub`)
 
 | Parameter | Type | Description | Example |
 | :--- | :--- | :--- | :--- |
 | `on` | `boolean` | Enable Pub/Sub topic creation | `true` |
 | `topic_name` | `string` | Topic name | `test-sklearn-pipeline-pubsub` |
 
-#### 2.1.7 Artifact Registry (`artifacts`)
+#### 2.1.8 Artifact Registry (`artifacts`)
 
 | Parameter | Type | Description | Example |
 | :--- | :--- | :--- | :--- |
 | `on` | `boolean` | Enable Artifact Registry creation | `true` |
 | `repository_name` | `string` | Repository name | `test-sklearn-pipeline-images` |
+| `ms_image_name` | `string` | Model service Docker image name | `my-model-service` |
+| `pl_image_name` | `string` | Pipeline Docker image name | `my-pipeline` |
+| `image_tag` | `string` | Image tag | `latest` |
 
-#### 2.1.8 Kubernetes (`kubernetes`)
+#### 2.1.9 Kubernetes (`kubernetes`)
 
 | Parameter | Type | Description | Example |
 | :--- | :--- | :--- | :--- |
@@ -150,6 +165,15 @@ Each pipeline step (e.g., `fetch_data`, `preprocessing`, `training`) shares the 
 | `multi_processing.on` | `boolean` | Enable multi-processing | `false` |
 | `multi_processing.process_count` | `integer` | Number of processes | `2` |
 | `multi_processing.thread_count` | `integer` | Threads per process | `10` |
+| `multi_processing.disable_omp` | `boolean` | Disable OpenMP/framework-level thread parallelism | `false` |
+
+> **`disable_omp`**: Controls whether OpenMP and framework-level thread parallelism (used internally by NumPy, scikit-learn, PyTorch, etc.) is disabled across worker processes.
+>
+> Set to `true` **only** when all of the following apply:
+> - Inference is **online / single-request** (not batch) — batch inference benefits from internal parallelism to process multiple samples simultaneously
+> - There are **no significant I/O operations** — I/O naturally yields the CPU, so internal threads do not compete
+>
+> When both conditions hold, each worker process spawns as many OMP threads as there are CPU cores (the default). With multiple processes running, the total number of threads far exceeds the available cores, causing the OS scheduler to context-switch excessively and reducing API throughput. Setting `disable_omp: true` caps each process to a single internal thread, so threads across processes no longer compete for cores.
 | `sentry.on` | `boolean` | Enable Sentry error monitoring | `false` |
 | `sentry.dsn` | `string` | Sentry DSN | `https://...@o0.ingest.sentry.io/0` |
 | `sentry.traces_sample_rate` | `float` | Sentry trace sample rate | `1.0` |
@@ -161,7 +185,7 @@ Each pipeline step (e.g., `fetch_data`, `preprocessing`, `training`) shares the 
 ```json
 {
     "project_name": "aigear_sklearn_pipeline",
-    "environment": "local",
+    "environment": "staging",
     "aigear": {
         "gcp": {
             "gcp_project_id": "",
@@ -175,12 +199,16 @@ Each pipeline step (e.g., `fetch_data`, `preprocessing`, `training`) shares the 
                 "on": false,
                 "trigger_name": "",
                 "description": "",
-                "repository": "***/***",
                 "repo_owner": "***",
                 "repo_name": "",
+                "event": "push",
                 "branch_pattern": "",
-                "build_config": "cloudbuild.yaml",
-                "substitutions": "***=***,***=****"
+                "tag_pattern": ""
+            },
+            "kms": {
+                "on": true,
+                "keyring_name": "my-pipeline-keyring",
+                "key_name": "my-pipeline-key"
             },
             "pre_vm_image": {
                 "on": false
@@ -199,7 +227,10 @@ Each pipeline step (e.g., `fetch_data`, `preprocessing`, `training`) shares the 
             },
             "artifacts": {
                 "on": true,
-                "repository_name": "test-sklearn-pipeline-images"
+                "repository_name": "test-sklearn-pipeline-images",
+                "ms_image_name": "test-sklearn-model-service",
+                "pl_image_name": "test-sklearn",
+                "image_tag": "latest"
             },
             "kubernetes": {
                 "on": true,
@@ -270,8 +301,9 @@ Each pipeline step (e.g., `fetch_data`, `preprocessing`, `training`) shares the 
                     "port": "50051",
                     "multi_processing": {
                         "on": false,
-                        "process_count": 2,
-                        "thread_count": 10
+                        "process_count": 3,
+                        "thread_count": 1,
+                        "disable_omp": true
                     },
                     "sentry": {
                         "on": false,
@@ -329,7 +361,7 @@ All CLI commands read `env.json` from the current working directory.
 > [!WARNING]
 > Observe the following conventions to keep the project secure:
 
-- **`env.json` encryption**: `env.json` will be encrypted and decrypted via GCP KMS in a future release. Until then, add `env.json` to `.gitignore` to prevent accidental commits.
+- **`env.json` encryption**: Encrypt `env.json` with Cloud KMS using `aigear-env-schema` before committing. `aigear-init` automatically installs a git pre-commit hook that blocks commits if `env.json` is newer than its encrypted counterpart — ensuring the plaintext file is never accidentally pushed.
 - **Permission separation**: Infrastructure creation (`aigear-gcp-infra`) requires owner-level GCP permissions and should be run in Cloud Shell. Day-to-day pipeline commands require only developer-level permissions.
 - **Environment isolation**: Keep separate `env.json` files for production and staging; never share them across environments.
 - **Restart after changes**: After modifying `env.json`, restart the application or container to load the updated configuration.
