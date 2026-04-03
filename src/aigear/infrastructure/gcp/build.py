@@ -60,7 +60,7 @@ class CloudBuild:
             return [f"--branch-pattern={_escape_pattern(self.branch_pattern or '.*')}"]
         if self.event == "tag":
             return [f"--tag-pattern={_escape_pattern(self.tag_pattern or '.*')}"]
-        if self.event == "pull":
+        if self.event == "pull_request":
             return [f"--pull-request-pattern={_escape_pattern(self.branch_pattern or '.*')}"]
         # manual / pubsub / webhook have no extra event args here
         return []
