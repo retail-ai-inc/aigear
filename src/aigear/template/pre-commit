@@ -36,7 +36,7 @@ done
 
 if [ "$STALE" -eq 1 ]; then
     echo ""
-    echo "  Re-encrypt before committing:"
+    echo "  Re-encrypt before committing(exp):"
     echo "    aigear-kms-env --encrypt --environment staging"
     echo "    git add kms/staging/staging-env.bin"
     echo ""
