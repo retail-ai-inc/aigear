@@ -3,7 +3,7 @@ import json
 from aigear.common.config import AigearConfig, AppConfig
 from aigear.common.image import get_image_name
 from aigear.common.logger import Logging
-from aigear.common.sh import run_sh
+from aigear.common import run_sh
 from aigear.infrastructure.gcp.artifacts import Artifacts
 from aigear.infrastructure.gcp.bucket import Bucket
 from aigear.infrastructure.gcp.build import CloudBuild

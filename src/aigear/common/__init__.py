@@ -1,19 +1,10 @@
-from aigear.common.sh import run_sh, run_sh_stream
-from aigear.common.logger import Logging
-from aigear.common.config import AigearConfig
-from aigear.common.dynamic_type import generate_schema, generate_schema_for_json
-from aigear.common.image import get_image_name, get_image_path
-from aigear.common.secretmanager import SecretManager
+def __getattr__(name: str):
+    if name in ("run_sh", "run_sh_stream"):
+        from aigear.common.sh import run_sh, run_sh_stream
+        globals()["run_sh"] = run_sh
+        globals()["run_sh_stream"] = run_sh_stream
+        return globals()[name]
+    raise AttributeError(f"module 'aigear.common' has no attribute {name!r}")
 
 
-__all__ = [
-    "run_sh",
-    "run_sh_stream",
-    "Logging",
-    "AigearConfig",
-    "generate_schema",
-    "generate_schema_for_json",
-    "get_image_name",
-    "get_image_path",
-    "SecretManager",
-]
+__all__ = ["run_sh", "run_sh_stream"]
