@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+#
+# aigear pre-commit hook
+# Blocks commit if env.json is newer than its encrypted .bin file under kms/.
+# This ensures the encrypted config is always up-to-date in the repository.
+
+ENV_FILE="env.json"
+KMS_DIR="kms"
+
+if [ ! -f "$ENV_FILE" ]; then
+    exit 0
+fi
+
+BIN_FILES=$(find "$KMS_DIR" -name "*.bin" 2>/dev/null)
+
+if [ -z "$BIN_FILES" ]; then
+    echo ""
+    echo "  [aigear] WARNING: env.json exists but no encrypted file found under kms/."
+    echo "  Run: aigear-kms-env --encrypt --environment <staging|production>"
+    echo ""
+    exit 1
+fi
+
+STALE=""
+for BIN_FILE in $BIN_FILES; do
+    if [ "$ENV_FILE" -nt "$BIN_FILE" ]; then
+        STALE="$STALE\n    $BIN_FILE"
+    fi
+done
+
+if [ -n "$STALE" ]; then
+    echo ""
+    echo "  [aigear] env.json was modified after the last encryption."
+    echo "  Stale file(s):$STALE"
+    echo ""
+    echo "  Re-encrypt before committing:"
+    echo "    aigear-kms-env --encrypt --environment staging"
+    echo "    git add kms/staging/staging-env.bin"
+    echo ""
+    exit 1
+fi
+
+exit 0

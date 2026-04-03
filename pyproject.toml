@@ -83,6 +83,7 @@ include = [
 "aigear" = [
     "template/**/*",
     "template/**/.*",
+    "template/pre-commit",
     "infrastructure/gcp/function/*"
 ]
 
