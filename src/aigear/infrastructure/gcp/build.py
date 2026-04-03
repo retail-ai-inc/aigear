@@ -17,6 +17,8 @@ logger = Logging(log_name=__name__).console_logging()
 _GITHUB_EVENTS = ("push", "tag", "pull_request")
 
 # Mapping from event name to gcloud trigger subcommand
+_CLOUD_BUILD_CONFIG = "/cloudbuild/cloudbuild.yaml"
+
 _EVENT_SUBCOMMAND = {
     "push":         "github",
     "tag":          "github",
@@ -39,7 +41,6 @@ class CloudBuild:
         event: str = "push",
         branch_pattern: str = None,
         tag_pattern: str = None,
-        build_config: str = None,
         substitutions: str = None,
     ):
         self.project_id = project_id
@@ -51,7 +52,6 @@ class CloudBuild:
         self.event = event
         self.branch_pattern = branch_pattern
         self.tag_pattern = tag_pattern
-        self.build_config = build_config
         self.substitutions = substitutions
 
     def _event_args(self) -> list:
@@ -74,7 +74,7 @@ class CloudBuild:
         command = [
             "gcloud", "builds", "triggers", "create", subcommand,
             f"--name={self.trigger_name}",
-            f"--build-config={self.build_config}",
+            f"--build-config={_CLOUD_BUILD_CONFIG}",
             f"--region={self.region}",
             f"--project={self.project_id}",
         ]
@@ -109,8 +109,7 @@ class CloudBuild:
         command += self._event_args()
         if self.description:
             command.append(f"--description={self.description}")
-        if self.build_config:
-            command.append(f"--build-config={self.build_config}")
+        command.append(f"--build-config={_CLOUD_BUILD_CONFIG}")
         if self.substitutions:
             command.append(f"--substitutions={self.substitutions}")
         event = run_sh(command)
@@ -173,8 +172,8 @@ class CloudBuild:
         ]
         if config:
             command.append(f"--config={config}")
-        elif self.build_config:
-            command.append(f"--config={self.build_config}")
+        else:
+            command.append(f"--config={_CLOUD_BUILD_CONFIG}")
         if self.substitutions:
             command.append(f"--substitutions={self.substitutions}")
         event = run_sh(command)

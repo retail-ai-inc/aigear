@@ -69,7 +69,6 @@ class Infra:
             event=self.aigear_config.gcp.cloud_build.event,
             branch_pattern=self.aigear_config.gcp.cloud_build.branch_pattern,
             tag_pattern=self.aigear_config.gcp.cloud_build.tag_pattern,
-            build_config=self.aigear_config.gcp.cloud_build.build_config,
             region=self.location,
             project_id=self.project_id,
             substitutions=self._build_substitutions(),

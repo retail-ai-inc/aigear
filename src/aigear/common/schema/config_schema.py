@@ -24,7 +24,6 @@ class CloudBuild(BaseModel):
     event: str = "push" # push | tag | pull
     branch_pattern: Optional[str] = None
     tag_pattern: Optional[str] = None
-    build_config: str
 
 
 class Kms(BaseModel):
