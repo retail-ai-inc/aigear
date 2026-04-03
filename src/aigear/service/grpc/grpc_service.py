@@ -14,10 +14,11 @@ from sentry_sdk.integrations.grpc.server import ServerInterceptor
 from aigear.common.config import PipelinesConfig, get_environment
 from aigear.common.loading_module import LoadModule
 from aigear.common.logger import Logging
-from aigear.service.grpc.grpc_package import grpc_features
+from aigear.service.grpc.grpc_package import grpc_features, thread_config
 from aigear.service.grpc.protos import grpc_pb2, grpc_pb2_grpc
 
 logger = Logging(log_name=__name__).console_logging()
+thread_config.configure_frameworks()
 
 
 class MLServicer(grpc_pb2_grpc.MLServicer):
@@ -76,17 +77,7 @@ def _run_server(bind_address: str, model_instance: Type, grpc_options: dict):
 
 
 def grpc_service(pipeline_version, model_class_path):
-    # load ml module
-    logger.info(f"gRPC load module: {model_class_path}...")
-    model_class = LoadModule(model_class_path).load_module()
-    if model_class is None:
-        logger.error("model module instance fail!!!!!!")
-        return
-    model_instance = model_class()
-    logger.info("gRPC load module successfully.")
-
     # Get environment variables
-    environment = get_environment()
     pipeline_version_config = PipelinesConfig.get_version_config(pipeline_version)
     if pipeline_version_config is None:
         logger.error(f"No pipeline_version({pipeline_version}) config found in `env.json`.")
@@ -101,9 +92,22 @@ def grpc_service(pipeline_version, model_class_path):
         return
 
     grpc_config = release_config.get("grpc", {})
+    multi_processing = grpc_config.get("multi_processing", {})
+    disable_omp = multi_processing.get("disable_omp", True)
+    # load ml module
+    logger.info(f"gRPC load module: {model_class_path}...")
+    with thread_config.ml_thread_scope(disable_omp):
+        model_class = LoadModule(model_class_path).load_module()
+        if model_class is None:
+            logger.error("model module instance fail!!!!!!")
+            return
+        model_instance = model_class()
+    logger.info("gRPC load module successfully.")
+
     # Enable Sentry
     sentry_cog = grpc_config.get("sentry", {})
     sentry_enable = sentry_cog.get("on")
+    environment = get_environment()
     logger.info(f"Enable Sentry: {sentry_enable}")
     if sentry_enable:
         sentry_init(
@@ -113,8 +117,7 @@ def grpc_service(pipeline_version, model_class_path):
         )
 
     # grpc
-    is_windows = platform.system().lower() == "windows"
-    multi_processing = grpc_config.get("multi_processing", {})
+    is_windows = platform.system().lower() == "windows" 
     process_switch = multi_processing.get("on", False)
     port = int(grpc_config.get("port", "50051"))
     service_host = grpc_config.get("service_host", "0.0.0.0")

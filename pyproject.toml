@@ -70,6 +70,7 @@ aigear-scheduler = "aigear.cli.gcp_scheduler:gcp_scheduler"
 aigear-deploy-model = "aigear.cli.model_service:deploy_grpc_service"
 aigear-workflow = "aigear.cli.task_running:task_run"
 aigear-grpc = "aigear.cli.grpc_service:grpc_run"
+aigear-kms-env = "aigear.cli.kms_cli:kms_env"
 
 
 [tool.setuptools.packages.find]
@@ -82,6 +83,7 @@ include = [
 "aigear" = [
     "template/**/*",
     "template/**/.*",
+    "template/pre-commit",
     "infrastructure/gcp/function/*"
 ]
 

@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Optional
+
 from pydantic import BaseModel
 
 
@@ -17,12 +19,17 @@ class CloudBuild(BaseModel):
     on: bool
     trigger_name: str
     description: str
-    repository: str
     repo_owner: str
     repo_name: str
-    branch_pattern: str
-    build_config: str
-    substitutions: str
+    event: str = "push" # push | tag | pull
+    branch_pattern: Optional[str] = None
+    tag_pattern: Optional[str] = None
+
+
+class Kms(BaseModel):
+    on: bool
+    keyring_name: str
+    key_name: str
 
 
 class PreVmImage(BaseModel):
@@ -47,6 +54,9 @@ class PubSub(BaseModel):
 class Artifacts(BaseModel):
     on: bool
     repository_name: str
+    ms_image_name: Optional[str] = None
+    pl_image_name: Optional[str] = None
+    image_tag: Optional[str] = "latest"
 
 
 class Kubernetes(BaseModel):
@@ -62,6 +72,7 @@ class Gcp(BaseModel):
     location: str
     bucket: Bucket
     cloud_build: CloudBuild
+    kms: Kms
     pre_vm_image: PreVmImage
     cloud_function: CloudFunction
     iam: Iam

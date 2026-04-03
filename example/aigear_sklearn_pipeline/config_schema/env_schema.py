@@ -20,7 +20,6 @@ class CloudBuild(BaseModel):
     repo_owner: str
     repo_name: str
     branch_pattern: str
-    build_config: str
     substitutions: str
 
 

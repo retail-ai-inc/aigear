@@ -28,11 +28,13 @@ aigear-init [--name NAME] [--pipeline_versions VERSIONS]
 | `--name` | `template_project` | Project name (used as the directory name) |
 | `--pipeline_versions` | `pipeline_version_1` | Comma-separated pipeline version names, e.g. `v1,v2` |
 
+> **Git pre-commit hook**: `aigear-init` automatically installs a pre-commit hook in the new project's `.git/hooks/` directory. The hook blocks any commit where `env.json` is newer than its encrypted counterpart, preventing accidental commits of plaintext configuration.
+
 ---
 
 ### `aigear-gcp-infra`
 
-Read `env.json` and create all defined GCP resources (buckets, Pub/Sub topics, Cloud Scheduler jobs, service accounts, etc.).
+Read `env.json` and create all defined GCP resources (buckets, Pub/Sub topics, Cloud Function, Artifact Registry, KMS, GKE cluster, service accounts, etc.).
 
 ```
 aigear-gcp-infra [--create]
@@ -41,6 +43,18 @@ aigear-gcp-infra [--create]
 | Argument | Description |
 |---|---|
 | `--create` | Initialize GCP infrastructure resources. Runs by default if omitted. |
+
+Resource creation runs in three ordered phases:
+
+| Phase | Resources | Mode |
+|---|---|---|
+| 1 | Service Account + IAM bindings | Sequential (must be first) |
+| 2 | Buckets, Artifact Registry, Pub/Sub, KMS, Cloud Build, Pre-VM Image, Kubernetes | **Parallel** |
+| 3 | Cloud Function | Sequential (depends on Pub/Sub from Phase 2) |
+
+- Each step is idempotent — existing resources are detected and skipped.
+- If the GCP default subnet is not yet ready (common in new projects), Pre-VM Image creation retries automatically up to 5 times with a 30-second wait between attempts.
+- Requires owner-level GCP permissions. Recommended to run from Cloud Shell.
 
 > Future commands: `--delete`, `--update`
 

@@ -1,5 +1,5 @@
 import argparse
-from aigear.infrastructure.gcp import Infra
+from aigear.infrastructure.gcp.infra import Infra
 
 
 def get_argument():
