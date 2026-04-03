@@ -23,7 +23,8 @@ class Bucket:
             f"--project={self.project_id}",
         ]
         event = run_sh(command)
-        logger.info(event)
+        if "ERROR" in event:
+            logger.error(f"Failed to create bucket ({self.bucket_gs}): {event}")
 
     def add_permissions_to_gcs(self, sa_email):
         command = [
@@ -34,7 +35,8 @@ class Bucket:
             f"--project={self.project_id}",
         ]
         event = run_sh(command)
-        logger.info(event)
+        if "ERROR" in event:
+            logger.error(f"Failed to add IAM policy to bucket ({self.bucket_gs}): {event}")
 
     def describe(self):
         is_exist = False
@@ -44,9 +46,10 @@ class Bucket:
             f"--project={self.project_id}",
         ]
         event = run_sh(command)
-        logger.info(event)
         if self.bucket_gs in event and "ERROR" not in event:
             is_exist = True
+        elif "ERROR" in event and "BucketNotFoundException" not in event and "NOT_FOUND" not in event and "not found" not in event:
+            logger.error(f"Unexpected error describing bucket ({self.bucket_gs}): {event}")
         return is_exist
 
     def list(self):

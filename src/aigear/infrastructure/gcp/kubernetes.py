@@ -49,11 +49,10 @@ class KubernetesCluster:
             f"--project={self.project_id}",
         ]
         event = run_sh(command)
-        if "ERROR" in event:
-            logger.info(f"Resource not found: {event}")
-        else:
+        if "ERROR" not in event:
             is_exist = True
-
+        elif "Not found" not in event and "NOT_FOUND" not in event:
+            logger.error(f"Unexpected error describing cluster ({self.cluster_name}): {event}")
         return is_exist
 
     def delete(self):

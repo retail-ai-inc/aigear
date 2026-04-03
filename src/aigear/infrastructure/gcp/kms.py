@@ -32,7 +32,8 @@ class CloudKMS:
             f"--project={self.project_id}",
         ]
         event = run_sh(command)
-        logger.info(event)
+        if "ERROR" in event:
+            logger.error(f"Failed to create KMS keyring ({self.keyring_name}): {event}")
 
     def describe_keyring(self) -> bool:
         is_exist = False
@@ -45,11 +46,8 @@ class CloudKMS:
         event = run_sh(command)
         if self.keyring_name in event and "ERROR" not in event:
             is_exist = True
-            logger.info(f"Find keyring: {event}")
-        elif "NOT_FOUND" in event:
-            logger.info(f"NOT_FOUND: Keyring not found (keyring={self.keyring_name})")
-        else:
-            logger.info(event)
+        elif "ERROR" in event and "NOT_FOUND" not in event:
+            logger.error(f"Unexpected error describing keyring ({self.keyring_name}): {event}")
         return is_exist
 
     # ------------------------------------------------------------------ #
@@ -66,7 +64,8 @@ class CloudKMS:
             f"--project={self.project_id}",
         ]
         event = run_sh(command)
-        logger.info(event)
+        if "ERROR" in event:
+            logger.error(f"Failed to create KMS key ({self.key_name}): {event}")
 
     def describe_key(self) -> bool:
         is_exist = False
@@ -80,11 +79,8 @@ class CloudKMS:
         event = run_sh(command)
         if self.key_name in event and "ERROR" not in event:
             is_exist = True
-            logger.info(f"Find key: {event}")
-        elif "NOT_FOUND" in event:
-            logger.info(f"NOT_FOUND: Key not found (key={self.key_name})")
-        else:
-            logger.info(event)
+        elif "ERROR" in event and "NOT_FOUND" not in event:
+            logger.error(f"Unexpected error describing key ({self.key_name}): {event}")
         return is_exist
 
     # ------------------------------------------------------------------ #
@@ -102,7 +98,10 @@ class CloudKMS:
             f"--project={self.project_id}",
         ]
         event = run_sh(command)
-        logger.info(event)
+        if "Updated IAM policy" in event:
+            logger.info("✅ Successfully granted: roles/cloudkms.cryptoKeyEncrypterDecrypter")
+        elif "ERROR" in event:
+            logger.error(f"❌ Failed to grant KMS permissions: {event}")
 
     # ------------------------------------------------------------------ #
     #  Encrypt / Decrypt generic files                                     #
@@ -123,7 +122,8 @@ class CloudKMS:
             f"--project={self.project_id}",
         ]
         event = run_sh(command)
-        logger.info(event)
+        if "ERROR" in event:
+            logger.error(f"Failed to encrypt file: {event}")
 
     def decrypt(
         self, 
@@ -140,7 +140,8 @@ class CloudKMS:
             f"--project={self.project_id}",
         ]
         event = run_sh(command)
-        logger.info(event)
+        if "ERROR" in event:
+            logger.error(f"Failed to decrypt file: {event}")
 
     # ------------------------------------------------------------------ #
     #  env.json helpers                                                    #

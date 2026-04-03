@@ -118,7 +118,7 @@ aigear-image --create --dockerfile_path Dockerfile.pl --image_name my-pipeline -
 Creates a Cloud Scheduler job on GCP that triggers the specified pipeline steps on a cron schedule defined in `env.json`.
 
 ```bash
-aigear-scheduler --create --version v1 --step_names fetch_data,preprocessing,training
+aigear-scheduler --create --version logistic_regression --step_names fetch_data,preprocessing,training
 ```
 
 > **Tip:** Once created, you can go to [Cloud Scheduler](https://console.cloud.google.com/cloudscheduler) in the GCP Console to manually trigger an immediate run. A `--run` flag for triggering directly from the CLI is planned but not yet available (`aigear-scheduler --version v1 --run`).

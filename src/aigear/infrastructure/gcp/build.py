@@ -128,11 +128,8 @@ class CloudBuild:
         event = run_sh(command)
         if self.trigger_name in event and "ERROR" not in event:
             is_exist = True
-            logger.info(f"Find trigger: {event}")
-        elif "NOT_FOUND" in event:
-            logger.info(f"NOT_FOUND: Trigger not found (trigger={self.trigger_name})")
-        else:
-            logger.info(event)
+        elif "ERROR" in event and "NOT_FOUND" not in event:
+            logger.error(f"Unexpected error describing trigger ({self.trigger_name}): {event}")
         return is_exist
 
     def delete(self):

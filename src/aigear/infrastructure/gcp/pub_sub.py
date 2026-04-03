@@ -20,7 +20,8 @@ class PubSub:
             f"--project={self.project_id}",
         ]
         event = run_sh(command)
-        logger.info(event)
+        if "ERROR" in event:
+            logger.error(f"Failed to create Pub/Sub topic ({self.topic_name}): {event}")
 
     def add_permissions_to_pubsub(self, sa_email):
         topic = f"projects/{self.project_id}/topics/{self.topic_name}"
@@ -33,7 +34,10 @@ class PubSub:
                 f"--project={self.project_id}",
             ]
             event = run_sh(command)
-            logger.info(event)
+            if "Updated IAM policy for topic" in event:
+                logger.info(f"✅ Successfully granted: {role}")
+            elif "ERROR" in event:
+                logger.error(f"❌ Failed to grant {role}: {event}")
 
     def describe(self):
         is_exist = False
@@ -45,11 +49,8 @@ class PubSub:
         event = run_sh(command)
         if "name: projects" in event:
             is_exist = True
-            logger.info(f"Find resources: {event}")
-        elif "NOT_FOUND" in event:
-            logger.info(f"NOT_FOUND: Resource not found (resource={self.topic_name})")
-        else:
-            logger.info(event)
+        elif "ERROR" in event and "NOT_FOUND" not in event:
+            logger.error(f"Unexpected error describing topic ({self.topic_name}): {event}")
         return is_exist
 
     def delete(self):

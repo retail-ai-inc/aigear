@@ -62,9 +62,8 @@ class CloudFunction:
             "--no-allow-unauthenticated",
         ]
         event = run_sh(command, timeout=600)
-        logger.info(event)
         if "ERROR" in event:
-            logger.error("Error occurred while creating cloud function.")
+            logger.error(f"Failed to deploy cloud function ({self.function_name}): {event}")
     
     def add_permissions_to_cloud_function(self, sa_email):
         command = [
@@ -90,11 +89,8 @@ class CloudFunction:
         event = run_sh(command)
         if f"Service {self.function_name} in region {self.region}" in event:
             is_exist = True
-            logger.info(f"Find resources: {event}")
-        elif "ERROR" in event and "Cannot find service" in event:
-            logger.info(f"Resource not found: {event}")
-        else:
-            logger.info(event)
+        elif "ERROR" in event and "Cannot find service" not in event:
+            logger.error(f"Unexpected error describing cloud function ({self.function_name}): {event}")
         return is_exist
 
     def list(self):

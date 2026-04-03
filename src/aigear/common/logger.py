@@ -1,9 +1,25 @@
 import logging
 import sys
 import json
+import threading
 from typing import Any, Dict, Optional
 
 from google.cloud import logging as gcp_logging
+
+# Thread-local log buffer — set to a list to enable buffering for the current thread
+_thread_local = threading.local()
+
+
+# ----------------------------
+# Thread-aware handler: buffers output when _thread_local.log_buffer is set
+# ----------------------------
+class _ThreadAwareStreamHandler(logging.StreamHandler):
+    def emit(self, record):
+        buf = getattr(_thread_local, 'log_buffer', None)
+        if buf is not None:
+            buf.append(self.format(record))
+        else:
+            super().emit(record)
 
 
 # ----------------------------
@@ -47,7 +63,7 @@ class Logging:
         logger.propagate = False
 
         if not logger.handlers:
-            handler = logging.StreamHandler(sys.stdout)
+            handler = _ThreadAwareStreamHandler(sys.stdout)
             handler.setFormatter(LocalJsonFormatter())
             logger.addHandler(handler)
 
