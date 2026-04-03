@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import List, Optional
 
 
+
 class Project:
     def __init__(
         self,
@@ -94,7 +95,8 @@ class Project:
         hook_dst = git_hooks_dir / "pre-commit"
         if hook_dst.exists():
             return
-        shutil.copy(self._template_path / "pre-commit", hook_dst)
+        content = (self._template_path / "pre-commit").read_bytes().replace(b"\r\n", b"\n")
+        hook_dst.write_bytes(content)
         hook_dst.chmod(hook_dst.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
         print(f"Installed git hook: {hook_dst}")
 

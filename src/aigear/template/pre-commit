@@ -21,17 +21,20 @@ if [ -z "$BIN_FILES" ]; then
     exit 1
 fi
 
-STALE=""
+STALE=0
 for BIN_FILE in $BIN_FILES; do
     if [ "$ENV_FILE" -nt "$BIN_FILE" ]; then
-        STALE="$STALE\n    $BIN_FILE"
+        if [ "$STALE" -eq 0 ]; then
+            echo ""
+            echo "  [aigear] env.json was modified after the last encryption."
+            echo "  Stale file(s):"
+            STALE=1
+        fi
+        echo "    $BIN_FILE"
     fi
 done
 
-if [ -n "$STALE" ]; then
-    echo ""
-    echo "  [aigear] env.json was modified after the last encryption."
-    echo "  Stale file(s):$STALE"
+if [ "$STALE" -eq 1 ]; then
     echo ""
     echo "  Re-encrypt before committing:"
     echo "    aigear-kms-env --encrypt --environment staging"
