@@ -129,6 +129,7 @@ Pipelines are keyed by version name (e.g., `logistic_regression`, `v1`). Each ve
 | `name` | `string` | Cloud Scheduler job name | `test-sklearn-pipeline` |
 | `schedule` | `string` | Cron expression — [reference](https://cloud.google.com/scheduler/docs/configuring/cron-job-schedules) | `45 21 * * 0` |
 | `time_zone` | `string` | Scheduler time zone (IANA format) — [reference](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) | `Asia/Tokyo` |
+| `venv` | `string` | *(optional)* Virtual environment name inside the container. Applies to all steps in the pipeline. Resolves to `/opt/venv/<name>/bin/aigear-workflow`. Omit to use the image's default `aigear-workflow`. | `"ape3"` |
 
 ### 3.2 Pipeline Steps
 

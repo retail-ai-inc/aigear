@@ -149,6 +149,7 @@ def _build_step_message(
     docker_image: str,
     gke_cluster: str,
     gke_zone: str,
+    venv: str | None = None,
 ) -> dict:
     """
     Build a single task message for the Pub/Sub payload.
@@ -158,6 +159,7 @@ def _build_step_message(
       - Always added: docker_image, pipeline_version
       - Conditionally added: pipeline_step, model_class_path (if present in step_config)
       - Conditionally added: gke_cluster, gke_zone (only when model_class_path is present)
+      - Conditionally added: venv (from scheduler config, applies to all steps in the pipeline)
     """
     message = dict(step_config.get("resources", {}))
 
@@ -174,6 +176,10 @@ def _build_step_message(
         message["gke_cluster"] = gke_cluster
         message["gke_zone"]    = gke_zone
 
+    # venv is a scheduler-level setting that applies to all steps in the pipeline
+    if venv:
+        message["venv"] = venv
+
     return message
 
 
@@ -189,6 +195,9 @@ def create_scheduler(pipeline_version: str, step_names: list[str]):
     gke_cluster = kubernetes_config.cluster_name
     gke_zone    = aigear_config.gcp.location
 
+    scheduler_config  = pipeline_config.get("scheduler", {})
+    venv = scheduler_config.get("venv")
+
     scheduler_messages = []
     for step_name in step_names:
         step_config = pipeline_config.get(step_name, {})
@@ -197,15 +206,14 @@ def create_scheduler(pipeline_version: str, step_names: list[str]):
         step_docker_image = ms_image if step_name == "model_service" else pl_image
 
         message = _build_step_message(
-            step_config    = step_config,
+            step_config      = step_config,
             pipeline_version = pipeline_version,
-            docker_image   = step_docker_image,
-            gke_cluster    = gke_cluster,
-            gke_zone       = gke_zone,
+            docker_image     = step_docker_image,
+            gke_cluster      = gke_cluster,
+            gke_zone         = gke_zone,
+            venv             = venv,
         )
         scheduler_messages.append(message)
-
-    scheduler_config  = pipeline_config.get("scheduler", {})
     scheduler = Scheduler(
         name       = scheduler_config.get("name"),
         location   = aigear_config.gcp.location,

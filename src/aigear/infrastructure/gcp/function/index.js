@@ -97,6 +97,41 @@ function validateTask(current) {
   }
 }
 
+/**
+ * Builds the pipeline command for the VM startup script.
+ *
+ * Dockerfiles create virtual environments under /opt/venv/<name>/ using uv,
+ * and set ENV PATH="/opt/venv/<name>/bin:$PATH" so the default aigear-workflow
+ * CLI is already on PATH.
+ *
+ * To run a pipeline step inside a specific virtual environment, set the `venv`
+ * field on the task to the environment name, e.g.:
+ *
+ *   "venv": "ape3"
+ *   → /opt/venv/ape3/bin/aigear-workflow --version <v> --step <s>
+ *
+ * The base path /opt/venv/ is fixed in code — only the name is user-supplied —
+ * preventing path traversal. Names must be alphanumeric, hyphens, or underscores.
+ *
+ * @param {object} current  Task object from the Pub/Sub message
+ * @returns {string}        Shell command fragment, or '' when pipeline_step is absent
+ */
+function buildPipelineCommand(current) {
+  if (!current.pipeline_step) return '';
+
+  const baseArgs = `--version ${current.pipeline_version} --step ${current.pipeline_step}`;
+
+  if (!current.venv) {
+    return `aigear-workflow ${baseArgs}`;
+  }
+
+  if (!/^[a-zA-Z0-9_-]+$/.test(current.venv)) {
+    throw new Error(`Invalid venv name "${current.venv}": only alphanumerics, hyphens, and underscores are allowed`);
+  }
+
+  return `/opt/venv/${current.venv}/bin/aigear-workflow ${baseArgs}`;
+}
+
 // ─── Startup Script ───────────────────────────────────────────────────────────
 
 /**
@@ -442,9 +477,13 @@ functions.cloudEvent('cronjobProcessPubSub', async cloudEvent => {
   const isGpu   = current.gpu === true;
   const gpuFlag = isGpu ? '--gpus all' : '';
 
-  const pipelineCommand = current.pipeline_step
-    ? `aigear-workflow --version ${current.pipeline_version} --step ${current.pipeline_step}`
-    : '';
+  let pipelineCommand;
+  try {
+    pipelineCommand = buildPipelineCommand(current);
+  } catch (err) {
+    console.error(`Failed to build pipeline command: ${err.message}`);
+    return;
+  }
 
   // Convert model_class_path to the yaml path inside the container
   const yamlPathInImage = current.model_class_path
