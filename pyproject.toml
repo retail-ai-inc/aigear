@@ -84,7 +84,8 @@ include = [
     "template/**/*",
     "template/**/.*",
     "template/pre-commit",
-    "infrastructure/gcp/function/*"
+    "infrastructure/gcp/function/*",
+    "deploy/common/*.tpl",
 ]
 
 [tool.setuptools_scm]

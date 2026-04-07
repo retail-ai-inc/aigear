@@ -25,17 +25,20 @@ def deploy_gcp_grpc(
     replicas: int = 1,
     port: str = "50051",
 ):
-    
+    pipe_config = PipelinesConfig.get_version_config(pipeline_version)
+    ms_config   = pipe_config.get("model_service", {})
+    venv        = ms_config.get("venv_ms")
+
     helm_path = create_helm_file(
         pipeline_version=pipeline_version,
         model_class_path=model_class_path,
-        service_ports = service_ports,
-        replicas = replicas,
-        port = port,
+        service_ports=service_ports,
+        replicas=replicas,
+        port=port,
+        venv=venv,
     )
 
-    pipe_config = PipelinesConfig.get_version_config(pipeline_version)
-    release_switch = pipe_config.get("model_service", {}).get("release", False)
+    release_switch = ms_config.get("release", False)
     if release_switch:
         aigear_config = AigearConfig.get_config()
         switch_gcp_context(
