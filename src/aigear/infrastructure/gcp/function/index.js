@@ -1,6 +1,5 @@
-const Buffer = require('safe-buffer').Buffer;
-const { google } = require('googleapis');
-const functions = require('@google-cloud/functions-framework');
+import { google } from 'googleapis';
+import functions from '@google-cloud/functions-framework';
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 

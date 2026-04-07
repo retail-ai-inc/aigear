@@ -51,7 +51,7 @@ class CloudFunction:
             "gcloud", "functions", "deploy",
             self.function_name,
             "--gen2",
-            "--runtime=nodejs20",
+            "--runtime=nodejs24",
             f"--region={self.region}",
             f"--entry-point={self.entry_point}",
             f"--trigger-topic={self.topic_name}",
