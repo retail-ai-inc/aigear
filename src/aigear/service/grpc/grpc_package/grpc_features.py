@@ -2,7 +2,6 @@ import time
 import signal
 from contextlib import contextmanager
 import socket
-import argparse
 
 
 def wait_until_closed(server):
