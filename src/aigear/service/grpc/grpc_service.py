@@ -18,7 +18,6 @@ from aigear.service.grpc.grpc_package import grpc_features, thread_config
 from aigear.service.grpc.protos import grpc_pb2, grpc_pb2_grpc
 
 logger = Logging(log_name=__name__).console_logging()
-thread_config.configure_frameworks()
 
 
 class MLServicer(grpc_pb2_grpc.MLServicer):
@@ -56,7 +55,7 @@ def _run_server(bind_address: str, model_instance: Type, grpc_options: dict):
                 ("grpc.keepalive_permit_without_calls", True),  # allow keepalive pings when there are no gRPC calls
             ]
         )
-    logger.info(f"gRPC has added Keepalive. interval time: {keepalive_time}s, timeout: {keepalive_timeout}s.")
+        logger.info(f"gRPC has added Keepalive. interval time: {keepalive_time}s, timeout: {keepalive_timeout}s.")
 
     max_workers = grpc_options.get("multi_processing", {}).get("thread_count", 5)
     logger.info(f"Enable thread count: {max_workers}.")
