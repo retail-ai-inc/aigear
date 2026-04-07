@@ -40,7 +40,7 @@ class ArtifactsImage:
             "gcloud", "artifacts", "docker", "images", "describe", self.artifacts_image
         ]
         event = run_sh(command)
-        if "Image not found" in event and "ERROR" in event:
+        if ("Image not found" in event or "NOT_FOUND" in event) and "ERROR" in event:
             is_exist = False
         logger.info(event)
         return is_exist
