@@ -68,8 +68,8 @@ aigear-env-schema = "aigear.cli.env_schema:env_schema"
 aigear-image = "aigear.cli.artifacts_image:docker_image"
 aigear-scheduler = "aigear.cli.gcp_scheduler:gcp_scheduler"
 aigear-deploy-model = "aigear.cli.model_service:deploy_grpc_service"
-aigear-workflow = "aigear.cli.task_running:task_run"
-aigear-grpc = "aigear.cli.grpc_service:grpc_run"
+aigear-task = "aigear.cli.task_running:task_run"
+aigear-run = "aigear.cli.run:aigear_run"
 aigear-kms-env = "aigear.cli.kms_cli:kms_env"
 
 
