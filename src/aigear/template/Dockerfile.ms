@@ -1,16 +1,20 @@
 FROM python:3.12-slim-bookworm
 COPY --from=ghcr.io/astral-sh/uv:0.5.14 /uv /uvx /bin/
 
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    VIRTUAL_ENV=/opt/venv/ms \
+    PATH="/opt/venv/ms/bin:$PATH"
+
 WORKDIR /ms
+
+COPY requirements_ms.txt aigear-0.1.0-py3-none-any.whl ./
+RUN uv venv /opt/venv/ms --python 3.12.7 \
+ && uv pip install --no-cache -r requirements_ms.txt \
+ && uv pip install --no-cache aigear-0.1.0-py3-none-any.whl
+
 COPY . .
 
-RUN uv python install 3.12.7
-
-RUN uv venv /opt/venv/ms --python 3.12.7
-RUN . /opt/venv/ms/bin/activate && uv pip install -r requirements_ms.txt
-
-ENV VIRTUAL_ENV=/opt/venv/ms
-ENV PATH="/opt/venv/ms/bin:$PATH"
 ENV PORT=50051 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONBUFFERED=1
+    PYTHONUNBUFFERED=1
