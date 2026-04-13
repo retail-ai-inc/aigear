@@ -3,6 +3,7 @@ from pathlib import Path
 from string import Template
 
 from aigear.common.config import AigearConfig, get_project_name
+from aigear.common.constant import VENV_BASE_DIR
 from aigear.common.logger import Logging
 from aigear.deploy.gcp.artifacts_image import get_artifacts_image
 
@@ -61,7 +62,7 @@ def _create_helm_chart(
         print("The 'pipeline_version' and 'model_class_path' of 'create_helm_chart' is empty.")
         grpc_command = ""
     else:
-        grpc_bin = f"/opt/venv/{venv}/bin/aigear-grpc" if venv else "aigear-grpc"
+        grpc_bin = f"{VENV_BASE_DIR}/{venv}/bin/aigear-grpc" if venv else "aigear-grpc"
         grpc_command = (
             f'command: ["{grpc_bin}"]\n'
             f'        args:\n'

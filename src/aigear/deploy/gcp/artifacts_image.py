@@ -1,5 +1,8 @@
+from pathlib import Path
+
 from aigear.common import run_sh, run_sh_stream
-from aigear.common.config import AigearConfig
+from aigear.common.config import AigearConfig, AppConfig
+from aigear.common.constant import VENV_BASE_DIR
 from aigear.common.image import get_image_path
 from aigear.common.logger import Logging
 
@@ -46,6 +49,38 @@ class ArtifactsImage:
         return is_exist
 
 
+def _validate_dockerfile_venvs(dockerfile_path: str, is_service: bool) -> None:
+    """
+    Check that every venv configured in env.json is actually created in the Dockerfile.
+
+    Pipeline image  (is_service=False): validates pipelines.venv_pl
+    Service image   (is_service=True):  validates each pipeline's model_service.venv_ms
+
+    Raises ValueError if a configured venv path is missing from the Dockerfile.
+    """
+    content = Path(dockerfile_path).read_text(encoding="utf-8")
+    pipelines = AppConfig.pipelines()
+    missing = []
+
+    for version, pipeline_config in pipelines.items():
+        if not isinstance(pipeline_config, dict):
+            continue
+        if not is_service:
+            venv_pl = pipeline_config.get("venv_pl")
+            if venv_pl and f"{VENV_BASE_DIR}/{venv_pl}" not in content:
+                missing.append(f"pipeline '{version}' venv_pl '{venv_pl}' → {VENV_BASE_DIR}/{venv_pl}")
+        else:
+            venv_ms = pipeline_config.get("model_service", {}).get("venv_ms")
+            if venv_ms and f"{VENV_BASE_DIR}/{venv_ms}" not in content:
+                missing.append(f"pipeline '{version}' venv_ms '{venv_ms}' → {VENV_BASE_DIR}/{venv_ms}")
+
+    if missing:
+        raise ValueError(
+            f"The following venvs are configured in env.json but not found in {dockerfile_path}:\n"
+            + "\n".join(f"  - {m}" for m in missing)
+        )
+
+
 def create_artifacts_image(
     dockerfile_path=None,
     build_context=".",
@@ -54,6 +89,9 @@ def create_artifacts_image(
     is_push=False
 ):
     log_tag = "model service" if is_service else "pipeline"
+
+    if dockerfile_path:
+        _validate_dockerfile_venvs(dockerfile_path, is_service)
 
     aigear_config = AigearConfig.get_config()
     artifacts_image = get_image_path(is_service=is_service)

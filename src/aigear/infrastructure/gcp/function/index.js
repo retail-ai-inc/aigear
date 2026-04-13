@@ -100,18 +100,15 @@ function validateTask(current) {
 /**
  * Builds the pipeline command for the VM startup script.
  *
- * Dockerfiles create virtual environments under /opt/venv/<name>/ using uv,
- * and set ENV PATH="/opt/venv/<name>/bin:$PATH" so the default aigear-task
- * CLI is already on PATH.
+ * The venv name comes from env.json → pipelines.<name>.scheduler.venv_pl,
+ * and must match the venv directory created in Dockerfile.pl by uv.
  *
- * To run a pipeline step inside a specific virtual environment, set the `venv`
- * field on the task to the environment name, e.g.:
+ * Base path is fixed to VENVBASEDIR/ — must stay in sync with:
+ *   aigear/common/constant.py  VENV_BASE_DIR = "/opt/venv"
  *
- *   "venv": "ape3"
- *   → /opt/venv/ape3/bin/aigear-task workflow --version <v> --step <s>
- *
- * The base path /opt/venv/ is fixed in code — only the name is user-supplied —
- * preventing path traversal. Names must be alphanumeric, hyphens, or underscores.
+ * The venv name is user-supplied (per pipeline, per Dockerfile), so it is
+ * validated to prevent path traversal. Names must be alphanumeric, hyphens,
+ * or underscores only.
  *
  * @param {object} current  Task object from the Pub/Sub message
  * @returns {string}        Shell command fragment, or '' when pipeline_step is absent
@@ -129,7 +126,7 @@ function buildPipelineCommand(current) {
     throw new Error(`Invalid venv name "${current.venv}": only alphanumerics, hyphens, and underscores are allowed`);
   }
 
-  return `/opt/venv/${current.venv}/bin/aigear-task workflow ${baseArgs}`;
+  return `VENVBASEDIR/${current.venv}/bin/aigear-task workflow ${baseArgs}`;
 }
 
 // ─── Startup Script ───────────────────────────────────────────────────────────

@@ -1,7 +1,12 @@
 FROM python:3.12-slim-bookworm
-COPY --from=ghcr.io/astral-sh/uv:0.5.14 /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.11.6 /uv /uvx /bin/
 
-ENV VENV_PL=/opt/venv/pl
+# Fixed by aigear/common/constant.py (VENV_BASE_DIR). Do NOT change.
+ENV VENV_BASE=/opt/venv \
+    UV_LINK_MODE=copy
+
+# venv name must match venv_pl in env.json. Add one block per pipeline.
+ENV VENV_PL=${VENV_BASE}/pl
 
 WORKDIR /pl
 

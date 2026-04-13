@@ -7,9 +7,9 @@ services:
     working_dir: /ms
     ports:
       - 50051:50051
-    command:  |
+    command: |
       sh -c "
-      aigear-grpc --version logistic_regression --model_class_path src.pipelines.logistic_regression.model_service.logistic_regression_service.ModelService
+      $$VENV_MS/bin/aigear-task grpc --version logistic_regression --module src.pipelines.logistic_regression.model_service.logistic_regression_service.ModelService &&
       tail -f /dev/null
       "
     volumes:

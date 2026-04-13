@@ -196,7 +196,7 @@ def create_scheduler(pipeline_version: str, step_names: list[str]):
     gke_zone    = aigear_config.gcp.location
 
     scheduler_config  = pipeline_config.get("scheduler", {})
-    venv_pl = scheduler_config.get("venv_pl")   # venv for pipeline training steps
+    venv_pl = pipeline_config.get("venv_pl")   # venv for pipeline training steps
 
     scheduler_messages = []
     for step_name in step_names:

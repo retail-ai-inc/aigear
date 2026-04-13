@@ -2,6 +2,7 @@ import shutil
 from pathlib import Path
 
 from aigear.common import run_sh
+from aigear.common.constant import VENV_BASE_DIR
 from aigear.common.logger import Logging
 
 logger = Logging(log_name=__name__).console_logging()
@@ -35,7 +36,8 @@ class CloudFunction:
             content = content.replace(
                 "PROJECTID", self.project_id
             ).replace("REGION", self.region
-            ).replace("TOPICSNAME", self.topic_name)
+            ).replace("TOPICSNAME", self.topic_name
+            ).replace("VENVBASEDIR", VENV_BASE_DIR)
             function_file_dst.write_text(content, encoding="utf-8")
 
         package_file_src = source_path / "package.json"
