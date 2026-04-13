@@ -2,10 +2,10 @@ import platform
 from pathlib import Path
 from string import Template
 
-from aigear.common.config import AigearConfig, get_project_name
+from aigear.common.config import get_project_name
 from aigear.common.constant import VENV_BASE_DIR
+from aigear.common.image import get_image_path
 from aigear.common.logger import Logging
-from aigear.deploy.gcp.artifacts_image import get_artifacts_image
 
 _TEMPLATE_PATH = Path(__file__).parent / "grpc_deployment.yaml.tpl"
 
@@ -62,13 +62,13 @@ def _create_helm_chart(
         print("The 'pipeline_version' and 'model_class_path' of 'create_helm_chart' is empty.")
         grpc_command = ""
     else:
-        grpc_bin = f"{VENV_BASE_DIR}/{venv}/bin/aigear-grpc" if venv else "aigear-grpc"
+        aigear_task = f"{VENV_BASE_DIR}/{venv}/bin/aigear-task" if venv else "aigear-task"
         grpc_command = (
-            f'command: ["{grpc_bin}"]\n'
+            f'command: ["{aigear_task}", "grpc"]\n'
             f'        args:\n'
             f'          - "--version"\n'
             f'          - "{pipeline_version}"\n'
-            f'          - "--model_class_path"\n'
+            f'          - "--module"\n'
             f'          - "{model_class_path}"'
         )
 
@@ -115,8 +115,7 @@ def create_helm_file(
     is_local: bool = False,
     venv: str = None,
 ):
-    aigear_config = AigearConfig.get_config()
-    artifacts_image = get_artifacts_image(aigear_config=aigear_config, is_service=True)
+    artifacts_image = get_image_path(is_service=True)
     if pipeline_version is None:
         logger.info("The 'pipeline_version' is empty, don't know which service to deploy.")
         return
