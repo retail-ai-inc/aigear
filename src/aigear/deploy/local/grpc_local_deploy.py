@@ -1,5 +1,6 @@
 from aigear.common import run_sh
 from aigear.common.config import PipelinesConfig
+from aigear.common.constant import ENV_LOCAL
 from aigear.common.logger import Logging
 from aigear.deploy.common.helm_chart import create_helm_file, get_helm_path
 from aigear.deploy.common.kubectl_command import helm_deploy, helm_deployment_delete
@@ -14,9 +15,10 @@ def switch_local_context():
     event = run_sh(command)
     logger.info(event)
 
+
 def deploy_local_grpc(
-        pipeline_version: str=None,
-        model_class_path: str=None,
+        pipeline_version: str = None,
+        model_class_path: str = None,
         service_ports: str = "50051",
         replicas: int = 1,
         port: str = "50051",
@@ -31,7 +33,7 @@ def deploy_local_grpc(
         service_ports=service_ports,
         replicas=replicas,
         port=port,
-        is_local=True,
+        env=ENV_LOCAL,
         venv=venv,
     )
 
@@ -50,8 +52,5 @@ def deploy_local_grpc(
 def delete_local_grpc(
         model_class_path=None
 ):
-    helm_path = get_helm_path(
-        model_class_path=model_class_path, 
-        is_local=True
-    )
+    helm_path = get_helm_path(model_class_path=model_class_path, env=ENV_LOCAL)
     helm_deployment_delete(helm_path)

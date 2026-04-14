@@ -1,5 +1,6 @@
 import argparse
 
+from aigear.common.config import get_environment
 from aigear.deploy.gcp.scheduler import create_scheduler
 
 
@@ -20,6 +21,9 @@ def get_argument():
                         help="Version of the pipeline.")
     parser.add_argument("--step_names", default="",
                         help="Comma-separated names of the pipeline steps.")
+    parser.add_argument("--env", default=get_environment(),
+                        choices=["staging", "production"],
+                        help="Deployment environment for model service yaml (default: from env.json).")
     return parser.parse_args()
 
 
@@ -37,11 +41,11 @@ def gcp_scheduler():
 
     step_names = args.step_names.split(",")
     if args.create:
-        create_scheduler(args.version, step_names)
+        create_scheduler(args.version, step_names, args.env)
     # Future commands:
     # elif args.delete:
     #     delete_scheduler(args.version, step_names)
     # elif args.update:
     #     update_scheduler(args.version, step_names)
     else:
-        create_scheduler(args.version, step_names)
+        create_scheduler(args.version, step_names, args.env)

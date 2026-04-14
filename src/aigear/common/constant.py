@@ -33,3 +33,8 @@ multiple venvs to serve multiple pipelines.
 """
 
 VENV_BASE_DIR = "/opt/venv"
+
+# Deployment environment names — used by model_service CLI, helm_chart, and grpc deploy functions.
+ENV_LOCAL      = "local"
+ENV_STAGING    = "staging"
+ENV_PRODUCTION = "production"
