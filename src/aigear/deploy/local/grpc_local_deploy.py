@@ -18,14 +18,14 @@ def switch_local_context():
 
 def deploy_local_grpc(
         pipeline_version: str = None,
-        model_class_path: str = None,
         service_ports: str = "50051",
         replicas: int = 1,
         port: str = "50051",
 ):
-    pipe_config = PipelinesConfig.get_version_config(pipeline_version)
-    ms_config   = pipe_config.get("model_service", {})
-    venv        = ms_config.get("venv_ms")
+    pipe_config       = PipelinesConfig.get_version_config(pipeline_version)
+    ms_config         = pipe_config.get("model_service", {})
+    model_class_path  = ms_config.get("model_class_path")
+    venv              = ms_config.get("venv_ms")
 
     helm_path = create_helm_file(
         pipeline_version=pipeline_version,
@@ -49,8 +49,8 @@ def deploy_local_grpc(
         logger.info("The publishing model service is not set in the configuration(model_service.release).")
 
 
-def delete_local_grpc(
-        model_class_path=None
-):
-    helm_path = get_helm_path(model_class_path=model_class_path, env=ENV_LOCAL)
+def delete_local_grpc(pipeline_version: str = None):
+    pipe_config      = PipelinesConfig.get_version_config(pipeline_version)
+    model_class_path = pipe_config.get("model_service", {}).get("model_class_path")
+    helm_path        = get_helm_path(model_class_path=model_class_path, env=ENV_LOCAL)
     helm_deployment_delete(helm_path)

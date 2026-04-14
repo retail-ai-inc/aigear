@@ -9,7 +9,7 @@ services:
       - 50051:50051
     command: |
       sh -c "
-      $$VENV_MS/bin/aigear-task grpc --version logistic_regression --module src.pipelines.logistic_regression.model_service.logistic_regression_service.ModelService &&
+      $$VENV_MS/bin/aigear-task grpc --version logistic_regression &&
       tail -f /dev/null
       "
     volumes:

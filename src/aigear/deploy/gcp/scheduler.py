@@ -8,12 +8,6 @@ from aigear.common.logger import Logging
 
 logger = Logging(log_name=__name__).console_logging()
 
-# Step-level fields that are lifted directly from step_config into the message.
-# Any field listed here will be included in the message if present in the step config.
-_STEP_MESSAGE_FIELDS = (
-    "pipeline_step",
-    "model_class_path",
-)
 
 
 class Scheduler:
@@ -152,6 +146,7 @@ def _build_step_message(
     gke_zone: str,
     venv: str | None = None,
     env: str | None = None,
+    step_name: str | None = None,
 ) -> dict:
     """
     Build a single task message for the Pub/Sub payload.
@@ -159,7 +154,8 @@ def _build_step_message(
     Field priority:
       - Base: resources block (vm_name, spec, gpu, disk_size_gb, ...)
       - Always added: docker_image, pipeline_version
-      - Conditionally added: pipeline_step, model_class_path (if present in step_config)
+      - Conditionally added: step_name (workflow steps only, used by aigear-task workflow --step)
+      - Conditionally added: model_class_path (if present in step_config)
       - Conditionally added: gke_cluster, gke_zone, env (only when model_class_path is present)
       - Conditionally added: venv (per-step virtual environment)
     """
@@ -168,10 +164,14 @@ def _build_step_message(
     message["docker_image"]      = docker_image
     message["pipeline_version"]  = pipeline_version
 
-    # Lift pipeline_step / model_class_path directly from step config
-    for field in _STEP_MESSAGE_FIELDS:
-        if field in step_config:
-            message[field] = step_config[field]
+    # step_name is used by the VM to run: aigear-task workflow --step <step_name>
+    # Only set for workflow steps (not model_service)
+    if step_name:
+        message["step_name"] = step_name
+
+    # model_class_path is only present for model_service steps
+    if "model_class_path" in step_config:
+        message["model_class_path"] = step_config["model_class_path"]
 
     # GKE fields and env are only needed for steps that perform a model deploy
     if "model_class_path" in step_config:
@@ -214,6 +214,8 @@ def create_scheduler(
         is_model_service  = step_name == "model_service"
         step_docker_image = ms_image if is_model_service else pl_image
         step_venv         = venv_ms if is_model_service else venv_pl
+        env = env if is_model_service else None
+        step_name= None if is_model_service else step_name
 
         message = _build_step_message(
             step_config      = step_config,
@@ -222,7 +224,8 @@ def create_scheduler(
             gke_cluster      = gke_cluster,
             gke_zone         = gke_zone,
             venv             = step_venv,
-            env              = env if is_model_service else None,
+            env              = env,
+            step_name        = step_name,
         )
         scheduler_messages.append(message)
     scheduler = Scheduler(

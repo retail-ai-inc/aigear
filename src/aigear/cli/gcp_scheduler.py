@@ -1,6 +1,5 @@
 import argparse
 
-from aigear.common.config import get_environment
 from aigear.deploy.gcp.scheduler import create_scheduler
 
 
@@ -21,7 +20,7 @@ def get_argument():
                         help="Version of the pipeline.")
     parser.add_argument("--step_names", default="",
                         help="Comma-separated names of the pipeline steps.")
-    parser.add_argument("--env", default=get_environment(),
+    parser.add_argument("--env", default="staging",
                         choices=["staging", "production"],
                         help="Deployment environment for model service yaml (default: from env.json).")
     return parser.parse_args()

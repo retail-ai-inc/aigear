@@ -7,9 +7,9 @@ services:
     working_dir: /pl
     command: |
       sh -c "
-      $$VENV_PL/bin/aigear-task workflow --version logistic_regression --module src.pipelines.logistic_regression.fetch_data.data_from_sklearn.fetch_data &&
-      $$VENV_PL/bin/aigear-task workflow --version logistic_regression --module src.pipelines.logistic_regression.preprocessing.feature_processing.feature_processing &&
-      $$VENV_PL/bin/aigear-task workflow --version logistic_regression --module src.pipelines.logistic_regression.training.train.train_model &&
+      $$VENV_PL/bin/aigear-task workflow --version logistic_regression --step fetch_data &&
+      $$VENV_PL/bin/aigear-task workflow --version logistic_regression --step preprocessing &&
+      $$VENV_PL/bin/aigear-task workflow --version logistic_regression --step training &&
       tail -f /dev/null
       "
     volumes:

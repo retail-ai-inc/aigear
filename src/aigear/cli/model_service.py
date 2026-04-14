@@ -11,8 +11,6 @@ def get_argument():
         formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--version',
                         help='Version of the pipeline')
-    parser.add_argument('--model_class_path',
-                        help='Deploy gRPC services by company code')
     parser.add_argument('--service_ports', default="50051",
                         help='Internal interface of service')
     parser.add_argument('--replicas', default=1,
@@ -39,24 +37,21 @@ def deploy_grpc_service():
     if args.staging or args.production:
         env = ENV_PRODUCTION if args.production else ENV_STAGING
         if args.delete:
-            delete_gcp_grpc(model_class_path=args.model_class_path, env=env)
+            delete_gcp_grpc(pipeline_version=args.version, env=env)
         else:
             deploy_gcp_grpc(
                 pipeline_version=args.version,
-                model_class_path=args.model_class_path,
                 service_ports=args.service_ports,
                 replicas=args.replicas,
                 port=args.port,
                 env=env,
             )
-
     else:
         if args.delete:
-            delete_local_grpc(model_class_path=args.model_class_path)
+            delete_local_grpc(pipeline_version=args.version)
         else:
             deploy_local_grpc(
                 pipeline_version=args.version,
-                model_class_path=args.model_class_path,
                 service_ports=args.service_ports,
                 replicas=args.replicas,
                 port=args.port,

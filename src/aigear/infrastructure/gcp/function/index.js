@@ -96,15 +96,15 @@ function modelClassPathToYaml(modelClassPath, env) {
 function validateTask(current) {
   if (!current.docker_image) throw new Error('Missing required field: docker_image');
   if (!current.vm_name)      throw new Error('Missing required field: vm_name');
-  if (!current.pipeline_step && !current.model_class_path) {
-    throw new Error('Task must specify pipeline_step or model_class_path (or both)');
+  if (!current.step_name && !current.model_class_path) {
+    throw new Error('Task must specify step_name or model_class_path (or both)');
   }
 }
 
 /**
  * Builds the pipeline command for the VM startup script.
  *
- * The venv name comes from env.json → pipelines.<name>.scheduler.venv_pl,
+ * The venv name comes from env.json → pipelines.<name>.venv_pl,
  * and must match the venv directory created in Dockerfile.pl by uv.
  *
  * Base path is fixed to VENVBASEDIR/ — must stay in sync with:
@@ -115,12 +115,12 @@ function validateTask(current) {
  * or underscores only.
  *
  * @param {object} current  Task object from the Pub/Sub message
- * @returns {string}        Shell command fragment, or '' when pipeline_step is absent
+ * @returns {string}        Shell command fragment, or '' when step_name is absent
  */
 function buildPipelineCommand(current) {
-  if (!current.pipeline_step) return '';
+  if (!current.step_name) return '';
 
-  const baseArgs = `--version ${current.pipeline_version} --module ${current.pipeline_step}`;
+  const baseArgs = `--version ${current.pipeline_version} --step ${current.step_name}`;
 
   if (!current.venv) {
     return `aigear-task workflow ${baseArgs}`;

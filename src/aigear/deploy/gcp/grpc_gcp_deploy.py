@@ -21,15 +21,15 @@ def switch_gcp_context(cluster_name, project_id, region):
 
 def deploy_gcp_grpc(
     pipeline_version: str = None,
-    model_class_path: str = None,
     service_ports: str = "50051",
     replicas: int = 1,
     port: str = "50051",
     env: str = ENV_STAGING,
 ):
-    pipe_config = PipelinesConfig.get_version_config(pipeline_version)
-    ms_config   = pipe_config.get("model_service", {})
-    venv        = ms_config.get("venv_ms")
+    pipe_config       = PipelinesConfig.get_version_config(pipeline_version)
+    ms_config         = pipe_config.get("model_service", {})
+    model_class_path  = ms_config.get("model_class_path")
+    venv              = ms_config.get("venv_ms")
 
     helm_path = create_helm_file(
         pipeline_version=pipeline_version,
@@ -60,8 +60,10 @@ def deploy_gcp_grpc(
 
 
 def delete_gcp_grpc(
-    model_class_path=None,
+    pipeline_version: str = None,
     env: str = ENV_STAGING,
 ):
-    helm_path = get_helm_path(model_class_path=model_class_path, env=env)
+    pipe_config      = PipelinesConfig.get_version_config(pipeline_version)
+    model_class_path = pipe_config.get("model_service", {}).get("model_class_path")
+    helm_path        = get_helm_path(model_class_path=model_class_path, env=env)
     helm_deployment_delete(helm_path)
