@@ -3,7 +3,7 @@ from pathlib import Path
 from string import Template
 
 from aigear.common.config import get_project_name
-from aigear.common.constant import VENV_BASE_DIR
+from aigear.common.constant import ENV_LOCAL, VENV_BASE_DIR
 from aigear.common.image import get_image_path
 from aigear.common.logger import Logging
 
@@ -29,7 +29,7 @@ def _to_hostpath(path: Path) -> str:
 
 def get_helm_path(
         model_class_path=None,
-        is_local: bool = False,
+        env: str = ENV_LOCAL,
 ) -> Path:
     project_path = Path.cwd()
     if model_class_path is None:
@@ -41,8 +41,7 @@ def get_helm_path(
         helm_location = helm_address.replace(".", "/")
         helm_location = project_path / helm_location
 
-    filename = "grpc_deployment_local.yaml" if is_local else "grpc_deployment.yaml"
-    helm_path = helm_location / filename
+    helm_path = helm_location / f"grpc_deployment_{env}.yaml"
     return helm_path
 
 
@@ -55,7 +54,7 @@ def _create_helm_chart(
         port: str = "50051",
         pipeline_version=None,
         model_class_path=None,
-        is_local: bool = False,
+        env: str = ENV_LOCAL,
         venv: str = None,
 ):
     if pipeline_version is None or model_class_path is None:
@@ -72,11 +71,11 @@ def _create_helm_chart(
             f'          - "{model_class_path}"'
         )
 
-    image_pull_policy = "Never" if is_local else "Always"
+    image_pull_policy = "Never" if env == ENV_LOCAL else "Always"
 
     asset_volume_mount = ""
     asset_volume = ""
-    if is_local:
+    if env == ENV_LOCAL:
         asset_path = _to_hostpath(Path.cwd() / "asset")
         asset_volume_mount = (
             "\n        volumeMounts:\n"
@@ -112,8 +111,9 @@ def create_helm_file(
     service_ports: str = "50051",
     replicas: int = 1,
     port: str = "50051",
-    is_local: bool = False,
+    env: str = ENV_LOCAL,
     venv: str = None,
+    force: bool = False,
 ):
     artifacts_image = get_image_path(is_service=True)
     if pipeline_version is None:
@@ -124,18 +124,20 @@ def create_helm_file(
     project_name = project_name.replace("_", "-")
     service_name = f"{project_name}-{service_name}-service"
 
-    helm_path = get_helm_path(model_class_path=model_class_path, is_local=is_local)
-    if not helm_path.exists():
-        _create_helm_chart(
-            helm_path=helm_path,
-            service_name=service_name,
-            service_image=artifacts_image,
-            service_ports=service_ports,
-            replicas=replicas,
-            port=port,
-            pipeline_version=pipeline_version,
-            model_class_path=model_class_path,
-            is_local=is_local,
-            venv=venv,
-        )
+    helm_path = get_helm_path(model_class_path=model_class_path, env=env)
+    if helm_path.exists() and not force:
+        logger.info(f"YAML already exists, skipping: {helm_path}")
+        return None
+    _create_helm_chart(
+        helm_path=helm_path,
+        service_name=service_name,
+        service_image=artifacts_image,
+        service_ports=service_ports,
+        replicas=replicas,
+        port=port,
+        pipeline_version=pipeline_version,
+        model_class_path=model_class_path,
+        env=env,
+        venv=venv,
+    )
     return helm_path
