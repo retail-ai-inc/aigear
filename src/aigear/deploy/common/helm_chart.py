@@ -127,7 +127,7 @@ def create_helm_file(
     helm_path = get_helm_path(model_class_path=model_class_path, env=env)
     if helm_path.exists() and not force:
         logger.info(f"YAML already exists, skipping: {helm_path}")
-        return None
+        return helm_path
     _create_helm_chart(
         helm_path=helm_path,
         service_name=service_name,

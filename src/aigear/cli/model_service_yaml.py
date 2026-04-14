@@ -2,7 +2,7 @@ import argparse
 
 from aigear.common.config import AppConfig
 from aigear.common.constant import ENV_LOCAL, ENV_PRODUCTION, ENV_STAGING
-from aigear.deploy.common.helm_chart import create_helm_file
+from aigear.deploy.common.helm_chart import create_helm_file, get_helm_path
 
 _ALL_ENVS = [ENV_LOCAL, ENV_STAGING, ENV_PRODUCTION]
 
@@ -52,6 +52,7 @@ def _create_yamls(version=None, env=None, force=False):
         if not model_class_path:
             continue
         for e in envs:
+            existing = get_helm_path(model_class_path=model_class_path, env=e).exists()
             helm_path = create_helm_file(
                 pipeline_version=ver,
                 model_class_path=model_class_path,
@@ -59,12 +60,11 @@ def _create_yamls(version=None, env=None, force=False):
                 env=e,
                 force=force,
             )
-            if helm_path:
+            if helm_path and not existing:
                 print(f"✅ Generated [{ver}][{e}]: {helm_path}")
                 generated.append(helm_path)
-            else:
-                generated.append("")
-                print(f"✅ Skipped [{ver}][{e}]: already exists (use --force to overwrite)")
+            elif helm_path and existing:
+                print(f"⏭ Skipped [{ver}][{e}]: already exists (use --force to overwrite)")
     print("-----------------------------------")
 
     if not generated:
