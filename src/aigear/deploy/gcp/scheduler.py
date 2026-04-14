@@ -2,6 +2,7 @@ import json
 
 from aigear.common import run_sh
 from aigear.common.config import AigearConfig, PipelinesConfig
+from aigear.common.constant import ENV_STAGING
 from aigear.common.image import get_image_path
 from aigear.common.logger import Logging
 
@@ -150,6 +151,7 @@ def _build_step_message(
     gke_cluster: str,
     gke_zone: str,
     venv: str | None = None,
+    env: str | None = None,
 ) -> dict:
     """
     Build a single task message for the Pub/Sub payload.
@@ -158,8 +160,8 @@ def _build_step_message(
       - Base: resources block (vm_name, spec, gpu, disk_size_gb, ...)
       - Always added: docker_image, pipeline_version
       - Conditionally added: pipeline_step, model_class_path (if present in step_config)
-      - Conditionally added: gke_cluster, gke_zone (only when model_class_path is present)
-      - Conditionally added: venv (from scheduler config, applies to all steps in the pipeline)
+      - Conditionally added: gke_cluster, gke_zone, env (only when model_class_path is present)
+      - Conditionally added: venv (per-step virtual environment)
     """
     message = dict(step_config.get("resources", {}))
 
@@ -171,19 +173,24 @@ def _build_step_message(
         if field in step_config:
             message[field] = step_config[field]
 
-    # GKE fields are only needed for steps that perform a model deploy
+    # GKE fields and env are only needed for steps that perform a model deploy
     if "model_class_path" in step_config:
         message["gke_cluster"] = gke_cluster
         message["gke_zone"]    = gke_zone
+        if env:
+            message["env"] = env
 
-    # venv is a scheduler-level setting that applies to all steps in the pipeline
     if venv:
         message["venv"] = venv
 
     return message
 
 
-def create_scheduler(pipeline_version: str, step_names: list[str]):
+def create_scheduler(
+    pipeline_version: str, 
+    step_names: list[str], 
+    env: str = ENV_STAGING
+):
     aigear_config   = AigearConfig.get_config()
     pipeline_config = PipelinesConfig.get_version_config(pipeline_version)
 
@@ -196,7 +203,8 @@ def create_scheduler(pipeline_version: str, step_names: list[str]):
     gke_zone    = aigear_config.gcp.location
 
     scheduler_config  = pipeline_config.get("scheduler", {})
-    venv_pl = pipeline_config.get("venv_pl")   # venv for pipeline training steps
+    venv_pl = pipeline_config.get("venv_pl")
+    venv_ms = pipeline_config.get("model_service", {}).get("venv_ms")
 
     scheduler_messages = []
     for step_name in step_names:
@@ -205,7 +213,7 @@ def create_scheduler(pipeline_version: str, step_names: list[str]):
         # model_service uses ms image, all other steps use pl image
         is_model_service  = step_name == "model_service"
         step_docker_image = ms_image if is_model_service else pl_image
-        step_venv         = None if is_model_service else venv_pl
+        step_venv         = venv_ms if is_model_service else venv_pl
 
         message = _build_step_message(
             step_config      = step_config,
@@ -214,6 +222,7 @@ def create_scheduler(pipeline_version: str, step_names: list[str]):
             gke_cluster      = gke_cluster,
             gke_zone         = gke_zone,
             venv             = step_venv,
+            env              = env if is_model_service else None,
         )
         scheduler_messages.append(message)
     scheduler = Scheduler(
