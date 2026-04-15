@@ -3,7 +3,7 @@ import platform
 import sys
 from concurrent import futures
 from typing import Type
-
+import gc
 import grpc
 from google.protobuf import struct_pb2
 from google.protobuf.json_format import MessageToDict
@@ -81,8 +81,9 @@ def grpc_service(pipeline_version, model_class_path):
     if pipeline_version_config is None:
         logger.error(f"No pipeline_version({pipeline_version}) config found in `env.json`.")
         return
-    logger.info(f"Environment variables: {pipeline_version_config}")
+
     release_config = pipeline_version_config.get("model_service", {})
+    logger.info(f"Environment variables: {release_config}")
 
     # Release switch
     release_switch = release_config.get("release", False)
@@ -116,11 +117,17 @@ def grpc_service(pipeline_version, model_class_path):
         )
 
     # grpc
-    is_windows = platform.system().lower() == "windows" 
+    is_windows = platform.system().lower() == "windows"
     process_switch = multi_processing.get("on", False)
     port = int(grpc_config.get("port", "50051"))
     service_host = grpc_config.get("service_host", "0.0.0.0")
     if process_switch and not is_windows:
+        # Move PyTorch model weights to shared memory to avoid COW on C++ refcount updates
+        inner_model = getattr(model_instance, 'model', None)
+        if callable(getattr(inner_model, 'share_memory', None)):
+            inner_model.share_memory()
+        # Freeze GC before fork to prevent GC scanning from dirtying shared pages (COW)
+        gc.freeze()
         with grpc_features.reserve_port(port) as grpc_port:
             bind_address = f"{service_host}:{grpc_port}"
             sys.stdout.flush()
