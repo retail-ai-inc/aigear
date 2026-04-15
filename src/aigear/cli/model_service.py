@@ -18,7 +18,7 @@ def get_argument():
     parser.add_argument('--port', default="50051",
                         help='External interface of service')
 
-    env_group = parser.add_mutually_exclusive_group()
+    env_group = parser.add_mutually_exclusive_group(required=True)
     env_group.add_argument('--local', action='store_true',
                            help='Deploy to local Kubernetes (Docker Desktop)')
     env_group.add_argument('--staging', action='store_true',
