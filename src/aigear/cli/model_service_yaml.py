@@ -11,7 +11,7 @@ def get_argument():
     parser = argparse.ArgumentParser(
         description="Generate model service deployment YAML files.",
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    group = parser.add_mutually_exclusive_group(required=False)
+    group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument(
         "--create",
         action="store_true",
@@ -53,6 +53,9 @@ def _create_yamls(version=None, env=None, force=False):
             continue
         for e in envs:
             existing = get_helm_path(model_class_path=model_class_path, env=e).exists()
+            if existing and not force:
+                print(f"⏭ Skipped [{ver}][{e}]: already exists (use --force to overwrite)")
+                continue
             helm_path = create_helm_file(
                 pipeline_version=ver,
                 model_class_path=model_class_path,
@@ -60,20 +63,15 @@ def _create_yamls(version=None, env=None, force=False):
                 env=e,
                 force=force,
             )
-            if helm_path and not existing:
-                print(f"✅ Generated [{ver}][{e}]: {helm_path}")
+            if helm_path:
+                if existing:
+                    print(f"♻ Overwritten [{ver}][{e}]: {helm_path}")
+                else:
+                    print(f"✅ Generated [{ver}][{e}]: {helm_path}")
                 generated.append(helm_path)
-            elif helm_path and existing:
-                print(f"⏭ Skipped [{ver}][{e}]: already exists (use --force to overwrite)")
-    print("-----------------------------------")
-
-    if not generated:
-        print("No YAML files generated (no model_class_path found in env.json).")
 
 
 def generate_model_service_yaml():
     args = get_argument()
     if args.create:
-        _create_yamls(version=args.version, env=args.env, force=args.force)
-    else:
         _create_yamls(version=args.version, env=args.env, force=args.force)

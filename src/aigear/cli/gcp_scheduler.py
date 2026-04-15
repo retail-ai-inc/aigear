@@ -7,7 +7,7 @@ def get_argument():
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    group = parser.add_mutually_exclusive_group(required=False)
+    group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument(
         "--create",
         action="store_true",
@@ -46,5 +46,3 @@ def gcp_scheduler():
     #     delete_scheduler(args.version, step_names)
     # elif args.update:
     #     update_scheduler(args.version, step_names)
-    else:
-        create_scheduler(args.version, step_names, args.env)

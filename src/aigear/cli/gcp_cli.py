@@ -6,7 +6,7 @@ def get_argument():
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    group = parser.add_mutually_exclusive_group(required=False)
+    group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument(
         "--create",
         action="store_true",
@@ -27,5 +27,3 @@ def gcp_infra():
     #     Infra().delete()
     # elif args.update:
     #     Infra().update()
-    else:
-        Infra().create()

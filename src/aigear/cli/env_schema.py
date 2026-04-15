@@ -6,7 +6,7 @@ def get_argument():
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    group = parser.add_mutually_exclusive_group(required=False)
+    group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument(
         "--generate",
         action="store_true",
@@ -32,5 +32,3 @@ def env_schema():
     #     EnvConfig.delete_env_schema()
     # elif args.update:
     #     EnvConfig.update_env_schema(forced_generate=args.force)
-    else:
-        EnvConfig.generative_env_schema(forced_generate=args.force)
