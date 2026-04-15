@@ -1,3 +1,4 @@
+from pathlib import Path
 from sklearn.datasets import load_breast_cancer
 import pickle
 from aigear.common.logger import Logging
@@ -9,13 +10,13 @@ from src.pipelines.common.constant import gcs_switch
 logger = Logging(log_name=__name__).console_logging()
 
 
-def get_data(save_path):
+def get_data(save_path: Path) -> None:
     data = load_breast_cancer()
     with open(save_path, "wb") as f:
         pickle.dump(data, f)
 
 
-def fetch_data(pipeline_version):
+def fetch_data(pipeline_version: str) -> None:
     logger.info("-----fetch data-----")
     env_config = EnvConfig.get_config_with_schema(EnvSchema)
     asset_management = AssetManagement(

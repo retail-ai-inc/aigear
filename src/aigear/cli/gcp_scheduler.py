@@ -3,7 +3,7 @@ import argparse
 from aigear.deploy.gcp.scheduler import create_scheduler
 
 
-def get_argument():
+def get_argument() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -26,7 +26,7 @@ def get_argument():
     return parser.parse_args()
 
 
-def gcp_scheduler():
+def gcp_scheduler() -> None:
     args = get_argument()
 
     missing = []

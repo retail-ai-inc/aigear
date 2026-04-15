@@ -2,7 +2,7 @@ import multiprocessing
 import platform
 import sys
 from concurrent import futures
-from typing import Type
+from typing import Any
 import gc
 import grpc
 from google.protobuf import struct_pb2
@@ -35,7 +35,7 @@ class MLServicer(grpc_pb2_grpc.MLServicer):
         return grpc_pb2.MLResponse(response=response_data)
 
 
-def _run_server(bind_address: str, model_instance: Type, grpc_options: dict):
+def _run_server(bind_address: str, model_instance: Any, grpc_options: dict) -> None:
     """Start a server in a subprocess."""
     logger.info("Starting new server.")
 
@@ -75,7 +75,7 @@ def _run_server(bind_address: str, model_instance: Type, grpc_options: dict):
     grpc_features.wait_until_closed(server)
 
 
-def grpc_service(pipeline_version, model_class_path):
+def grpc_service(pipeline_version: str, model_class_path: str) -> None:
     # Get environment variables
     pipeline_version_config = PipelinesConfig.get_version_config(pipeline_version)
     if pipeline_version_config is None:

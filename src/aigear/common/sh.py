@@ -25,7 +25,7 @@ def _clean_output(text: str) -> str:
 
 def run_sh(
     command: list,
-    inputs: str = None,
+    inputs: str | None = None,
     timeout: int = 30,
 ):
     use_shell = (platform.system() == "Windows")
@@ -45,7 +45,7 @@ def run_sh(
         return f"Error: Command({command}) execution timeout."
 
 
-def run_sh_stream(command: list, inputs: str = None):
+def run_sh_stream(command: list, inputs: str | None = None) -> int:
     use_shell = (platform.system() == "Windows")
     proc = subprocess.Popen(
         command,

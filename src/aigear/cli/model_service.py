@@ -5,7 +5,7 @@ from aigear.deploy.gcp.grpc_gcp_deploy import delete_gcp_grpc, deploy_gcp_grpc
 from aigear.deploy.local.grpc_local_deploy import delete_local_grpc, deploy_local_grpc
 
 
-def get_argument():
+def get_argument() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -31,7 +31,7 @@ def get_argument():
     return parser.parse_args()
 
 
-def deploy_grpc_service():
+def deploy_grpc_service() -> None:
     args = get_argument()
 
     if args.staging or args.production:

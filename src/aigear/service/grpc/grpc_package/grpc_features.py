@@ -1,10 +1,11 @@
 import time
 import signal
 from contextlib import contextmanager
+from typing import Any
 import socket
 
 
-def wait_until_closed(server):
+def wait_until_closed(server: Any) -> None:
     """
     Wait indefinitely until receiving a signal to shut down the service.
     """
@@ -23,7 +24,7 @@ def wait_until_closed(server):
 
 
 @contextmanager
-def reserve_port(port):
+def reserve_port(port: int):
     """
     Find and reserve a port for all subprocesses to use
     """

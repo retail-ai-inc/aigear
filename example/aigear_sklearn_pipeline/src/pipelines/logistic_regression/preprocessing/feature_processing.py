@@ -1,4 +1,6 @@
 import pickle
+from pathlib import Path
+from typing import Any
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from aigear.common.logger import Logging
@@ -11,14 +13,14 @@ logger = Logging(log_name=__name__).console_logging()
 
 
 def save_data(
-    dataset,
-    save_path,
-):
+    dataset: Any,
+    save_path: Path,
+) -> None:
     with open(save_path, "wb") as f:
         pickle.dump(dataset, f)
 
 
-def feature_processing(pipeline_version):
+def feature_processing(pipeline_version: str) -> None:
     logger.info("-----feature processing-----")
     env_config = EnvConfig.get_config_with_schema(EnvSchema)
     dataset_management = AssetManagement(

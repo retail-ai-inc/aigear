@@ -3,7 +3,7 @@ import argparse
 from aigear.deploy.gcp.artifacts_image import create_artifacts_image
 
 
-def get_argument():
+def get_argument() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -33,7 +33,7 @@ def get_argument():
     return args
 
 
-def _run_images(args):
+def _run_images(args: argparse.Namespace) -> None:
     if args.dockerfile_path is None:
         print("No '--dockerfile_path' provided, operating on all default images.")
         for dockerfile, is_service in [("Dockerfile.pl", False), ("Dockerfile.ms", True)]:

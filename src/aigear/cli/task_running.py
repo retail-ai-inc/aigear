@@ -7,7 +7,7 @@ from aigear.common.loading_module import LoadModule
 from aigear.service.grpc.grpc_service import grpc_service
 
 
-def run_workflow(pipeline_version, step_name):
+def run_workflow(pipeline_version: str, step_name: str) -> None:
     pipeline_config = PipelinesConfig.get_version_config(pipeline_version)
     if pipeline_config is None:
         logging.error(f"No config found for version: {pipeline_version}")
@@ -25,7 +25,7 @@ def run_workflow(pipeline_version, step_name):
         logging.error(f"Error while executing {module_path}: {e}")
 
 
-def get_argument():
+def get_argument() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -43,7 +43,7 @@ def get_argument():
     return parser.parse_args()
 
 
-def task_run():
+def task_run() -> None:
     project_root = os.getcwd()
     if project_root not in sys.path:
         sys.path.insert(0, project_root)

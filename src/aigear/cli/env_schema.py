@@ -2,7 +2,7 @@ import argparse
 from aigear.common.config import EnvConfig
 
 
-def get_argument():
+def get_argument() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -23,7 +23,7 @@ def get_argument():
     return parser.parse_args()
 
 
-def env_schema():
+def env_schema() -> None:
     args = get_argument()
     if args.generate:
         EnvConfig.generative_env_schema(forced_generate=args.force)

@@ -8,7 +8,7 @@ from aigear.deploy.common.kubectl_command import helm_deploy, helm_deployment_de
 logger = Logging(log_name=__name__).console_logging()
 
 
-def switch_gcp_context(cluster_name, project_id, region):
+def switch_gcp_context(cluster_name: str, project_id: str, region: str) -> None:
     command = [
         "gcloud", "container", "clusters", "get-credentials",
         cluster_name,
@@ -20,7 +20,7 @@ def switch_gcp_context(cluster_name, project_id, region):
 
 
 def deploy_gcp_grpc(
-    pipeline_version: str = None,
+    pipeline_version: str | None = None,
     service_ports: str = "50051",
     replicas: int = 1,
     port: str = "50051",
@@ -55,7 +55,7 @@ def deploy_gcp_grpc(
 
 
 def delete_gcp_grpc(
-    pipeline_version: str = None,
+    pipeline_version: str | None = None,
     env: str = ENV_STAGING,
 ):
     pipe_config      = PipelinesConfig.get_version_config(pipeline_version)

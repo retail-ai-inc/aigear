@@ -8,7 +8,7 @@ from aigear.deploy.common.kubectl_command import helm_deploy, helm_deployment_de
 logger = Logging(log_name=__name__).console_logging()
 
 
-def switch_local_context():
+def switch_local_context() -> None:
     command = [
         "kubectl", "config", "use-context", "docker-desktop"
     ]
@@ -17,7 +17,7 @@ def switch_local_context():
 
 
 def deploy_local_grpc(
-        pipeline_version: str = None,
+        pipeline_version: str | None = None,
         service_ports: str = "50051",
         replicas: int = 1,
         port: str = "50051",
@@ -45,7 +45,7 @@ def deploy_local_grpc(
         logger.info("Deployment completed.")
 
 
-def delete_local_grpc(pipeline_version: str = None):
+def delete_local_grpc(pipeline_version: str | None = None) -> None:
     pipe_config      = PipelinesConfig.get_version_config(pipeline_version)
     model_class_path = pipe_config.get("model_service", {}).get("model_class_path")
     helm_path        = get_helm_path(model_class_path=model_class_path, env=ENV_LOCAL)

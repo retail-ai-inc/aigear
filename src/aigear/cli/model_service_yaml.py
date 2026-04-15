@@ -7,7 +7,7 @@ from aigear.deploy.common.helm_chart import create_helm_file, get_helm_path
 _ALL_ENVS = [ENV_LOCAL, ENV_STAGING, ENV_PRODUCTION]
 
 
-def get_argument():
+def get_argument() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Generate model service deployment YAML files.",
         formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -36,7 +36,7 @@ def get_argument():
     return parser.parse_args()
 
 
-def _create_yamls(version=None, env=None, force=False):
+def _create_yamls(version: str | None = None, env: str | None = None, force: bool = False) -> None:
     envs = [env] if env else _ALL_ENVS
     pipelines = AppConfig.pipelines()
 

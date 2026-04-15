@@ -5,7 +5,7 @@ from aigear.common.config import AigearConfig
 from aigear.infrastructure.gcp.kms import CloudKMS
 
 
-def get_argument():
+def get_argument() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Encrypt or decrypt env.json using Cloud KMS.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -45,7 +45,7 @@ def get_argument():
     return parser.parse_args()
 
 
-def _build_kms(args) -> CloudKMS:
+def _build_kms(args: argparse.Namespace) -> CloudKMS:
     """
     Resolve KMS config from CLI args first, falling back to env.json.
     When decrypting, env.json may not yet exist, so CLI args are required.
@@ -73,7 +73,7 @@ def _build_kms(args) -> CloudKMS:
         )
 
 
-def kms_env():
+def kms_env() -> None:
     args = get_argument()
     cloud_kms = _build_kms(args)
 

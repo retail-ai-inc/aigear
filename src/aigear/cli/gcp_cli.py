@@ -2,7 +2,7 @@ import argparse
 from aigear.infrastructure.gcp.infra import Infra
 
 
-def get_argument():
+def get_argument() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -18,7 +18,7 @@ def get_argument():
     return parser.parse_args()
 
 
-def gcp_infra():
+def gcp_infra() -> None:
     args = get_argument()
     if args.create:
         Infra().create()
