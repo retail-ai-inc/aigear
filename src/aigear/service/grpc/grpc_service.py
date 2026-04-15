@@ -82,16 +82,8 @@ def grpc_service(pipeline_version, model_class_path):
         logger.error(f"No pipeline_version({pipeline_version}) config found in `env.json`.")
         return
 
-    release_config = pipeline_version_config.get("model_service", {})
-    logger.info(f"Environment variables: {release_config}")
-
-    # Release switch
-    release_switch = release_config.get("release", False)
-    if not release_switch:
-        logger.info(f"The Release parameter for pipeline_version({pipeline_version}) is not turned on.")
-        return
-
-    grpc_config = release_config.get("grpc", {})
+    ms_config = pipeline_version_config.get("model_service", {})
+    grpc_config = ms_config.get("grpc", {})
     multi_processing = grpc_config.get("multi_processing", {})
     disable_omp = multi_processing.get("disable_omp", True)
     # load ml module

@@ -37,16 +37,12 @@ def deploy_local_grpc(
         venv=venv,
     )
 
-    release_switch = ms_config.get("release", False)
-    if release_switch:
-        switch_local_context()
-        event = helm_deploy(helm_path)
-        if "error" in event:
-            logger.info(f"Error: {event}.")
-        else:
-            logger.info("Deployment completed.")
+    switch_local_context()
+    event = helm_deploy(helm_path)
+    if "error" in event:
+        logger.info(f"Error: {event}.")
     else:
-        logger.info("The publishing model service is not set in the configuration(model_service.release).")
+        logger.info("Deployment completed.")
 
 
 def delete_local_grpc(pipeline_version: str = None):

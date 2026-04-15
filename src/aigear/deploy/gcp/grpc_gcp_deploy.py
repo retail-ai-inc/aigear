@@ -41,22 +41,17 @@ def deploy_gcp_grpc(
         venv=venv,
     )
 
-    release_switch = ms_config.get("release", False)
-    if release_switch:
-        aigear_config = AigearConfig.get_config()
-        switch_gcp_context(
-            cluster_name=aigear_config.gcp.kubernetes.cluster_name,
-            project_id=aigear_config.gcp.gcp_project_id,
-            region=aigear_config.gcp.location
-        )
-        event = helm_deploy(helm_path)
-        if "error" in event:
-            logger.info(f"Error: {event}.")
-        else:
-            logger.info("Deployment completed.")
-            logger.info("kubectl get service 'server name'.")
+    aigear_config = AigearConfig.get_config()
+    switch_gcp_context(
+        cluster_name=aigear_config.gcp.kubernetes.cluster_name,
+        project_id=aigear_config.gcp.gcp_project_id,
+        region=aigear_config.gcp.location
+    )
+    event = helm_deploy(helm_path)
+    if "error" in event:
+        logger.info(f"Error: {event}.")
     else:
-        logger.info("The publishing model service is not set in the configuration(model_service.release).")
+        logger.info("Deployment completed.")
 
 
 def delete_gcp_grpc(

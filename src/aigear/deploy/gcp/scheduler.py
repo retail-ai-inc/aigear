@@ -223,12 +223,22 @@ def create_scheduler(
     venv_pl = pipeline_config.get("venv_pl")
     venv_ms = pipeline_config.get("model_service", {}).get("venv_ms")
 
+    ms_config = pipeline_config.get("model_service", {})
+
     scheduler_messages = []
     for step_name in step_names:
         step_config = pipeline_config.get(step_name, {})
 
         # model_service uses ms image, all other steps use pl image
         is_model_service  = step_name == "model_service"
+
+        if is_model_service and not ms_config.get("release", False):
+            logger.warning(
+                f"Skipping 'model_service' step for '{pipeline_version}': "
+                f"'model_service.release' is not enabled in env.json."
+            )
+            continue
+
         step_docker_image = ms_image if is_model_service else pl_image
         step_venv         = venv_ms if is_model_service else venv_pl
         env = env if is_model_service else None
