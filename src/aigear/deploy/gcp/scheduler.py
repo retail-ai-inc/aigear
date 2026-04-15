@@ -42,9 +42,10 @@ class Scheduler:
             "--project", self.project_id,
         ]
         event = run_sh(command)
-        logger.info(event)
         if "ERROR" in event:
-            logger.info("Error occurred while creating cloud function.")
+            logger.error(f"Failed to create scheduler job '{self.name}': {event}")
+        else:
+            logger.info(f"Scheduler job '{self.name}' created successfully. (schedule: {self.schedule}, timezone: {self.time_zone})")
 
     def delete(self):
         command = [
@@ -54,7 +55,10 @@ class Scheduler:
             "--project", self.project_id,
         ]
         event = run_sh(command, "yes\n")
-        logger.info(event)
+        if "ERROR" in event:
+            logger.error(f"Failed to delete scheduler job '{self.name}': {event}")
+        else:
+            logger.info(f"Scheduler job '{self.name}' deleted.")
 
     def describe(self):
         is_exist = False
@@ -65,9 +69,15 @@ class Scheduler:
             "--project", self.project_id,
         ]
         event = run_sh(command)
-        logger.info(event)
         if "ENABLED" in event:
             is_exist = True
+            schedule = next((line.split(": ", 1)[1] for line in event.splitlines() if line.startswith("schedule:")), "?")
+            timezone = next((line.split(": ", 1)[1] for line in event.splitlines() if line.startswith("timeZone:")), "?")
+            logger.info(f"Scheduler job '{self.name}' exists. (schedule: {schedule}, timezone: {timezone})")
+        elif "NOT_FOUND" in event:
+            logger.info(f"Scheduler job '{self.name}' not found.")
+        else:
+            logger.error(f"Unexpected response describing scheduler job '{self.name}': {event}")
         return is_exist
 
     def list(self):
@@ -88,10 +98,10 @@ class Scheduler:
             "--project", self.project_id,
         ]
         event = run_sh(command)
-        if event:
-            logger.info(event)
+        if event and "ERROR" in event:
+            logger.error(f"Failed to run scheduler job '{self.name}': {event}")
         else:
-            logger.info("Running successfully, executing job.")
+            logger.info(f"Scheduler job '{self.name}' triggered successfully.")
 
     def pause(self):
         command = [
@@ -101,7 +111,10 @@ class Scheduler:
             "--project", self.project_id,
         ]
         event = run_sh(command)
-        logger.info(event)
+        if "ERROR" in event:
+            logger.error(f"Failed to pause scheduler job '{self.name}': {event}")
+        else:
+            logger.info(f"Scheduler job '{self.name}' paused.")
 
     def resume(self):
         command = [
@@ -111,7 +124,10 @@ class Scheduler:
             "--project", self.project_id,
         ]
         event = run_sh(command)
-        logger.info(event)
+        if "ERROR" in event:
+            logger.error(f"Failed to resume scheduler job '{self.name}': {event}")
+        else:
+            logger.info(f"Scheduler job '{self.name}' resumed.")
 
     @staticmethod
     def update(
@@ -133,9 +149,10 @@ class Scheduler:
             "--project", project_id,
         ]
         event = run_sh(command)
-        logger.info(event)
         if "ERROR" in event:
-            logger.info("Error occurred while creating cloud function.")
+            logger.error(f"Failed to update scheduler job '{name}': {event}")
+        else:
+            logger.info(f"Scheduler job '{name}' updated successfully. (schedule: {schedule})")
 
 
 def _build_step_message(
