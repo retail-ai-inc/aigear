@@ -66,9 +66,7 @@ def _create_helm_chart(
             f'command: ["{aigear_task}", "grpc"]\n'
             f'        args:\n'
             f'          - "--version"\n'
-            f'          - "{pipeline_version}"\n'
-            f'          - "--module"\n'
-            f'          - "{model_class_path}"'
+            f'          - "{pipeline_version}"'
         )
 
     image_pull_policy = "Never" if env == ENV_LOCAL else "Always"
