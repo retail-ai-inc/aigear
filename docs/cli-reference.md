@@ -6,12 +6,13 @@ All CLI entry points are installed as standalone commands by `pip install aigear
 |---|---|
 | `aigear-init` | Initialize a new project scaffold |
 | `aigear-gcp-infra` | Create GCP infrastructure (buckets, IAM, Pub/Sub, schedulers) |
-| `aigear-workflow` | Run a single pipeline step locally |
+| `aigear-task` | Run a pipeline step or start a gRPC model service |
 | `aigear-scheduler` | Create a Cloud Scheduler job for pipeline steps |
 | `aigear-image` | Build and optionally push Docker images to Artifact Registry |
-| `aigear-grpc` | Start a gRPC model serving server |
+| `aigear-model-yaml` | Generate Kubernetes deployment YAML files for model services |
 | `aigear-deploy-model` | Deploy or delete a gRPC model service (local or GCP) |
 | `aigear-env-schema` | Auto-generate a Pydantic schema from `env.json` |
+| `aigear-kms-env` | Encrypt or decrypt `env.json` using Cloud KMS |
 
 ---
 
@@ -60,18 +61,38 @@ Resource creation runs in three ordered phases:
 
 ---
 
-### `aigear-workflow`
+### `aigear-task`
 
-Run a single named pipeline step locally by loading it as a Python module.
+Run a pipeline step or start a gRPC model service. The step module path and model class path are resolved automatically from `env.json`.
 
 ```
-aigear-workflow --version VERSION --step STEP
+aigear-task <subcommand> [options]
+```
+
+#### Subcommand: `workflow`
+
+Run a single named pipeline step locally.
+
+```
+aigear-task workflow --version VERSION --step STEP_NAME
 ```
 
 | Argument | Description |
 |---|---|
-| `--version` | Pipeline version (e.g., `v1`) |
-| `--step` | Dotted module path to the step function (e.g., `src.pipelines.v1.training.run`) |
+| `--version` | Pipeline version (e.g., `logistic_regression`) |
+| `--step` | Step name as defined in `env.json` (e.g., `fetch_data`). The full module path is looked up from `env.json`. |
+
+#### Subcommand: `grpc`
+
+Start a gRPC model serving server. The model class path is resolved from `env.json`.
+
+```
+aigear-task grpc --version VERSION
+```
+
+| Argument | Description |
+|---|---|
+| `--version` | Pipeline version (e.g., `logistic_regression`) |
 
 ---
 
@@ -106,54 +127,56 @@ aigear-image [--create]
              [--is_service] [--force] [--push]
 ```
 
+At least one of `--create` or `--push` is required. They can be combined to build then push in a single command.
+
 | Argument | Default | Description |
 |---|---|---|
-| `--create` | — | Build and push Docker image(s) to Artifact Registry. Runs by default if omitted. |
-| `--dockerfile_path` | `None` | Path to a specific Dockerfile. If omitted, builds both `Dockerfile.pl` and `Dockerfile.ms` |
+| `--create` | — | Build the Docker image(s) |
+| `--push` | — | Push the Docker image(s) to Artifact Registry. Can be used alone (push-only) or together with `--create` (build then push). |
+| `--dockerfile_path` | `None` | Path to a specific Dockerfile. If omitted, operates on both `Dockerfile.pl` and `Dockerfile.ms` |
 | `--build_context` | `.` | Docker build context directory |
-| `--image_name` | `None` | Override image name |
-| `--image_version` | `latest` | Image version tag |
 | `--is_service` | `false` | Mark image as a model service image (auto-set when building `Dockerfile.ms`) |
-| `--force` | `false` | Rebuild even if the image already exists |
-| `--push` | `false` | Push to Artifact Registry after build |
 
 > Future commands: `--delete`, `--update`
 
 ---
 
-### `aigear-grpc`
+### `aigear-model-yaml`
 
-Start a gRPC model serving server in the current process.
+Generate Kubernetes Helm deployment YAML files for model services. The model class path is resolved from `env.json`.
 
 ```
-aigear-grpc --version VERSION --model_class_path CLASS_PATH
+aigear-model-yaml --create [--version VERSION] [--env ENV] [--force]
 ```
 
-| Argument | Description |
-|---|---|
-| `--version` | Pipeline version |
-| `--model_class_path` | Dotted path to the model class, e.g. `src.pipelines.v1.model_service.MyModel` |
+| Argument | Default | Description |
+|---|---|---|
+| `--create` | — | Generate the YAML file(s). Required. |
+| `--version` | `None` | Pipeline version to generate YAML for. Omit to generate for all pipeline versions. |
+| `--env` | `None` | Target environment (`local`, `staging`, or `production`). Omit to generate for all three environments. |
+| `--force` | `false` | Overwrite existing YAML files |
 
 ---
 
 ### `aigear-deploy-model`
 
-Deploy or delete a gRPC model service, either locally (via Docker Compose) or on GCP.
+Deploy or delete a gRPC model service, either to local Kubernetes (Docker Desktop) or to GCP. The model class path is resolved automatically from `env.json`.
 
 ```
-aigear-deploy-model --version VERSION --model_class_path CLASS_PATH
+aigear-deploy-model --version VERSION {--local | --staging | --production}
                     [--service_ports PORTS] [--replicas N] [--port PORT]
-                    [--gcp] [--delete]
+                    [--delete]
 ```
 
 | Argument | Default | Description |
 |---|---|---|
 | `--version` | — | Pipeline version |
-| `--model_class_path` | — | Dotted path to the model class |
+| `--local` | — | Deploy to local Kubernetes (Docker Desktop). Mutually exclusive with `--staging` and `--production`. |
+| `--staging` | — | Deploy to GCP staging environment. Mutually exclusive with `--local` and `--production`. |
+| `--production` | — | Deploy to GCP production environment. Mutually exclusive with `--local` and `--staging`. |
 | `--service_ports` | `50051` | Internal container port(s) |
 | `--replicas` | `1` | Number of service replicas |
 | `--port` | `50051` | External service port |
-| `--gcp` | `false` | Deploy to GCP instead of locally |
 | `--delete` | `false` | Delete the deployment instead of creating it |
 
 ---
@@ -172,3 +195,30 @@ aigear-env-schema [--generate] [--force]
 | `--force` | Regenerate the schema even if one already exists |
 
 > Future commands: `--delete`, `--update`
+
+---
+
+### `aigear-kms-env`
+
+Encrypt or decrypt `env.json` using Cloud KMS. The default ciphertext path is `kms/<env>/<env>-env.bin` (e.g. `kms/staging/staging-env.bin`).
+
+```
+aigear-kms-env {--encrypt | --decrypt}
+               [--environment {staging,production}]
+               [--input PATH] [--output PATH]
+               [--project-id ID] [--location LOC] [--keyring NAME] [--key NAME]
+```
+
+| Argument | Default | Description |
+|---|---|---|
+| `--encrypt` | — | Encrypt `env.json` to a `.bin` ciphertext file. Mutually exclusive with `--decrypt`. |
+| `--decrypt` | — | Decrypt a `.bin` ciphertext file to `env.json`. Mutually exclusive with `--encrypt`. |
+| `--environment` | `staging` | Target environment (`staging` or `production`). Determines the default ciphertext path. |
+| `--input` | `None` | Override the input file path. |
+| `--output` | `None` | Override the output file path. |
+| `--project-id` | `None` | GCP project ID. Falls back to `env.json` if omitted. |
+| `--location` | `None` | KMS location (e.g. `asia-northeast1`). Falls back to `env.json` if omitted. |
+| `--keyring` | `None` | KMS keyring name. Falls back to `env.json` if omitted. |
+| `--key` | `None` | KMS key name. Falls back to `env.json` if omitted. |
+
+> When decrypting (before `env.json` exists), provide `--project-id`, `--location`, `--keyring`, and `--key` explicitly, since there is no `env.json` to fall back on.

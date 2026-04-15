@@ -21,7 +21,6 @@ Aigear provisions GCP resources and manages Kubernetes deployments. The followin
 - **[gcloud CLI](https://cloud.google.com/sdk/docs/install)** — required for all GCP operations (infrastructure, Cloud Scheduler, Artifact Registry, etc.)
   ```bash
   gcloud auth login
-  gcloud config set project YOUR_PROJECT_ID
   ```
 - **[kubectl](https://kubernetes.io/docs/tasks/tools/)** — required only if deploying the gRPC model service to GCP Kubernetes (`aigear-deploy-model`)
 
@@ -106,11 +105,14 @@ Fill in the generated scaffold with your own code:
 ### 6. Build Docker images
 
 ```bash
-# Build both pipeline and model service images (default)
+# Build both pipeline and model service images
+aigear-image --create
+
+# Build and push to Artifact Registry in one step
 aigear-image --create --push
 
-# Build and push a specific image
-aigear-image --create --dockerfile_path Dockerfile.pl --image_name my-pipeline --image_version v1 --push
+# Push a previously built image without rebuilding
+aigear-image --push
 ```
 
 ### 7. Schedule pipeline steps
@@ -118,10 +120,14 @@ aigear-image --create --dockerfile_path Dockerfile.pl --image_name my-pipeline -
 Creates a Cloud Scheduler job on GCP that triggers the specified pipeline steps on a cron schedule defined in `env.json`.
 
 ```bash
-aigear-scheduler --create --version logistic_regression --step_names fetch_data,preprocessing,training
+aigear-scheduler --create --version v1 --step_names fetch_data,preprocessing,training
 ```
 
 > **Tip:** Once created, you can go to [Cloud Scheduler](https://console.cloud.google.com/cloudscheduler) in the GCP Console to manually trigger an immediate run. A `--run` flag for triggering directly from the CLI is planned but not yet available (`aigear-scheduler --version v1 --run`).
+
+---
+
+> For a complete end-to-end walkthrough — from writing pipeline code and building images to deploying a gRPC model service on Kubernetes — see the **[Tutorial](docs/tutorial.md)**.
 
 ---
 
@@ -172,12 +178,13 @@ See the full [CLI Reference](docs/cli-reference.md) for all commands and argumen
 |---|---|
 | `aigear-init` | Initialize a new project scaffold |
 | `aigear-gcp-infra` | Create GCP infrastructure (buckets, IAM, Pub/Sub, schedulers) |
-| `aigear-workflow` | Run a single pipeline step locally |
+| `aigear-task` | Run a pipeline step (`workflow`) or start a gRPC model server (`grpc`) |
 | `aigear-scheduler` | Create a Cloud Scheduler job for pipeline steps |
-| `aigear-image` | Build and optionally push Docker images to Artifact Registry |
-| `aigear-grpc` | Start a gRPC model serving server |
-| `aigear-deploy-model` | Deploy or delete a gRPC model service (local or GCP) |
+| `aigear-image` | Build and/or push Docker images to Artifact Registry |
+| `aigear-model-yaml` | Generate Kubernetes deployment YAML files for model services |
+| `aigear-deploy-model` | Deploy or delete a gRPC model service (local Kubernetes or GCP) |
 | `aigear-env-schema` | Auto-generate a Pydantic schema from `env.json` |
+| `aigear-kms-env` | Encrypt or decrypt `env.json` using Cloud KMS |
 
 ---
 

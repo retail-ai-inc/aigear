@@ -38,8 +38,6 @@
 | `event` | `string` | Trigger event type (`push` or `tag`) | `push` |
 | `branch_pattern` | `string` | Branch name or regex pattern (used when `event` is `push`) | `^main$` |
 | `tag_pattern` | `string` | Tag pattern (used when `event` is `tag`) | `^v.*$` |
-| `substitutions` | `string` | Build variable substitutions | `_ENV=staging,_REGION=asia-northeast1` |
-
 > The Cloud Build config file path is fixed at `/cloudbuild/cloudbuild.yaml` and cannot be changed. `aigear-init` generates this file automatically.
 
 #### 2.1.3 Cloud KMS (`kms`)
@@ -120,7 +118,11 @@
 
 ## 3. Pipeline Configuration (`pipelines`)
 
-Pipelines are keyed by version name (e.g., `logistic_regression`, `v1`). Each version contains a scheduler and one or more pipeline steps.
+Pipelines are keyed by version name (e.g., `logistic_regression`, `v1`). Each version contains the following top-level fields:
+
+| Parameter | Type | Description | Example |
+| :--- | :--- | :--- | :--- |
+| `venv_pl` | `string` | *(optional)* Venv name for pipeline training steps. Resolves to `/opt/venv/<name>/bin/aigear-task`. Omit to use the image's default `aigear-task`. | `"pl"` |
 
 ### 3.1 Scheduler (`scheduler`)
 
@@ -129,7 +131,6 @@ Pipelines are keyed by version name (e.g., `logistic_regression`, `v1`). Each ve
 | `name` | `string` | Cloud Scheduler job name | `test-sklearn-pipeline` |
 | `schedule` | `string` | Cron expression — [reference](https://cloud.google.com/scheduler/docs/configuring/cron-job-schedules) | `45 21 * * 0` |
 | `time_zone` | `string` | Scheduler time zone (IANA format) — [reference](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) | `Asia/Tokyo` |
-| `venv_pl` | `string` | *(optional)* Venv name for pipeline training steps. Resolves to `/opt/venv/<name>/bin/aigear-workflow`. Omit to use the image's default `aigear-workflow`. | `"ape_pl"` |
 
 ### 3.2 Pipeline Steps
 
@@ -149,7 +150,7 @@ Each pipeline step (e.g., `fetch_data`, `preprocessing`, `training`) shares the 
 | Parameter | Type | Description | Example |
 | :--- | :--- | :--- | :--- |
 | `release` | `boolean` | Deploy as a gRPC service after training | `true` |
-| `venv_ms` | `string` | *(optional)* Venv name for the model service container. Resolves to `/opt/venv/<name>/bin/aigear-grpc`. Omit to use the image's default `aigear-grpc`. | `"ape_ms"` |
+| `venv_ms` | `string` | *(optional)* Venv name for the model service container. Resolves to `/opt/venv/<name>/bin/aigear-task`. Omit to use the image's default `aigear-task`. | `"ms"` |
 | `model_class_path` | `string` | Python dotted path to the ModelService class | `src.pipelines.logistic_regression.model_service.logistic_regression_service.ModelService` |
 | `resources.vm_name` | `string` | VM name for deploy command | `test-sklearn-model-service-vm` |
 | `resources.disk_size_gb` | `string` | Disk size (GB) | `"50"` |
@@ -250,6 +251,7 @@ Each pipeline step (e.g., `fetch_data`, `preprocessing`, `training`) shares the 
     },
     "pipelines": {
         "logistic_regression": {
+            "venv_pl": "pl",
             "scheduler": {
                 "name": "test-sklearn-pipeline",
                 "schedule": "45 21 * * 0",
@@ -294,6 +296,7 @@ Each pipeline step (e.g., `fetch_data`, `preprocessing`, `training`) shares the 
             },
             "model_service": {
                 "release": true,
+                "venv_ms": "ms",
                 "grpc": {
                     "keep_alive": {
                         "time": 60,
@@ -337,11 +340,13 @@ All CLI commands read `env.json` from the current working directory.
 | `aigear-init` | `--name`, `--pipeline_versions` | Scaffold a new project |
 | `aigear-gcp-infra` | `--create` | Provision all GCP infrastructure defined in `env.json` |
 | `aigear-env-schema` | `--generate`, `--force` | Auto-generate a Pydantic schema from `env.json` |
-| `aigear-image` | `--create`, `--dockerfile_path`, `--build_context`, `--image_name`, `--image_version`, `--is_service`, `--force`, `--push` | Build and push Docker images to Artifact Registry |
+| `aigear-kms-env` | `--encrypt`, `--decrypt`, `--environment`, `--input`, `--output`, `--project-id`, `--location`, `--keyring`, `--key` | Encrypt or decrypt `env.json` using Cloud KMS |
+| `aigear-image` | `--create`, `--push`, `--dockerfile_path`, `--build_context`, `--is_service` | Build and/or push Docker images to Artifact Registry |
 | `aigear-scheduler` | `--create`, `--version`, `--step_names` | Create Cloud Scheduler jobs for pipeline steps |
-| `aigear-workflow` | `--version`, `--step` | Run a single pipeline step locally |
-| `aigear-grpc` | `--version`, `--model_class_path` | Start a gRPC model serving server |
-| `aigear-deploy-model` | `--version`, `--model_class_path`, `--service_ports`, `--replicas`, `--port`, `--gcp`, `--delete` | Deploy or delete a gRPC model service (local or GCP) |
+| `aigear-task workflow` | `--version`, `--step` | Run a single pipeline step locally (step name looked up from `env.json`) |
+| `aigear-task grpc` | `--version` | Start a gRPC model serving server (model class path read from `env.json`) |
+| `aigear-model-yaml` | `--create`, `--version`, `--env`, `--force` | Generate Kubernetes deployment YAML files for model services |
+| `aigear-deploy-model` | `--version`, `--local`/`--staging`/`--production`, `--service_ports`, `--replicas`, `--port`, `--delete` | Deploy or delete a gRPC model service (local Kubernetes or GCP) |
 
 ---
 
@@ -354,7 +359,7 @@ All CLI commands read `env.json` from the current working directory.
 2. Fill in `gcp_project_id` and other environment-specific values.
 3. Set `on: true` only for services you intend to use — unused services should remain `false`.
 4. Run `aigear-gcp-infra --create` to provision infrastructure (requires GCP owner-level permissions; recommended to run in Cloud Shell).
-5. Run pipeline steps with `aigear-workflow --version <version> --step <dotted.path>`.
+5. Run pipeline steps with `aigear-task workflow --version <version> --step <step_name>`.
 
 ---
 
@@ -363,7 +368,7 @@ All CLI commands read `env.json` from the current working directory.
 > [!WARNING]
 > Observe the following conventions to keep the project secure:
 
-- **`env.json` encryption**: Encrypt `env.json` with Cloud KMS using `aigear-env-schema` before committing. `aigear-init` automatically installs a git pre-commit hook that blocks commits if `env.json` is newer than its encrypted counterpart — ensuring the plaintext file is never accidentally pushed.
+- **`env.json` encryption**: Encrypt `env.json` with Cloud KMS using `aigear-kms-env --encrypt` before committing. `aigear-init` automatically installs a git pre-commit hook that blocks commits if `env.json` is newer than its encrypted counterpart — ensuring the plaintext file is never accidentally pushed. To decrypt on a new machine: `aigear-kms-env --decrypt --project-id ID --location LOC --keyring NAME --key NAME`.
 - **Permission separation**: Infrastructure creation (`aigear-gcp-infra`) requires owner-level GCP permissions and should be run in Cloud Shell. Day-to-day pipeline commands require only developer-level permissions.
 - **Environment isolation**: Keep separate `env.json` files for production and staging; never share them across environments.
 - **Restart after changes**: After modifying `env.json`, restart the application or container to load the updated configuration.
