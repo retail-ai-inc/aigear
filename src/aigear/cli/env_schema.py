@@ -2,11 +2,11 @@ import argparse
 from aigear.common.config import EnvConfig
 
 
-def get_argument():
+def get_argument() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    group = parser.add_mutually_exclusive_group(required=False)
+    group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument(
         "--generate",
         action="store_true",
@@ -23,7 +23,7 @@ def get_argument():
     return parser.parse_args()
 
 
-def env_schema():
+def env_schema() -> None:
     args = get_argument()
     if args.generate:
         EnvConfig.generative_env_schema(forced_generate=args.force)
@@ -32,5 +32,3 @@ def env_schema():
     #     EnvConfig.delete_env_schema()
     # elif args.update:
     #     EnvConfig.update_env_schema(forced_generate=args.force)
-    else:
-        EnvConfig.generative_env_schema(forced_generate=args.force)

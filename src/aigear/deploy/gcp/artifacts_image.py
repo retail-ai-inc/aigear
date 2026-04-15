@@ -1,5 +1,10 @@
+import re
+from pathlib import Path
+
 from aigear.common import run_sh, run_sh_stream
-from aigear.common.config import AigearConfig, get_project_name
+from aigear.common.config import AigearConfig, AppConfig
+from aigear.common.constant import VENV_BASE_DIR
+from aigear.common.image import get_image_path
 from aigear.common.logger import Logging
 
 logger = Logging(log_name=__name__).console_logging()
@@ -9,14 +14,16 @@ class ArtifactsImage:
     def __init__(self, artifacts_image):
         self.artifacts_image = artifacts_image
 
-    def create_image(self, dockerfile_path=None, build_context="."):
+    def create_image(self, dockerfile_path=None, build_context=".") -> bool:
+        """Returns True if the build succeeded, False otherwise."""
         if dockerfile_path is None:
             logger.info("Please specify Dockerfile(Dockerfile.pl or Dockerfile.ms) to build the image.")
+            return False
         command = [
             "docker", "build", "-f", dockerfile_path, "-t", self.artifacts_image, build_context
         ]
-        event = run_sh_stream(command)
-        logger.info(event)
+        returncode = run_sh_stream(command)
+        return returncode == 0
 
     @staticmethod
     def obtain_permissions(location):
@@ -39,67 +46,89 @@ class ArtifactsImage:
             "gcloud", "artifacts", "docker", "images", "describe", self.artifacts_image
         ]
         event = run_sh(command)
-        if "Image not found" in event and "ERROR" in event:
+        if ("Image not found" in event or "NOT_FOUND" in event) and "ERROR" in event:
             is_exist = False
         logger.info(event)
         return is_exist
 
 
-def define_image_name(image_name, repository_name, is_service=False):
-    if image_name is None:
-        image_name = get_project_name()
-        image_name = image_name.replace("_", "-")
-    if image_name is None:
-        image_name = repository_name
-    if is_service:
-        image_name += "-service"
-    return image_name
+def _validate_dockerfile_venvs(dockerfile_path: str, is_service: bool) -> None:
+    """
+    Two-stage validation before building a Docker image.
 
+    Stage 1 — Base directory:
+        Checks that VENV_BASE in the Dockerfile matches VENV_BASE_DIR in
+        aigear/common/constant.py, ensuring the runtime path resolution
+        (scheduler, helm chart, cloud function) stays in sync.
 
-def get_artifacts_image(aigear_config, image_name=None, image_version="latest", is_service=False):
-    project_id = aigear_config.gcp.gcp_project_id
-    zone = aigear_config.gcp.location
-    repository_name = aigear_config.gcp.artifacts.repository_name
-    image_name = define_image_name(image_name, repository_name, is_service)
-    artifacts_image = f"{zone}-docker.pkg.dev/{project_id}/{repository_name}/{image_name}:{image_version}"
-    return artifacts_image
+    Stage 2 — Venv existence:
+        For each pipeline in env.json, checks that the configured venv name
+        appears as ${VENV_BASE}/<name> in the Dockerfile.
+        Pipeline image  (is_service=False): checks venv_pl per pipeline.
+        Service image   (is_service=True):  checks model_service.venv_ms per pipeline.
+
+    Raises ValueError on the first stage that fails.
+    """
+    content = Path(dockerfile_path).read_text(encoding="utf-8")
+
+    # Stage 1: base directory must match constant.py
+    expected_base_line = f"VENV_BASE={VENV_BASE_DIR}"
+    if expected_base_line not in content:
+        raise ValueError(
+            f"{dockerfile_path}: VENV_BASE mismatch.\n"
+            f"  Expected: {expected_base_line}"
+        )
+
+    # Stage 2: each configured venv name must exist in the Dockerfile
+    pipelines = AppConfig.pipelines()
+    missing = []
+
+    for version, pipeline_config in pipelines.items():
+        if not isinstance(pipeline_config, dict):
+            continue
+        if not is_service:
+            venv_pl = pipeline_config.get("venv_pl")
+            if venv_pl and not re.search(r'\$\{VENV_BASE\}/' + re.escape(venv_pl) + r'(?=[^a-zA-Z0-9_-]|$)', content):
+                missing.append(f"pipeline '{version}' venv_pl '{venv_pl}' → ${{VENV_BASE}}/{venv_pl}")
+        else:
+            venv_ms = pipeline_config.get("model_service", {}).get("venv_ms")
+            if venv_ms and not re.search(r'\$\{VENV_BASE\}/' + re.escape(venv_ms) + r'(?=[^a-zA-Z0-9_-]|$)', content):
+                missing.append(f"pipeline '{version}' venv_ms '{venv_ms}' → ${{VENV_BASE}}/{venv_ms}")
+
+    if missing:
+        raise ValueError(
+            f"The following venvs are configured in env.json but not found in {dockerfile_path}:\n"
+            + "\n".join(f"  - {m}" for m in missing)
+        )
 
 
 def create_artifacts_image(
     dockerfile_path=None,
     build_context=".",
-    force=False,
-    image_name=None,
-    image_version="latest",
     is_service=False,
+    is_build=True,
     is_push=False
-):
-    if is_service:
-        log_tag = "model servicr"
-    else:
-        log_tag = "pipeline"
+) -> bool:
+    """Returns True if the requested operations succeeded, False otherwise."""
+    log_tag = "model service" if is_service else "pipeline"
 
     aigear_config = AigearConfig.get_config()
-    artifacts_image = get_artifacts_image(aigear_config, image_name, image_version, is_service)
+    artifacts_image = get_image_path(is_service=is_service)
     artifacts_image_instance = ArtifactsImage(artifacts_image=artifacts_image)
-    if is_push:
-        is_exist = artifacts_image_instance.image_exist_in_artifacts()
-        if is_exist and not force:
-            logger.info(f"The {log_tag} image already exists in gcp artifacts: {artifacts_image}")
-            return
-        logger.info(f"The {log_tag} image exists: {is_exist}, force flag: {force}, the image will be created.")
-        artifacts_image_instance.create_image(
+
+    if is_build:
+        if dockerfile_path:
+            _validate_dockerfile_venvs(dockerfile_path, is_service)
+        success = artifacts_image_instance.create_image(
             dockerfile_path=dockerfile_path,
             build_context=build_context
         )
+        if not success:
+            return False
         logger.info(f"The {log_tag} image has been created.")
+
+    if is_push:
         artifacts_image_instance.obtain_permissions(aigear_config.gcp.location)
         artifacts_image_instance.push_image()
-    else:
-        artifacts_image_instance.create_image(
-            dockerfile_path=dockerfile_path,
-            build_context=build_context
-        )
-        logger.info(f"The {log_tag} image has been created.")
-    logger.info(f"The {log_tag} image has been pushed.")
-    logger.info("------------------------------------")
+        logger.info(f"The {log_tag} image has been pushed.")
+    return True

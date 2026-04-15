@@ -213,6 +213,14 @@ class PreVMImage:
         "acceleratorTypes",
     )
 
+    _SUBNET_NOT_READY_MSG = "is not ready"
+    _SUBNET_NOT_READY_RETRIES = 5
+    _SUBNET_NOT_READY_WAIT_SEC = 30
+
+    @staticmethod
+    def _is_subnet_not_ready(exc: Exception) -> bool:
+        return "subnetworks" in str(exc) and "is not ready" in str(exc)
+
     @classmethod
     def _is_exhausted(cls, exc: Exception) -> bool:
         # Only treat 404 as a zone-skip if it concerns an accelerator resource;
@@ -320,10 +328,8 @@ class PreVMImage:
         client = compute_v1.ImagesClient()
         try:
             client.get(project=self.project_id, image=image_name)
-            logger.info(f"Image found: {image_name}")
             return True
         except exceptions.NotFound:
-            logger.info(f"Image not found: {image_name}")
             return False
         except Exception as e:
             logger.error(f"Error checking image {image_name}: {e}")
@@ -351,18 +357,30 @@ class PreVMImage:
         for z in self.fallback_zones:
             logger.info(f"Trying zone {z} for {label} ...")
             inst = build_instance_fn(z)
-            try:
-                op = client.insert(project=self.project_id, zone=z, instance_resource=inst)
-                self._wait_op(op, f"create {label} in {z}")
-                self.zone = z  # lock in the zone that worked
-                logger.info(f"Bake VM {bake_vm} created in zone {z}.")
-                return
-            except Exception as exc:
-                if self._is_exhausted(exc):
-                    logger.warning(f"Zone {z} exhausted, trying next ...")
-                    last_exc = exc
-                    continue
-                raise
+            for attempt in range(1, self._SUBNET_NOT_READY_RETRIES + 1):
+                try:
+                    op = client.insert(project=self.project_id, zone=z, instance_resource=inst)
+                    self._wait_op(op, f"create {label} in {z}")
+                    self.zone = z  # lock in the zone that worked
+                    logger.info(f"Bake VM {bake_vm} created in zone {z}.")
+                    return
+                except Exception as exc:
+                    if self._is_subnet_not_ready(exc):
+                        if attempt < self._SUBNET_NOT_READY_RETRIES:
+                            logger.warning(
+                                f"Default subnet not ready yet (attempt {attempt}/{self._SUBNET_NOT_READY_RETRIES}), "
+                                f"retrying in {self._SUBNET_NOT_READY_WAIT_SEC}s ..."
+                            )
+                            time.sleep(self._SUBNET_NOT_READY_WAIT_SEC)
+                            inst = build_instance_fn(z)
+                            continue
+                        last_exc = exc
+                        break
+                    if self._is_exhausted(exc):
+                        logger.warning(f"Zone {z} exhausted, trying next ...")
+                        last_exc = exc
+                        break
+                    raise
 
         raise RuntimeError(
             f"All fallback zones exhausted for {label}."

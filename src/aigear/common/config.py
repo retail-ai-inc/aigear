@@ -165,7 +165,9 @@ class EnvConfig:
 
     @classmethod
     def generative_env_schema(cls, forced_generate: bool = False) -> None:
+        logger.info("Generating env schema...")
         AppConfig.generate_env_schema(forced_generate)
+        logger.info("Env schema generation complete.")
 
 
 # ─── Module-level helpers (backwards compatible) ─────────────────────────────

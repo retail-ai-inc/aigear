@@ -1,12 +1,12 @@
 import argparse
-from aigear.infrastructure.gcp import Infra
+from aigear.infrastructure.gcp.infra import Infra
 
 
-def get_argument():
+def get_argument() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    group = parser.add_mutually_exclusive_group(required=False)
+    group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument(
         "--create",
         action="store_true",
@@ -18,7 +18,7 @@ def get_argument():
     return parser.parse_args()
 
 
-def gcp_infra():
+def gcp_infra() -> None:
     args = get_argument()
     if args.create:
         Infra().create()
@@ -27,5 +27,3 @@ def gcp_infra():
     #     Infra().delete()
     # elif args.update:
     #     Infra().update()
-    else:
-        Infra().create()

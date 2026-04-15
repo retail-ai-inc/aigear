@@ -1,6 +1,8 @@
 import shutil
+import stat
 from pathlib import Path
 from typing import List, Optional
+
 
 
 class Project:
@@ -73,6 +75,7 @@ class Project:
             model_service = pipeline_dir / "model_service"
             model_service.mkdir(parents=True, exist_ok=True)
         
+        self._install_git_hooks(project_path)
         self._print_tree(project_path)
 
     def _print_tree(self, path: Path, prefix=""):
@@ -84,6 +87,18 @@ class Project:
                 self._print_tree(child, prefix + ("└── " if is_last else "├── "))
         else:
             print(f"{prefix}{path.name}")
+
+    def _install_git_hooks(self, project_path: Path):
+        """Copy pre-commit hook script into project_path/.git/hooks/."""
+        git_hooks_dir = project_path / ".git" / "hooks"
+        git_hooks_dir.mkdir(parents=True, exist_ok=True)
+        hook_dst = git_hooks_dir / "pre-commit"
+        if hook_dst.exists():
+            return
+        content = (self._template_path / "pre-commit").read_bytes().replace(b"\r\n", b"\n")
+        hook_dst.write_bytes(content)
+        hook_dst.chmod(hook_dst.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+        print(f"Installed git hook: {hook_dst}")
 
     @staticmethod
     def _copy_file(template_path, file_path):

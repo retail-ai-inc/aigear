@@ -26,7 +26,8 @@ class Artifacts:
             f"--project={self.project_id}",
         ]
         event = run_sh(command)
-        logger.info(event)
+        if "ERROR" in event:
+            logger.error(f"Failed to create artifact registry ({self.repository_name}): {event}")
 
     def describe(self):
         is_exist = False
@@ -37,9 +38,10 @@ class Artifacts:
             f"--project={self.project_id}",
         ]
         event = run_sh(command)
-        logger.info(event)
         if "ERROR" not in event:
             is_exist = True
+        elif "NOT_FOUND" not in event:
+            logger.error(f"Unexpected error describing artifact registry ({self.repository_name}): {event}")
         return is_exist
 
 

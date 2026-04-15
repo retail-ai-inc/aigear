@@ -61,7 +61,9 @@ aigear_sklearn_pipeline/
 │           │   └── train.py
 │           └── model_service/
 │               ├── logistic_regression_service.py
-│               └── grpc_deployment.yaml
+│               ├── grpc_deployment_local.yaml
+│               ├── grpc_deployment_staging.yaml
+│               └── grpc_deployment_production.yaml
 ├── Dockerfile.pl                # Pipeline container (fetch_data → preprocessing → training)
 ├── Dockerfile.ms                # Model service container (gRPC inference server)
 ├── requirements_pl.txt          # Pipeline dependencies: aigear, numpy, scikit-learn
@@ -87,7 +89,7 @@ The key sections in `env.json` for this demo:
 ```json
 {
     "project_name": "aigear_sklearn_pipeline",
-    "environment": "local",
+    "environment": "staging",
     "aigear": {
         "gcp": {
             "gcp_project_id": "YOUR_GCP_PROJECT_ID",
@@ -96,6 +98,11 @@ The key sections in `env.json` for this demo:
                 "on": true,
                 "bucket_name": "test-sklearn-pipeline",
                 "bucket_name_for_release": "test-sklearn-pipeline-service"
+            },
+            "kms": {
+                "on": false,
+                "keyring_name": "test-sklearn-pipeline-keyring",
+                "key_name": "test-sklearn-pipeline-key"
             },
             "cloud_function": {
                 "on": true,
@@ -111,7 +118,10 @@ The key sections in `env.json` for this demo:
             },
             "artifacts": {
                 "on": true,
-                "repository_name": "test-sklearn-pipeline-images"
+                "repository_name": "test-sklearn-pipeline-images",
+                "ms_image_name": "test-sklearn-model-service",
+                "pl_image_name": "test-sklearn",
+                "image_tag": "latest"
             },
             "kubernetes": {
                 "on": true,
@@ -125,6 +135,7 @@ The key sections in `env.json` for this demo:
     },
     "pipelines": {
         "logistic_regression": {
+            "venv_pl": "pl",
             "scheduler": {
                 "name": "test-sklearn-pipeline",
                 "schedule": "45 21 * * 0",
@@ -150,10 +161,12 @@ The key sections in `env.json` for this demo:
             },
             "model_service": {
                 "release": true,
+                "venv_ms": "ms",
                 "grpc": {
+                    "keep_alive": { "time": 60, "timeout": 5 },
                     "service_host": "0.0.0.0",
                     "port": "50051",
-                    "multi_processing": { "on": false, "process_count": 2, "thread_count": 10 },
+                    "multi_processing": { "on": false, "process_count": 3, "thread_count": 1, "disable_omp": true },
                     "sentry": { "on": false, "dsn": "", "traces_sample_rate": 1.0 }
                 },
                 "resources": { "vm_name": "test-sklearn-model-service-vm", "disk_size_gb": "50", "spec": "e2-medium", "gpu": false },
@@ -194,11 +207,19 @@ data_file    = env_config.pipelines.logistic_regression.fetch_data.parameters.da
 
 ## 4. Create GCP Infrastructure
 
-This single command provisions all GCP resources declared in `env.json` — the GCS bucket, Service Account, Pub/Sub topic, Artifact Registry repository, and GKE cluster:
+This single command provisions all GCP resources declared in `env.json`:
 
 ```bash
 aigear-gcp-infra --create
 ```
+
+Resources are created in three phases:
+
+1. **Service Account** — created first; IAM bindings wait for propagation automatically
+2. **Buckets, Artifact Registry, Pub/Sub, KMS, Kubernetes** — run in **parallel**
+3. **Cloud Function** — created last (depends on the Pub/Sub topic from Phase 2)
+
+Each step is idempotent — re-running the command safely skips already-existing resources. The log output uses structured JSON and shows only meaningful status per step.
 
 > **Requires owner-level GCP access.** Infrastructure creation takes approximately 2 hours for a full GKE cluster. Run this from Cloud Shell or a machine with `gcloud auth login` completed.
 
@@ -437,27 +458,38 @@ The demo uses two separate Dockerfiles with [uv](https://github.com/astral-sh/uv
 **`Dockerfile.pl`** (pipeline — fetch_data, preprocessing, training):
 ```dockerfile
 FROM python:3.12-slim-bookworm
-COPY --from=ghcr.io/astral-sh/uv:0.5.14 /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.11.6 /uv /uvx /bin/
+
+# Fixed by aigear/common/constant.py (VENV_BASE_DIR). Do NOT change.
+ENV VENV_BASE=/opt/venv \
+    UV_LINK_MODE=copy
+
+# venv name must match venv_pl in env.json. Add one block per pipeline.
+ENV VENV_PL=${VENV_BASE}/pl
 
 WORKDIR /pl
+
+COPY requirements_pl.txt ./
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv venv ${VENV_PL} --python 3.12.7 \
+ && uv pip install --python ${VENV_PL} -r requirements_pl.txt
+
 COPY . .
 
-RUN uv python install 3.12.7
-RUN uv venv /opt/venv/pl --python 3.12.7
-RUN . /opt/venv/pl/bin/activate && uv pip install -r requirements_pl.txt
-
-ENV VIRTUAL_ENV=/opt/venv/pl
-ENV PATH="/opt/venv/pl/bin:$PATH"
+ENV PORT=50051 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
 ```
 
 **`requirements_pl.txt`**:
 ```
-aigear==0.0.1
+aigear==0.1.0
 numpy==2.4.2
 scikit_learn==1.8.0
 ```
 
-**`Dockerfile.ms`** (model service — gRPC server) follows the same pattern using `requirements_ms.txt`.
+**`Dockerfile.ms`** (model service — gRPC server) follows the same pattern using `requirements_ms.txt`, with `VENV_MS=${VENV_BASE}/ms` matching `venv_ms` in `env.json`.
 
 Build both images:
 
@@ -503,11 +535,31 @@ The gRPC server is now reachable at `localhost:50051`. Send a prediction request
 { "features": [17.99, 10.38, 122.8, 1001.0, 0.1184, ...] }
 ```
 
-Tear down:
+Alternatively, use the ready-made script provided in the example project: `example/aigear_sklearn_pipeline/req.py`
 
-```bash
-docker compose -f docker-compose-pl.yml down
-docker compose -f docker-compose-ms.yml down
+`req.py` connects to `localhost:50051` via the aigear gRPC stub and sends a sample feature vector:
+
+```python
+import grpc
+from aigear.service.grpc.protos import grpc_pb2
+from aigear.service.grpc.protos import grpc_pb2_grpc
+from google.protobuf.struct_pb2 import Struct
+
+features = [
+    14.25, 19.50, 92.30, 630.0, 0.098, 0.110, 0.095, 0.055, 0.180, 0.062,
+    0.320, 1.250, 2.500, 30.0, 0.0065, 0.025, 0.030, 0.012, 0.020, 0.0038,
+    16.20, 25.00, 105.0, 760.0, 0.130, 0.260, 0.280, 0.120, 0.290, 0.085
+]
+
+channel = grpc.insecure_channel("localhost:50051")
+stub = grpc_pb2_grpc.MLStub(channel)
+
+payload = Struct()
+payload.update({"features": features})
+request = grpc_pb2.MLRequest(request=payload)
+
+response = stub.Predict(request)
+print("Model prediction results:", response)
 ```
 
 ---
@@ -531,7 +583,7 @@ Before deploying to GKE, validate the Kubernetes deployment locally using **Dock
 **Deploy**
 
 ```bash
-aigear-deploy-model --version logistic_regression --model_class_path src.pipelines.logistic_regression.model_service.logistic_regression_service.ModelService
+aigear-deploy-model --version logistic_regression --local
 ```
 
 This command generates `grpc_deployment_local.yaml` (if it does not yet exist), switches kubectl context to `docker-desktop`, and applies the manifest. The local `asset/` directory is automatically mounted into the pod at `/ms/asset`, so no GCS connection is required.
@@ -555,14 +607,41 @@ The gRPC server is reachable at `localhost:50051` once `EXTERNAL-IP` shows `loca
 **Delete**
 
 ```bash
-aigear-deploy-model --version logistic_regression --model_class_path src.pipelines.logistic_regression.model_service.logistic_regression_service.ModelService --delete
+aigear-deploy-model --version logistic_regression --local --delete
 ```
 
 ---
 
-## 9. Push Images to Artifact Registry
+## 9. Generate GKE Deployment YAML
 
-Once the pipeline has been validated locally, push the images to GCP Artifact Registry:
+If you plan to deploy the model service to GKE (staging or production), generate the Kubernetes deployment YAML files **before** building and pushing the images. The YAML files are copied into the Docker image during the build, so the deployment manifest is always co-versioned with the model code.
+
+```bash
+aigear-model-yaml --create --version logistic_regression
+```
+
+This generates YAML files for all environments under the model service directory:
+
+```text
+src/pipelines/logistic_regression/model_service/
+├── grpc_deployment_local.yaml
+├── grpc_deployment_staging.yaml
+└── grpc_deployment_production.yaml
+```
+
+To overwrite existing files:
+
+```bash
+aigear-model-yaml --create --version logistic_regression --force
+```
+
+> **Why bake it into the image?** When the scheduler triggers the model service step on GCP, the VM pulls this image and runs `aigear-task grpc`. The deployment step (`aigear-deploy-model`) reads the YAML from within the running container to apply the Kubernetes manifest. If the YAML is absent from the image, the deployment will fail.
+
+---
+
+## 10. Push Images to Artifact Registry
+
+Once the pipeline has been validated locally and the YAML files have been generated (Step 9), push the images to GCP Artifact Registry:
 
 ```bash
 aigear-image --create --push
@@ -572,12 +651,12 @@ aigear-image --create --push
 
 ---
 
-## 10. Schedule on GCP
+## 11. Schedule on GCP
 
 Once the pipeline has been validated end-to-end, create a Cloud Scheduler job to run all steps automatically every Sunday at 21:45 JST (as configured in `env.json`):
 
 ```bash
-aigear-scheduler --create  --version logistic_regression  --step_names fetch_data,preprocessing,training,model_service
+aigear-scheduler --create --version logistic_regression --step_names fetch_data,preprocessing,training,model_service
 ```
 
 After creation, go to [Cloud Scheduler](https://console.cloud.google.com/cloudscheduler) in the GCP Console to manually trigger an immediate run and confirm everything works in production.
@@ -621,25 +700,25 @@ docker compose -f docker-compose-ms.yml down
 
 # ── Step 8: Deploy gRPC model service to local Kubernetes (Docker Desktop) ────
 # Requires: image from Step 6, gcs_switch = False (model files in asset/)
-aigear-deploy-model \
-    --version logistic_regression \
-    --model_class_path src.pipelines.logistic_regression.model_service.logistic_regression_service.ModelService
+aigear-deploy-model --version logistic_regression --local
 
 # Verify
 kubectl get service aigear-sklearn-pipeline-logistic-regression-service
 kubectl logs aigear-sklearn-pipeline-logistic-regression-service-<pod-suffix>
 
 # Delete
-aigear-deploy-model \
-    --version logistic_regression \
-    --model_class_path src.pipelines.logistic_regression.model_service.logistic_regression_service.ModelService \
-    --delete
+aigear-deploy-model --version logistic_regression --local --delete
 
-# ── Step 9: Push images to Artifact Registry ──────────────────────────────────
+# ── Step 9: Generate GKE deployment YAML (required before pushing) ────────────
+aigear-model-yaml --create --version logistic_regression
+# Force overwrite if YAML already exists
+# aigear-model-yaml --create --version logistic_regression --force
+
+# ── Step 10: Push images to Artifact Registry (YAML baked in) ─────────────────
 # Requires: gcs_switch = True in src/pipelines/common/constant.py
 aigear-image --create --push
 
-# ── Step 10: Schedule recurring pipeline runs on GCP ──────────────────────────
+# ── Step 11: Schedule recurring pipeline runs on GCP ──────────────────────────
 aigear-scheduler --create \
     --version logistic_regression \
     --step_names fetch_data,preprocessing,training

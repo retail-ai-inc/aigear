@@ -2,6 +2,7 @@ import shutil
 from pathlib import Path
 
 from aigear.common import run_sh
+from aigear.common.constant import VENV_BASE_DIR
 from aigear.common.logger import Logging
 
 logger = Logging(log_name=__name__).console_logging()
@@ -35,7 +36,8 @@ class CloudFunction:
             content = content.replace(
                 "PROJECTID", self.project_id
             ).replace("REGION", self.region
-            ).replace("TOPICSNAME", self.topic_name)
+            ).replace("TOPICSNAME", self.topic_name
+            ).replace("VENVBASEDIR", VENV_BASE_DIR)
             function_file_dst.write_text(content, encoding="utf-8")
 
         package_file_src = source_path / "package.json"
@@ -51,7 +53,7 @@ class CloudFunction:
             "gcloud", "functions", "deploy",
             self.function_name,
             "--gen2",
-            "--runtime=nodejs20",
+            "--runtime=nodejs24",
             f"--region={self.region}",
             f"--entry-point={self.entry_point}",
             f"--trigger-topic={self.topic_name}",
@@ -62,9 +64,8 @@ class CloudFunction:
             "--no-allow-unauthenticated",
         ]
         event = run_sh(command, timeout=600)
-        logger.info(event)
         if "ERROR" in event:
-            logger.error("Error occurred while creating cloud function.")
+            logger.error(f"Failed to deploy cloud function ({self.function_name}): {event}")
     
     def add_permissions_to_cloud_function(self, sa_email):
         command = [
@@ -76,7 +77,7 @@ class CloudFunction:
         event = run_sh(command)
         if "Updated IAM policy" in event:
             logger.info(f"✅ run.invoker granted on {self.function_name}")
-        else:
+        elif "ERROR" in event:
             logger.error(f"❌ Failed on {self.function_name}: {event}")
 
     def describe(self):
@@ -90,11 +91,8 @@ class CloudFunction:
         event = run_sh(command)
         if f"Service {self.function_name} in region {self.region}" in event:
             is_exist = True
-            logger.info(f"Find resources: {event}")
-        elif "ERROR" in event and "Cannot find service" in event:
-            logger.info(f"Resource not found: {event}")
-        else:
-            logger.info(event)
+        elif "ERROR" in event and "Cannot find service" not in event:
+            logger.error(f"Unexpected error describing cloud function ({self.function_name}): {event}")
         return is_exist
 
     def list(self):
