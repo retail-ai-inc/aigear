@@ -10,16 +10,16 @@ keywords = ["MLOps", "AI", "ML", "Model Serving", "Model Deployment", "Model Tra
 authors = [{ name = "Retail AI Groups Inc." }]
 readme = "README.md"
 license = { file = 'LICENSE' }
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 classifiers = [
     "Intended Audience :: Science/Research",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "License :: OSI Approved :: MIT License",
     "Operating System :: Microsoft :: Windows",
     "Operating System :: Unix",
@@ -58,7 +58,12 @@ gcp = [
     "google-cloud-logging>=3.0.0",
     "google-cloud-secret-manager>=2.24.0",
     "google-cloud-storage>=3.2.0",
-    "google-cloud-compute>=1.38.0"
+    "google-cloud-compute>=1.38.0",
+    "google-api-core>=2.0.0",
+]
+mongodb = [
+    "pymongo>=4.0.0",
+    "pymongoarrow>=0.7.0",
 ]
 
 [project.scripts]
