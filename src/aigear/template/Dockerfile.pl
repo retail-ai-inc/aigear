@@ -10,11 +10,11 @@ ENV VENV_PL=${VENV_BASE}/pl
 
 WORKDIR /pl
 
-COPY requirements_pl.txt aigear-0.1.0-py3-none-any.whl ./
+COPY requirements_pl.txt ./
 
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv venv ${VENV_PL} --python 3.12.7 \
- && uv pip install --python ${VENV_PL} -r requirements_pl.txt aigear-0.1.0-py3-none-any.whl
+ && uv pip install --python ${VENV_PL} -r requirements_pl.txt
 
 COPY . .
 
