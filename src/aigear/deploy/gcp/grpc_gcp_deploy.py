@@ -1,5 +1,6 @@
 from aigear.common import run_sh
 from aigear.common.config import AigearConfig, PipelinesConfig
+from aigear.common.constant import ENV_STAGING
 from aigear.common.logger import Logging
 from aigear.deploy.common.helm_chart import create_helm_file, get_helm_path
 from aigear.deploy.common.kubectl_command import helm_deploy, helm_deployment_delete
@@ -7,10 +8,10 @@ from aigear.deploy.common.kubectl_command import helm_deploy, helm_deployment_de
 logger = Logging(log_name=__name__).console_logging()
 
 
-def switch_gcp_context(cluster_name, project_id, region):
+def switch_gcp_context(cluster_name: str, project_id: str, region: str) -> None:
     command = [
-        "gcloud", "container", "clusters", "get-credentials", 
-        cluster_name, 
+        "gcloud", "container", "clusters", "get-credentials",
+        cluster_name,
         f"--region={region}",
         f"--project={project_id}",
     ]
@@ -19,43 +20,45 @@ def switch_gcp_context(cluster_name, project_id, region):
 
 
 def deploy_gcp_grpc(
-    pipeline_version: str=None,
-    model_class_path: str=None,
+    pipeline_version: str | None = None,
     service_ports: str = "50051",
     replicas: int = 1,
     port: str = "50051",
+    env: str = ENV_STAGING,
 ):
-    
+    pipe_config       = PipelinesConfig.get_version_config(pipeline_version)
+    ms_config         = pipe_config.get("model_service", {})
+    model_class_path  = ms_config.get("model_class_path")
+    venv              = ms_config.get("venv_ms")
+
     helm_path = create_helm_file(
         pipeline_version=pipeline_version,
         model_class_path=model_class_path,
-        service_ports = service_ports,
-        replicas = replicas,
-        port = port,
+        service_ports=service_ports,
+        replicas=replicas,
+        port=port,
+        env=env,
+        venv=venv,
     )
 
-    pipe_config = PipelinesConfig.get_version_config(pipeline_version)
-    release_switch = pipe_config.get("model_service", {}).get("release", False)
-    if release_switch:
-        aigear_config = AigearConfig.get_config()
-        switch_gcp_context(
-            cluster_name=aigear_config.gcp.kubernetes.cluster_name, 
-            project_id=aigear_config.gcp.gcp_project_id, 
-            region=aigear_config.gcp.location
-        )
-        event = helm_deploy(helm_path)
-        if "error" in event:
-            logger.info(f"Error: {event}.")
-        else:
-            logger.info("Deployment completed.")
-            logger.info("kubectl get service 'server name'.")
+    aigear_config = AigearConfig.get_config()
+    switch_gcp_context(
+        cluster_name=aigear_config.gcp.kubernetes.cluster_name,
+        project_id=aigear_config.gcp.gcp_project_id,
+        region=aigear_config.gcp.location
+    )
+    event = helm_deploy(helm_path)
+    if "error" in event:
+        logger.info(f"Error: {event}.")
     else:
-        logger.info("The publishing model service is not set in the configuration(model_service.release).")
+        logger.info("Deployment completed.")
 
 
 def delete_gcp_grpc(
-    model_class_path=None
+    pipeline_version: str | None = None,
+    env: str = ENV_STAGING,
 ):
-    helm_path = get_helm_path(model_class_path=model_class_path)
+    pipe_config      = PipelinesConfig.get_version_config(pipeline_version)
+    model_class_path = pipe_config.get("model_service", {}).get("model_class_path")
+    helm_path        = get_helm_path(model_class_path=model_class_path, env=env)
     helm_deployment_delete(helm_path)
-

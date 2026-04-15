@@ -1,3 +1,5 @@
+import time
+
 from aigear.common import run_sh
 from aigear.common.logger import Logging
 
@@ -29,10 +31,10 @@ class ServiceAccounts:
             if self.display_name:
                 command.append(f"--display-name={self.display_name}")
             event = run_sh(command)
-            if event == "":
+            if "ERROR" in event:
+                logger.error(f"Failed to create service account ({self.account_name}): {event}")
+            elif not event.strip():
                 logger.info("The currently logged in GCP account does not have owner privileges.")
-            else:
-                logger.info(event)
 
     def delete(self):
         command = [
@@ -46,7 +48,18 @@ class ServiceAccounts:
         else:
             logger.info(event)
 
+    def _wait_for_sa_ready(self, retries: int = 10, interval: int = 6):
+        """Wait until the service account is visible to GCP IAM (propagation delay)."""
+        for i in range(retries):
+            event = run_sh(["gcloud", "iam", "service-accounts", "describe", self.sa_email])
+            if "name: projects" in event:
+                return
+            logger.info(f"Waiting for service account propagation... ({i + 1}/{retries})")
+            time.sleep(interval)
+        raise RuntimeError(f"Service account {self.sa_email} did not become available after {retries * interval}s.")
+
     def add_iam_policy_binding(self):
+        self._wait_for_sa_ready()
         roles = [
             "roles/compute.instanceAdmin.v1",
             "roles/artifactregistry.reader",
@@ -63,7 +76,7 @@ class ServiceAccounts:
             event = run_sh(command)
             if "Updated IAM policy" in event:
                 logger.info(f"✅ Successfully granted: {role}")
-            else:
+            elif "ERROR" in event:
                 logger.error(f"❌ Failed: {event}")
 
         # SA level self binding, precise authorization
@@ -77,7 +90,7 @@ class ServiceAccounts:
         event = run_sh(command)
         if "Updated IAM policy" in event:
             logger.info("✅ Successfully granted: roles/iam.serviceAccountUser (self-binding)")
-        else:
+        elif "ERROR" in event:
             logger.error(f"❌ Failed self-binding: {event}")
 
     def describe(self):
@@ -88,11 +101,8 @@ class ServiceAccounts:
         event = run_sh(command)
         if "name: projects" in event:
             is_exist = True
-            logger.info(f"Find resources: {event}")
-        elif "NOT_FOUND" in event:
-            logger.info(f"NOT_FOUND: Resource not found (resource={self.sa_email})")
-        else:
-            logger.info(event)
+        elif "ERROR" in event and "NOT_FOUND" not in event and "PERMISSION_DENIED" not in event:
+            logger.error(f"Unexpected error describing service account ({self.sa_email}): {event}")
         return is_exist
 
     def check_iam(self):

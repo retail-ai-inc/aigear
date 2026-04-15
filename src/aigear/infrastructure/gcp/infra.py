@@ -1,19 +1,26 @@
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from aigear.common.config import AigearConfig
+from aigear.common.logger import _thread_local
+
+from aigear.common.config import AigearConfig, AppConfig
+from aigear.common.image import get_image_name
 from aigear.common.logger import Logging
-from aigear.common.sh import run_sh
+from aigear.common import run_sh
 from aigear.infrastructure.gcp.artifacts import Artifacts
 from aigear.infrastructure.gcp.bucket import Bucket
 from aigear.infrastructure.gcp.build import CloudBuild
 from aigear.infrastructure.gcp.constant import entry_point_of_cloud_fuction
 from aigear.infrastructure.gcp.function import CloudFunction
 from aigear.infrastructure.gcp.iam import ServiceAccounts
+from aigear.infrastructure.gcp.kms import CloudKMS
 from aigear.infrastructure.gcp.kubernetes import KubernetesCluster
 from aigear.infrastructure.gcp.pre_vm_image import PreVMImage
 from aigear.infrastructure.gcp.pub_sub import PubSub
 
 logger = Logging(log_name=__name__).console_logging()
+_log_lock = threading.Lock()
 
 
 class Infra:
@@ -30,6 +37,16 @@ class Infra:
 
         self.project_id = self.aigear_config.gcp.gcp_project_id
         self.location = self.aigear_config.gcp.location
+
+        env = AppConfig.environment()
+        if env not in ("staging", "production"):
+            logger.warning(
+                f"Current environment is '{env}'. "
+                f"'local' is intended for local development only and its parameters (e.g. project_id, bucket names) "
+                f"may not be trustworthy for GCP deployment. "
+                f"GCP deployment requires environment to be 'staging' or 'production'."
+            )
+        self.environment = env if env in ("staging", "production") else "staging"
 
         # ------- Instantiate all modules -------
         self.service_account = (
@@ -54,11 +71,12 @@ class Infra:
             description=self.aigear_config.gcp.cloud_build.description,
             repo_owner=self.aigear_config.gcp.cloud_build.repo_owner,
             repo_name=self.aigear_config.gcp.cloud_build.repo_name,
+            event=self.aigear_config.gcp.cloud_build.event,
             branch_pattern=self.aigear_config.gcp.cloud_build.branch_pattern,
-            build_config=self.aigear_config.gcp.cloud_build.build_config,
+            tag_pattern=self.aigear_config.gcp.cloud_build.tag_pattern,
             region=self.location,
-            substitutions=self.aigear_config.gcp.cloud_build.substitutions,
             project_id=self.project_id,
+            substitutions=self._build_substitutions(),
         )
 
         self.cloud_function = CloudFunction(
@@ -100,13 +118,20 @@ class Infra:
             project_id=self.project_id,
         )
 
+        self.cloud_kms = CloudKMS(
+            project_id=self.project_id,
+            location=self.location,
+            keyring_name=self.aigear_config.gcp.kms.keyring_name,
+            key_name=self.aigear_config.gcp.kms.key_name,
+        )
+
     # ================================================================
     # Preflight checks: gcloud login + project switch
     # ================================================================
     def gcloud_login_check(self):
         """Check gcloud CLI installation and authentication status."""
         logger.info("===================================================")
-        logger.info("             Aigear GCP Login Check                ")
+        logger.info("             Aigear GCP Environment Check          ")
         logger.info("===================================================")
 
         # 1. check gcloud installed
@@ -129,14 +154,10 @@ class Infra:
         else:
             logger.info(f"Logged in as: {active[0]['account']}")
 
-        logger.info("Login check OK.\n")
+        logger.info("✅ Login check OK.")
 
     def project_switch(self):
         """Ensure gcloud project matches the configured project ID."""
-        logger.info("===================================================")
-        logger.info("             Aigear GCP Project Switch             ")
-        logger.info("===================================================")
-
         current_project = run_sh(["gcloud", "config", "get-value", "project"]).strip()
         if current_project != self.project_id:
             logger.info(f"Switching gcloud project -> {self.project_id}")
@@ -144,26 +165,53 @@ class Infra:
         else:
             logger.info(f"Project already set to {self.project_id}")
 
-        logger.info("Project switch OK.\n")
+        logger.info("✅ Project switch OK.")
 
     # ================================================================
     # Generic step wrapper for prettier logs (non-blocking on failure)
     # ================================================================
-    def _step(self, title, fn):
-        logger.info("\n---------------------------------------------------")
-        logger.info(f"[{title}]")
-        logger.info("---------------------------------------------------")
+    def _build_substitutions(self) -> str:
+        artifacts = self.aigear_config.gcp.artifacts
+        return ",".join([
+            f"_ENVIRONMENT={self.environment}",
+            f"_KMS_KEYRING={self.aigear_config.gcp.kms.keyring_name}",
+            f"_KMS_KEY={self.aigear_config.gcp.kms.key_name}",
+            f"_REPOSITORY={artifacts.repository_name}",
+            f"_MS_IMAGE_NAME={get_image_name(is_service=True)}",
+            f"_PL_IMAGE_NAME={get_image_name(is_service=False)}",
+            f"_IMAGE_TAG={artifacts.image_tag}",
+        ])
 
+    def _step(self, title, fn):
+        _thread_local.log_buffer = []
         try:
             fn()
-            logger.info(f"✔ {title} SUCCESS")
-            return True
+            success = True
+            exc = None
         except Exception as e:
-            logger.error(f"✖ {title} FAILED")
-            logger.error(f"Error details: {str(e)}")
-            logger.error(f"Error type: {type(e).__name__}")
-            # Do not re-raise - continue with other infrastructure creation
-            return False
+            success = False
+            exc = e
+
+        messages = _thread_local.log_buffer
+        _thread_local.log_buffer = None
+
+        with _log_lock:
+            logger.info(f"[{title}]")
+            for msg in messages:
+                print(msg, flush=True)
+            if success:
+                logger.info(f"✅ {title} SUCCESS")
+            else:
+                logger.error(f"✖ {title} FAILED")
+                logger.error(f"Error details: {str(exc)}")
+                logger.error(f"Error type: {type(exc).__name__}")
+            logger.info("---------------------------------------------------")
+        return success
+
+    def _step_skip(self, title):
+        logger.info(f"[{title}]")
+        logger.info(f"✅ {title} SKIPPED (disabled in configuration)")
+        logger.info("---------------------------------------------------")
 
     # ================================================================
     # Public API called from CLI
@@ -172,9 +220,13 @@ class Infra:
         self.gcloud_login_check()
         self.project_switch()
 
+        logger.info("===================================================")
+        logger.info("             Aigear GCP Infra Creating             ")
+        logger.info("===================================================")
+
         failed_steps = []
 
-        # IAM
+        # ── Phase 1: Service Account (must be first) ─────────────────
         if self.aigear_config.gcp.iam.on:
             success = self._step(
                 f"Service Account ({self.aigear_config.gcp.iam.account_name})",
@@ -183,129 +235,83 @@ class Infra:
             if not success:
                 failed_steps.append(f"Service Account ({self.aigear_config.gcp.iam.account_name})")
         else:
-            logger.info(
-                f"Service Account creation is disabled in the configuration file. "
-                f"Skipping service account ({self.aigear_config.gcp.iam.account_name}) setup."
-            )
+            self._step_skip(f"Service Account ({self.aigear_config.gcp.iam.account_name})")
 
-        # Buckets
-        if self.aigear_config.gcp.bucket.on:
-            success = self._step(
-                f"Model Bucket ({self.aigear_config.gcp.bucket.bucket_name})",
-                self._ensure_model_bucket
-            )
-            if not success:
-                failed_steps.append(f"Model Bucket ({self.aigear_config.gcp.bucket.bucket_name})")
+        # ── Phase 2: Independent resources (parallel) ─────────────────
+        phase2_tasks = {}
+        cfg = self.aigear_config.gcp
 
-            success = self._step(
-                f"Release Model Bucket ({self.aigear_config.gcp.bucket.bucket_name_for_release})",
-                self._ensure_release_bucket
-            )
-            if not success:
-                failed_steps.append(f"Release Model Bucket ({self.aigear_config.gcp.bucket.bucket_name_for_release})")
+        if cfg.bucket.on:
+            phase2_tasks[f"Model Bucket ({cfg.bucket.bucket_name})"] = self._ensure_model_bucket
+            phase2_tasks[f"Release Model Bucket ({cfg.bucket.bucket_name_for_release})"] = self._ensure_release_bucket
         else:
-            logger.info(
-                f"Bucket creation is disabled in the configuration file. "
-                f"Skipping model bucket ({self.aigear_config.gcp.bucket.bucket_name}) and "
-                f"release bucket ({self.aigear_config.gcp.bucket.bucket_name_for_release}) setup."
-            )
+            self._step_skip(f"Model Bucket ({cfg.bucket.bucket_name})")
+            self._step_skip(f"Release Model Bucket ({cfg.bucket.bucket_name_for_release})")
 
-        # Artifact Registry
-        if self.aigear_config.gcp.artifacts.on:
-            success = self._step(
-                f"Artifact Registry ({self.aigear_config.gcp.artifacts.repository_name})",
-                self._ensure_artifacts
-            )
-            if not success:
-                failed_steps.append(f"Artifact Registry ({self.aigear_config.gcp.artifacts.repository_name})")
+        if cfg.artifacts.on:
+            phase2_tasks[f"Artifact Registry ({cfg.artifacts.repository_name})"] = self._ensure_artifacts
         else:
-            logger.info(
-                f"Artifact Registry creation is disabled in the configuration file. "
-                f"Skipping artifact repository ({self.aigear_config.gcp.artifacts.repository_name}) setup."
-            )
+            self._step_skip(f"Artifact Registry ({cfg.artifacts.repository_name})")
 
-        # Pub/Sub
-        if self.aigear_config.gcp.pub_sub.on:
-            success = self._step(
-                f"Pub/Sub Topic ({self.aigear_config.gcp.pub_sub.topic_name})",
-                self._ensure_pubsub
-            )
-            if not success:
-                failed_steps.append(f"Pub/Sub Topic ({self.aigear_config.gcp.pub_sub.topic_name})")
+        if cfg.pub_sub.on:
+            phase2_tasks[f"Pub/Sub Topic ({cfg.pub_sub.topic_name})"] = self._ensure_pubsub
         else:
-            logger.info(
-                f"Pub/Sub creation is disabled in the configuration file. "
-                f"Skipping Pub/Sub topic ({self.aigear_config.gcp.pub_sub.topic_name}) setup."
-            )
+            self._step_skip(f"Pub/Sub Topic ({cfg.pub_sub.topic_name})")
 
-        # Cloud Build
-        if self.aigear_config.gcp.cloud_build.on:
-            success = self._step(
-                f"Cloud Build Trigger ({self.aigear_config.gcp.cloud_build.trigger_name})",
-                self._ensure_cloud_build
-            )
-            if not success:
-                failed_steps.append(f"Cloud Build Trigger ({self.aigear_config.gcp.cloud_build.trigger_name})")
+        if cfg.kms.on:
+            phase2_tasks[f"Cloud KMS ({cfg.kms.keyring_name}/{cfg.kms.key_name})"] = self._ensure_kms
         else:
-            logger.info(
-                f"Cloud Build creation is disabled in the configuration file. "
-                f"Skipping Cloud Build trigger ({self.aigear_config.gcp.cloud_build.trigger_name}) setup."
-            )
+            self._step_skip(f"Cloud KMS ({cfg.kms.keyring_name}/{cfg.kms.key_name})")
 
-        # Cloud Function
-        if self.aigear_config.gcp.cloud_function.on:
+        if cfg.cloud_build.on:
+            phase2_tasks[f"Cloud Build Trigger ({cfg.cloud_build.trigger_name})"] = self._ensure_cloud_build
+        else:
+            self._step_skip(f"Cloud Build Trigger ({cfg.cloud_build.trigger_name})")
+
+        if cfg.pre_vm_image.on:
+            phase2_tasks["Pre-VM Image (pre_vm_image)"] = self._ensure_pre_vm_image
+        else:
+            self._step_skip("Pre-VM Image (pre_vm_image)")
+
+        if cfg.kubernetes.on:
+            phase2_tasks[f"Kubernetes Cluster ({cfg.kubernetes.cluster_name})"] = self._ensure_kubernetes_cluster
+        else:
+            self._step_skip(f"Kubernetes Cluster ({cfg.kubernetes.cluster_name})")
+
+        if phase2_tasks:
+            with ThreadPoolExecutor(max_workers=len(phase2_tasks)) as executor:
+                futures = {
+                    executor.submit(self._step, title, fn): title
+                    for title, fn in phase2_tasks.items()
+                }
+                for future in as_completed(futures):
+                    title = futures[future]
+                    if not future.result():
+                        failed_steps.append(title)
+
+        # ── Phase 3: Cloud Function (depends on Pub/Sub) ──────────────
+        if cfg.cloud_function.on:
             success = self._step(
-                f"Cloud Function ({self.aigear_config.gcp.cloud_function.function_name})",
+                f"Cloud Function ({cfg.cloud_function.function_name})",
                 self._ensure_cloud_function
             )
             if not success:
-                failed_steps.append(f"Cloud Function ({self.aigear_config.gcp.cloud_function.function_name})")
+                failed_steps.append(f"Cloud Function ({cfg.cloud_function.function_name})")
         else:
-            logger.info(
-                f"Cloud Function deployment is disabled in the configuration file. "
-                f"Skipping Cloud Function ({self.aigear_config.gcp.cloud_function.function_name}) setup."
-            )
+            self._step_skip(f"Cloud Function ({cfg.cloud_function.function_name})")
 
-        # Pre-VM Image
-        if self.aigear_config.gcp.pre_vm_image.on:
-            success = self._step(
-                "Pre-VM Image (pre_vm_image)",
-                self._ensure_pre_vm_image
-            )
-            if not success:
-                failed_steps.append("Pre-VM Image (pre_vm_image)")
-        else:
-            logger.info(
-                "Pre-VM Image creation is disabled in the configuration file. "
-                "Skipping custom VM image (pre_vm_image) creation."
-            )
-
-        # Kubernetes Cluster
-        if self.aigear_config.gcp.kubernetes.on:
-            success = self._step(
-                f"Kubernetes Cluster ({self.aigear_config.gcp.kubernetes.cluster_name})",
-                self._ensure_kubernetes_cluster
-            )
-            if not success:
-                failed_steps.append(f"Kubernetes Cluster ({self.aigear_config.gcp.kubernetes.cluster_name})")
-        else:
-            logger.info(
-                f"Kubernetes Cluster creation is disabled in the configuration file. "
-                f"Skipping Kubernetes Cluster ({self.aigear_config.gcp.cloud_function.function_name}) setup."
-            )
-
-        # Summary
-        logger.info("\n===================================================")
+        # ── Summary ───────────────────────────────────────────────────
+        logger.info("===================================================")
         if failed_steps:
             logger.warning("       Aigear GCP Infra Init Complete (with errors)")
             logger.warning("===================================================")
             logger.warning("The following steps failed:")
             for step in failed_steps:
                 logger.warning(f"  - {step}")
-            logger.info("Please review the errors above and retry the failed steps.\n")
+            logger.info("Please review the errors above and retry the failed steps.")
         else:
             logger.info("            Aigear GCP Infra Init Complete         ")
-            logger.info("===================================================\n")
+            logger.info("===================================================")
 
     # ================================================================
     # Actual infra actions (use your existing classes)
@@ -391,6 +397,32 @@ class Infra:
             logger.info(
                 f"Pub/Sub topic ({self.aigear_config.gcp.pub_sub.topic_name}) already exists in project "
                 f"({self.project_id}). Skipping creation."
+            )
+
+    def _ensure_kms(self):
+        if not self.cloud_kms.describe_keyring():
+            logger.info(
+                f"KMS keyring ({self.aigear_config.gcp.kms.keyring_name}) not found in location "
+                f"({self.location}). Creating keyring..."
+            )
+            self.cloud_kms.create_keyring()
+            logger.info(f"KMS keyring ({self.aigear_config.gcp.kms.keyring_name}) created successfully.")
+        else:
+            logger.info(
+                f"KMS keyring ({self.aigear_config.gcp.kms.keyring_name}) already exists in location "
+                f"({self.location}). Skipping creation."
+            )
+
+        if not self.cloud_kms.describe_key():
+            logger.info(
+                f"KMS key ({self.aigear_config.gcp.kms.key_name}) not found. Creating key..."
+            )
+            self.cloud_kms.create_key()
+            self.cloud_kms.add_permissions(sa_email=self.service_account)
+            logger.info(f"KMS key ({self.aigear_config.gcp.kms.key_name}) created successfully.")
+        else:
+            logger.info(
+                f"KMS key ({self.aigear_config.gcp.kms.key_name}) already exists. Skipping creation."
             )
 
     def _ensure_cloud_build(self):

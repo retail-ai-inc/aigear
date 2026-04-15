@@ -1,11 +1,11 @@
 import time
 import signal
 from contextlib import contextmanager
+from typing import Any
 import socket
-import argparse
 
 
-def wait_until_closed(server):
+def wait_until_closed(server: Any) -> None:
     """
     Wait indefinitely until receiving a signal to shut down the service.
     """
@@ -24,7 +24,7 @@ def wait_until_closed(server):
 
 
 @contextmanager
-def reserve_port(port):
+def reserve_port(port: int):
     """
     Find and reserve a port for all subprocesses to use
     """
@@ -35,11 +35,10 @@ def reserve_port(port):
 
     if hasattr(socket, "SO_REUSEPORT"):
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        if sock.getsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT) == 0:
+            raise RuntimeError("Failed to set SO_REUSEPORT.")
     else:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-
-    if sock.getsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT) == 0:
-        raise RuntimeError("Failed to set SO_REUSEPORT.")
     sock.bind(("", port))
     try:
         yield sock.getsockname()[1]

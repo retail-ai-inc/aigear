@@ -1,3 +1,4 @@
+from pathlib import Path
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, classification_report
 import pickle
@@ -11,14 +12,14 @@ logger = Logging(log_name=__name__).console_logging()
 
 
 def save_model(
-    model,
-    save_path,
-):
+    model: LogisticRegression,
+    save_path: Path,
+) -> None:
     with open(save_path, "wb") as f:
         pickle.dump(model, f)
 
 
-def train_model(pipeline_version):
+def train_model(pipeline_version: str) -> None:
     logger.info("-----train model-----")
     env_config = EnvConfig.get_config_with_schema(EnvSchema)
     feature_management = AssetManagement(

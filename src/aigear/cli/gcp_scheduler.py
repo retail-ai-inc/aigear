@@ -3,11 +3,11 @@ import argparse
 from aigear.deploy.gcp.scheduler import create_scheduler
 
 
-def get_argument():
+def get_argument() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    group = parser.add_mutually_exclusive_group(required=False)
+    group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument(
         "--create",
         action="store_true",
@@ -20,10 +20,13 @@ def get_argument():
                         help="Version of the pipeline.")
     parser.add_argument("--step_names", default="",
                         help="Comma-separated names of the pipeline steps.")
+    parser.add_argument("--env", default="staging",
+                        choices=["staging", "production"],
+                        help="Deployment environment for model service yaml (default: from env.json).")
     return parser.parse_args()
 
 
-def gcp_scheduler():
+def gcp_scheduler() -> None:
     args = get_argument()
 
     missing = []
@@ -37,11 +40,9 @@ def gcp_scheduler():
 
     step_names = args.step_names.split(",")
     if args.create:
-        create_scheduler(args.version, step_names)
+        create_scheduler(args.version, step_names, args.env)
     # Future commands:
     # elif args.delete:
     #     delete_scheduler(args.version, step_names)
     # elif args.update:
     #     update_scheduler(args.version, step_names)
-    else:
-        create_scheduler(args.version, step_names)

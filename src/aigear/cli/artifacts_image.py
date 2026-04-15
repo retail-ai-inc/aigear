@@ -3,7 +3,7 @@ import argparse
 from aigear.deploy.gcp.artifacts_image import create_artifacts_image
 
 
-def get_argument():
+def get_argument() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -11,67 +11,60 @@ def get_argument():
     group.add_argument(
         "--create",
         action="store_true",
-        help="Build and push Docker image(s) to Artifact Registry."
+        help="Build Docker image(s).",
     )
     # Future commands:
     # group.add_argument("--delete", action="store_true", help="...")
     # group.add_argument("--update", action="store_true", help="...")
+    parser.add_argument(
+        "--push",
+        action="store_true",
+        help="Push Docker image(s). Can be used alone (push only) or with --create (build then push).",
+    )
     parser.add_argument("--dockerfile_path", default=None,
-                        help="Path of Dockerfile. If omitted, builds all default images.")
+                        help="Path of Dockerfile. If omitted, operates on all default images.")
     parser.add_argument("--build_context", default=".",
                         help="Docker build context path.")
-    parser.add_argument("--image_name", default=None,
-                        help="The name of the Docker image.")
-    parser.add_argument("--image_version", default="latest",
-                        help="The version of the Docker image.")
     parser.add_argument("--is_service", action="store_true",
                         help="Determine whether it is a model service image.")
-    parser.add_argument("--force", action="store_true",
-                        help="Force recreate image even if it already exists.")
-    parser.add_argument("--push", action="store_true",
-                        help="Push the image after building.")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if not args.create and not args.push:
+        parser.error("At least one of --create or --push is required.")
+    return args
 
 
-def _build_images(args):
+def _run_images(args: argparse.Namespace) -> None:
     if args.dockerfile_path is None:
-        print("No '--dockerfile_path' provided, building all default images.")
+        print("No '--dockerfile_path' provided, operating on all default images.")
         for dockerfile, is_service in [("Dockerfile.pl", False), ("Dockerfile.ms", True)]:
-            print(f"Building image: '{dockerfile}'...")
-            create_artifacts_image(
+            print(f"Processing image: '{dockerfile}'...")
+            success = create_artifacts_image(
                 dockerfile_path=dockerfile,
                 build_context=args.build_context,
-                force=args.force,
-                image_name=args.image_name,
-                image_version=args.image_version,
                 is_service=is_service,
+                is_build=args.create,
                 is_push=args.push,
             )
-            print(f"The image({dockerfile}) creation completed.")
+            if success:
+                print(f"The image({dockerfile}) operation completed.")
+            else:
+                print(f"The image({dockerfile}) operation failed, please check the errors above.")
             print("-----------------------------------")
     else:
-        print(f"Building image: '{args.dockerfile_path}'...")
-        create_artifacts_image(
+        print(f"Processing image: '{args.dockerfile_path}'...")
+        success = create_artifacts_image(
             dockerfile_path=args.dockerfile_path,
             build_context=args.build_context,
-            force=args.force,
-            image_name=args.image_name,
-            image_version=args.image_version,
             is_service=args.is_service,
+            is_build=args.create,
             is_push=args.push,
         )
-        print(f"The image({args.dockerfile_path}) creation completed.")
+        if success:
+            print(f"The image({args.dockerfile_path}) operation completed.")
+        else:
+            print(f"The image({args.dockerfile_path}) operation failed, please check the errors above.")
         print("-----------------------------------")
 
 
 def docker_image():
-    args = get_argument()
-    if args.create:
-        _build_images(args)
-    # Future commands:
-    # elif args.delete:
-    #     _delete_images(args)
-    # elif args.update:
-    #     _update_images(args)
-    else:
-        _build_images(args)
+    _run_images(get_argument())

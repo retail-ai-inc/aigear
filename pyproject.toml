@@ -10,16 +10,16 @@ keywords = ["MLOps", "AI", "ML", "Model Serving", "Model Deployment", "Model Tra
 authors = [{ name = "Retail AI Groups Inc." }]
 readme = "README.md"
 license = { file = 'LICENSE' }
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 classifiers = [
     "Intended Audience :: Science/Research",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "License :: OSI Approved :: MIT License",
     "Operating System :: Microsoft :: Windows",
     "Operating System :: Unix",
@@ -58,7 +58,12 @@ gcp = [
     "google-cloud-logging>=3.0.0",
     "google-cloud-secret-manager>=2.24.0",
     "google-cloud-storage>=3.2.0",
-    "google-cloud-compute>=1.38.0"
+    "google-cloud-compute>=1.38.0",
+    "google-api-core>=2.0.0",
+]
+mongodb = [
+    "pymongo>=4.0.0",
+    "pymongoarrow>=0.7.0",
 ]
 
 [project.scripts]
@@ -67,9 +72,10 @@ aigear-gcp-infra = "aigear.cli.gcp_cli:gcp_infra"
 aigear-env-schema = "aigear.cli.env_schema:env_schema"
 aigear-image = "aigear.cli.artifacts_image:docker_image"
 aigear-scheduler = "aigear.cli.gcp_scheduler:gcp_scheduler"
+aigear-model-yaml = "aigear.cli.model_service_yaml:generate_model_service_yaml"
 aigear-deploy-model = "aigear.cli.model_service:deploy_grpc_service"
-aigear-workflow = "aigear.cli.task_running:task_run"
-aigear-grpc = "aigear.cli.grpc_service:grpc_run"
+aigear-task = "aigear.cli.task_running:task_run"
+aigear-kms-env = "aigear.cli.kms_cli:kms_env"
 
 
 [tool.setuptools.packages.find]
@@ -82,7 +88,9 @@ include = [
 "aigear" = [
     "template/**/*",
     "template/**/.*",
-    "infrastructure/gcp/function/*"
+    "template/pre-commit",
+    "infrastructure/gcp/function/*",
+    "deploy/common/*.tpl",
 ]
 
 [tool.setuptools_scm]

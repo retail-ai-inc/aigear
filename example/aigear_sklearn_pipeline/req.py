@@ -11,7 +11,7 @@ def predict():
         16.20, 25.00, 105.0, 760.0, 0.130, 0.260, 0.280, 0.120, 0.290, 0.085
     ]
 
-    channel = grpc.insecure_channel("localhost:50051")
+    channel = grpc.insecure_channel("localhost:50051")  # localhost is EXTERNAL-IP
     stub = grpc_pb2_grpc.MLStub(channel)
 
     payload = Struct()
@@ -30,4 +30,4 @@ def predict():
 if __name__ == "__main__":
     predict()
 
-    # kubectl get service 'service name'
+    # kubectl get service aigear-sklearn-pipeline-logistic-regression-service

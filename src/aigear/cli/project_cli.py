@@ -2,7 +2,7 @@ import argparse
 from ..project import Project
 
 
-def get_argument():
+def get_argument() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -21,7 +21,7 @@ def get_argument():
     return args
 
 
-def project_init():
+def project_init() -> None:
     args = get_argument()
     # Parse pipelines
     pipeline_versions = [p.strip() for p in args.pipeline_versions.split(',')]

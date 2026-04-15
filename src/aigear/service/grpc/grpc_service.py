@@ -2,8 +2,8 @@ import multiprocessing
 import platform
 import sys
 from concurrent import futures
-from typing import Type
-
+from typing import Any
+import gc
 import grpc
 from google.protobuf import struct_pb2
 from google.protobuf.json_format import MessageToDict
@@ -14,7 +14,7 @@ from sentry_sdk.integrations.grpc.server import ServerInterceptor
 from aigear.common.config import PipelinesConfig, get_environment
 from aigear.common.loading_module import LoadModule
 from aigear.common.logger import Logging
-from aigear.service.grpc.grpc_package import grpc_features
+from aigear.service.grpc.grpc_package import grpc_features, thread_config
 from aigear.service.grpc.protos import grpc_pb2, grpc_pb2_grpc
 
 logger = Logging(log_name=__name__).console_logging()
@@ -35,7 +35,7 @@ class MLServicer(grpc_pb2_grpc.MLServicer):
         return grpc_pb2.MLResponse(response=response_data)
 
 
-def _run_server(bind_address: str, model_instance: Type, grpc_options: dict):
+def _run_server(bind_address: str, model_instance: Any, grpc_options: dict) -> None:
     """Start a server in a subprocess."""
     logger.info("Starting new server.")
 
@@ -55,7 +55,7 @@ def _run_server(bind_address: str, model_instance: Type, grpc_options: dict):
                 ("grpc.keepalive_permit_without_calls", True),  # allow keepalive pings when there are no gRPC calls
             ]
         )
-    logger.info(f"gRPC has added Keepalive. interval time: {keepalive_time}s, timeout: {keepalive_timeout}s.")
+        logger.info(f"gRPC has added Keepalive. interval time: {keepalive_time}s, timeout: {keepalive_timeout}s.")
 
     max_workers = grpc_options.get("multi_processing", {}).get("thread_count", 5)
     logger.info(f"Enable thread count: {max_workers}.")
@@ -75,35 +75,31 @@ def _run_server(bind_address: str, model_instance: Type, grpc_options: dict):
     grpc_features.wait_until_closed(server)
 
 
-def grpc_service(pipeline_version, model_class_path):
-    # load ml module
-    logger.info(f"gRPC load module: {model_class_path}...")
-    model_class = LoadModule(model_class_path).load_module()
-    if model_class is None:
-        logger.error("model module instance fail!!!!!!")
-        return
-    model_instance = model_class()
-    logger.info("gRPC load module successfully.")
-
+def grpc_service(pipeline_version: str, model_class_path: str) -> None:
     # Get environment variables
-    environment = get_environment()
     pipeline_version_config = PipelinesConfig.get_version_config(pipeline_version)
     if pipeline_version_config is None:
         logger.error(f"No pipeline_version({pipeline_version}) config found in `env.json`.")
         return
-    logger.info(f"Environment variables: {pipeline_version_config}")
-    release_config = pipeline_version_config.get("model_service", {})
 
-    # Release switch
-    release_switch = release_config.get("release", False)
-    if not release_switch:
-        logger.info(f"The Release parameter for pipeline_version({pipeline_version}) is not turned on.")
-        return
+    ms_config = pipeline_version_config.get("model_service", {})
+    grpc_config = ms_config.get("grpc", {})
+    multi_processing = grpc_config.get("multi_processing", {})
+    disable_omp = multi_processing.get("disable_omp", True)
+    # load ml module
+    logger.info(f"gRPC load module: {model_class_path}...")
+    with thread_config.ml_thread_scope(disable_omp):
+        model_class = LoadModule(model_class_path).load_module()
+        if model_class is None:
+            logger.error("model module instance fail!!!!!!")
+            return
+        model_instance = model_class()
+    logger.info("gRPC load module successfully.")
 
-    grpc_config = release_config.get("grpc", {})
     # Enable Sentry
     sentry_cog = grpc_config.get("sentry", {})
     sentry_enable = sentry_cog.get("on")
+    environment = get_environment()
     logger.info(f"Enable Sentry: {sentry_enable}")
     if sentry_enable:
         sentry_init(
@@ -114,11 +110,16 @@ def grpc_service(pipeline_version, model_class_path):
 
     # grpc
     is_windows = platform.system().lower() == "windows"
-    multi_processing = grpc_config.get("multi_processing", {})
     process_switch = multi_processing.get("on", False)
     port = int(grpc_config.get("port", "50051"))
     service_host = grpc_config.get("service_host", "0.0.0.0")
     if process_switch and not is_windows:
+        # Move PyTorch model weights to shared memory to avoid COW on C++ refcount updates
+        inner_model = getattr(model_instance, 'model', None)
+        if callable(getattr(inner_model, 'share_memory', None)):
+            inner_model.share_memory()
+        # Freeze GC before fork to prevent GC scanning from dirtying shared pages (COW)
+        gc.freeze()
         with grpc_features.reserve_port(port) as grpc_port:
             bind_address = f"{service_host}:{grpc_port}"
             sys.stdout.flush()

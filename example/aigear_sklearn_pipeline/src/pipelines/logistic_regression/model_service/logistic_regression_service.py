@@ -1,4 +1,6 @@
 import pickle
+from pathlib import Path
+from typing import Any
 import numpy as np
 from aigear.management.asset import AssetManagement
 from aigear.common.config import EnvConfig
@@ -10,7 +12,7 @@ class ModelService:
     def __init__(self):
         self.scaler_model, self.logistic_model = self.load_all_model()
 
-    def predict(self, data):
+    def predict(self, data: dict) -> list:
         features = np.array([data["features"]])
         features_scaled = self.scaler_model.transform(features)
         predict_class = self.logistic_model.predict(features_scaled)
@@ -18,14 +20,14 @@ class ModelService:
         return predict_class.tolist()
 
     @staticmethod
-    def _load_model(model_path):
+    def _load_model(model_path: Path) -> Any:
         with open(model_path, "rb") as f:
             model = pickle.load(f)
         return model
 
     def load_all_model(
         self,
-    ):
+    ) -> tuple:
         env_config = EnvConfig.get_config_with_schema(EnvSchema)
         feature_management = AssetManagement(
             pipeline_version="logistic_regression",
