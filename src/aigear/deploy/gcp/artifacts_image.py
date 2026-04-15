@@ -14,14 +14,16 @@ class ArtifactsImage:
     def __init__(self, artifacts_image):
         self.artifacts_image = artifacts_image
 
-    def create_image(self, dockerfile_path=None, build_context="."):
+    def create_image(self, dockerfile_path=None, build_context=".") -> bool:
+        """Returns True if the build succeeded, False otherwise."""
         if dockerfile_path is None:
             logger.info("Please specify Dockerfile(Dockerfile.pl or Dockerfile.ms) to build the image.")
+            return False
         command = [
             "docker", "build", "-f", dockerfile_path, "-t", self.artifacts_image, build_context
         ]
-        event = run_sh_stream(command)
-        logger.info(event)
+        returncode = run_sh_stream(command)
+        return returncode == 0
 
     @staticmethod
     def obtain_permissions(location):
@@ -103,36 +105,30 @@ def _validate_dockerfile_venvs(dockerfile_path: str, is_service: bool) -> None:
 def create_artifacts_image(
     dockerfile_path=None,
     build_context=".",
-    force=False,
     is_service=False,
+    is_build=True,
     is_push=False
-):
+) -> bool:
+    """Returns True if the requested operations succeeded, False otherwise."""
     log_tag = "model service" if is_service else "pipeline"
-
-    if dockerfile_path:
-        _validate_dockerfile_venvs(dockerfile_path, is_service)
 
     aigear_config = AigearConfig.get_config()
     artifacts_image = get_image_path(is_service=is_service)
     artifacts_image_instance = ArtifactsImage(artifacts_image=artifacts_image)
-    if is_push:
-        is_exist = artifacts_image_instance.image_exist_in_artifacts()
-        if is_exist and not force:
-            logger.info(f"The {log_tag} image already exists in gcp artifacts: {artifacts_image}")
-            return
-        logger.info(f"The {log_tag} image exists: {is_exist}, force flag: {force}, the image will be created.")
-        artifacts_image_instance.create_image(
+
+    if is_build:
+        if dockerfile_path:
+            _validate_dockerfile_venvs(dockerfile_path, is_service)
+        success = artifacts_image_instance.create_image(
             dockerfile_path=dockerfile_path,
             build_context=build_context
         )
+        if not success:
+            return False
         logger.info(f"The {log_tag} image has been created.")
+
+    if is_push:
         artifacts_image_instance.obtain_permissions(aigear_config.gcp.location)
         artifacts_image_instance.push_image()
-    else:
-        artifacts_image_instance.create_image(
-            dockerfile_path=dockerfile_path,
-            build_context=build_context
-        )
-        logger.info(f"The {log_tag} image has been created.")
-    logger.info(f"The {log_tag} image has been pushed.")
-    logger.info("------------------------------------")
+        logger.info(f"The {log_tag} image has been pushed.")
+    return True
