@@ -1,4 +1,3 @@
-
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -15,16 +14,12 @@ spec:
     spec:
       containers:
       - name: aigear-sklearn-pipeline-logistic-regression-service
-        image: asia-northeast1-docker.pkg.dev/{gcp project id}/test-sklearn-pipeline-images/aigear-sklearn-pipeline-service:latest
+        image: asia-northeast1-docker.pkg.dev/ssc-ape-staging/test-sklearn-pipeline-images/test-sklearn-model-service:latest
         imagePullPolicy: Always
-        
-        command: ["aigear-grpc"]
+        command: ["/opt/venv/ms/bin/aigear-task", "grpc"]
         args:
           - "--version"
           - "logistic_regression"
-          - "--model_class_path"
-          - "src.pipelines.logistic_regression.model_service.logistic_regression_service.ModelService"
-
         ports:
         - containerPort: 50051
 ---

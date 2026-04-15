@@ -1,1 +1,1 @@
-gcs_switch = False
+gcs_switch = True

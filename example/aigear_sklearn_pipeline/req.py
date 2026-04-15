@@ -30,4 +30,4 @@ def predict():
 if __name__ == "__main__":
     predict()
 
-    # kubectl get service 'service name'
+    # kubectl get service aigear-sklearn-pipeline-logistic-regression-service

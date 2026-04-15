@@ -1,0 +1,69 @@
+options:
+  machineType: 'E2_HIGHCPU_8'  # 8-core high-CPU machine to speed up Docker builds
+  logging: CLOUD_LOGGING_ONLY   # Write logs to Cloud Logging only, not GCS
+
+# Required substitutions (configure in Cloud Build trigger or via --substitutions):
+#   _ENVIRONMENT  : staging | production                                        (= aigear.gcp.environment)
+#   _KMS_KEYRING  : KMS key ring name                                          (= aigear.gcp.kms.keyring_name)
+#   _KMS_KEY      : KMS crypto key name used to decrypt env.bin                (= aigear.gcp.kms.key_name)
+#   _REPOSITORY   : Artifact Registry repository name                          (= aigear.gcp.artifacts.repository_name)
+#   _MS_IMAGE_NAME: Model service image name (built from Dockerfile.ms)
+#   _PL_IMAGE_NAME: Pipeline image name      (built from Dockerfile.pl)
+#   _IMAGE_TAG    : Image tag, e.g. latest | $SHORT_SHA
+#
+# Built-in variables (auto-injected by Cloud Build, ref: https://cloud.google.com/build/docs/configuring-builds/substitute-variable-values):
+#   $PROJECT_ID   : GCP project ID
+#   $LOCATION     : GCP region associated with the build trigger               (= aigear.gcp.location)
+
+steps:
+
+# Step 1: Decrypt env.json using Cloud KMS.
+# The encrypted config file contains sensitive data (DB credentials, API keys, etc.)
+# and must not be committed in plaintext.
+# Ciphertext path: kms/<env>/<env>-env.bin
+# Plaintext output: env.json (used by subsequent Docker build steps)
+- name: 'gcr.io/cloud-builders/gcloud'
+  id: 'kms-decrypt'
+  args:
+    - kms
+    - decrypt
+    - --project=$PROJECT_ID
+    - --location=$LOCATION
+    - --keyring=$_KMS_KEYRING
+    - --key=$_KMS_KEY
+    - --ciphertext-file=kms/$_ENVIRONMENT/$_ENVIRONMENT-env.bin
+    - --plaintext-file=env.json
+
+# Step 2a: Build model service image (Dockerfile.ms).
+# Waits for kms-decrypt to ensure env.json is ready.
+# Target: <region>-docker.pkg.dev/<project>/<repo>/<ms-image>:<tag>
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'docker-build-ms'
+  waitFor: ['kms-decrypt']
+  args:
+    - build
+    - -f
+    - Dockerfile.ms
+    - -t
+    - '$LOCATION-docker.pkg.dev/$PROJECT_ID/$_REPOSITORY/$_MS_IMAGE_NAME:$_IMAGE_TAG'
+    - .
+
+# Step 2b: Build pipeline image (Dockerfile.pl).
+# Runs in parallel with step 2a (both depend only on kms-decrypt).
+# Target: <region>-docker.pkg.dev/<project>/<repo>/<pl-image>:<tag>
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'docker-build-pl'
+  waitFor: ['kms-decrypt']
+  args:
+    - build
+    - -f
+    - Dockerfile.pl
+    - -t
+    - '$LOCATION-docker.pkg.dev/$PROJECT_ID/$_REPOSITORY/$_PL_IMAGE_NAME:$_IMAGE_TAG'
+    - .
+
+# Declare build artifacts. Cloud Build automatically pushes these images to
+# Artifact Registry after all steps complete.
+images:
+  - '$LOCATION-docker.pkg.dev/$PROJECT_ID/$_REPOSITORY/$_MS_IMAGE_NAME:$_IMAGE_TAG'
+  - '$LOCATION-docker.pkg.dev/$PROJECT_ID/$_REPOSITORY/$_PL_IMAGE_NAME:$_IMAGE_TAG'
