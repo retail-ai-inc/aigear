@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "aigear"
 dynamic = ["version"]
-description = "Machine learning microservices based on gRPC"
+description = "Cloud-Native ML Deployment & Automation Framework"
 keywords = ["MLOps", "AI", "ML", "Model Serving", "Model Deployment", "Model Training"]
 authors = [{ name = "Retail AI Groups Inc." }]
 readme = "README.md"

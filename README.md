@@ -220,6 +220,6 @@ Contributions, issues, and PRs are welcome. Share internal use-cases to help evo
 
 **Built with ❤️ by Retail AI Inc.**
 
-[Star this repo](https://github.com/retail-ai-inc/beanq/stargazers) if you find it helpful!
+[Star this repo](https://github.com/retail-ai-inc/aigear/stargazers) if you find it helpful!
 
 </div>
