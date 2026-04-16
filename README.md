@@ -211,8 +211,8 @@ See the full [CLI Reference](docs/cli-reference.md) for all commands and argumen
 
 Contributions, issues, and PRs are welcome. Share internal use-cases to help evolve common conventions. For questions or feature requests, open an issue in the repository or contact the maintainers.
 
-- **Issues**: [GitHub Issues](https://github.com/retail-ai-inc/beanq/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/retail-ai-inc/beanq/discussions)
+- **Issues**: [GitHub Issues](https://github.com/retail-ai-inc/aigear/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/retail-ai-inc/aigear/discussions)
 
 ---
 
@@ -220,6 +220,6 @@ Contributions, issues, and PRs are welcome. Share internal use-cases to help evo
 
 **Built with ❤️ by Retail AI Inc.**
 
-[Star this repo](https://github.com/retail-ai-inc/beanq/stargazers) if you find it helpful!
+[Star this repo](https://github.com/retail-ai-inc/aigear/stargazers) if you find it helpful!
 
 </div>
