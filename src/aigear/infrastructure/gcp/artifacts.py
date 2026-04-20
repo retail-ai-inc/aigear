@@ -44,6 +44,18 @@ class Artifacts:
             logger.error(f"Unexpected error describing artifact registry ({self.repository_name}): {event}")
         return is_exist
 
+    def delete(self):
+        command = [
+            "gcloud", "artifacts", "repositories", "delete",
+            self.repository_name,
+            f"--location={self.location}",
+            f"--project={self.project_id}",
+            "--quiet",
+        ]
+        event = run_sh(command)
+        if "ERROR" in event:
+            logger.error(f"Failed to delete artifact registry ({self.repository_name}): {event}")
+
 
 if __name__ == "__main__":
     project_id = ""

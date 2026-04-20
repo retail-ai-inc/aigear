@@ -157,7 +157,7 @@ class PreVMImage:
         gpu_type: str                = "nvidia-tesla-t4",
         gpu_count: int               = 1,
         gpu_boot_disk_gb: int        = 100,
-        dlvm_family: str             = "common-cu128-ubuntu-2204-nvidia-570",
+        dlvm_family: str             = "common-cu129-ubuntu-2204-nvidia-580",
         gpu_bake_vm: str             = "ml-dlvm-gpu",
         # CPU bake parameters
         cpu_machine_type: str        = "e2-standard-4",
@@ -524,6 +524,32 @@ class PreVMImage:
         else:
             self.create_cpu_image()
 
+    # ── Delete images ────────────────────────────────────────────────────────
+
+    def _delete_image(self, image_name: str):
+        client = compute_v1.ImagesClient()
+        logger.info(f"Deleting image {image_name} ...")
+        op = client.delete(project=self.project_id, image=image_name)
+        self._wait_op(op, f"delete image {image_name}")
+
+    def delete_gpu_image(self):
+        if self._image_exists(self.gpu_image_name):
+            self._delete_image(self.gpu_image_name)
+            logger.info(f"GPU image ({self.gpu_image_name}) deleted successfully.")
+        else:
+            logger.info(f"GPU image ({self.gpu_image_name}) not found. Skipping.")
+
+    def delete_cpu_image(self):
+        if self._image_exists(self.cpu_image_name):
+            self._delete_image(self.cpu_image_name)
+            logger.info(f"CPU image ({self.cpu_image_name}) deleted successfully.")
+        else:
+            logger.info(f"CPU image ({self.cpu_image_name}) not found. Skipping.")
+
+    def delete(self):
+        self.delete_gpu_image()
+        self.delete_cpu_image()
+
 
 # ─── Entry point ─────────────────────────────────────────────────────────────
 
@@ -548,7 +574,7 @@ if __name__ == "__main__":
         gpu_type               = "nvidia-tesla-t4",
         gpu_count              = 1,
         gpu_boot_disk_gb       = 100,
-        dlvm_family            = "common-cu128-ubuntu-2204-nvidia-570",
+        dlvm_family            = "common-cu129-ubuntu-2204-nvidia-580",
         gpu_bake_vm            = "ml-dlvm",
         # CPU
         cpu_machine_type       = "e2-standard-4",

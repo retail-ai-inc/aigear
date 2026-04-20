@@ -41,6 +41,7 @@ class ServiceAccounts:
             "gcloud", "iam", "service-accounts", "delete",
             self.sa_email,
             f"--project={self.project_id}",
+            "--quiet",
         ]
         event = run_sh(command)
         if event == "":
