@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from aigear.common import run_sh
@@ -85,9 +86,77 @@ class CloudKMS:
             logger.error(f"Unexpected error describing key ({self.key_name}): {event}")
         return is_exist
 
+    def describe_enabled_key_version(self) -> bool:
+        command = [
+            "gcloud", "kms", "keys", "versions", "list",
+            f"--key={self.key_name}",
+            f"--keyring={self.keyring_name}",
+            f"--location={self.location}",
+            f"--project={self.project_id}",
+            "--filter=state=ENABLED",
+            "--format=json",
+        ]
+        output = run_sh(command)
+        try:
+            versions = json.loads(output)
+            return len(versions) > 0
+        except Exception:
+            return False
+
+    def create_key_version(self):
+        command = [
+            "gcloud", "kms", "keys", "versions", "create",
+            f"--key={self.key_name}",
+            f"--keyring={self.keyring_name}",
+            f"--location={self.location}",
+            f"--project={self.project_id}",
+        ]
+        event = run_sh(command)
+        if "ERROR" in event:
+            logger.error(f"Failed to create KMS key version ({self.key_name}): {event}")
+
     # ------------------------------------------------------------------ #
     #  IAM                                                                 #
     # ------------------------------------------------------------------ #
+
+    def delete(self):
+        list_cmd = [
+            "gcloud", "kms", "keys", "versions", "list",
+            f"--key={self.key_name}",
+            f"--keyring={self.keyring_name}",
+            f"--location={self.location}",
+            f"--project={self.project_id}",
+            "--format=json",
+        ]
+        output = run_sh(list_cmd)
+        try:
+            versions = json.loads(output)
+        except Exception:
+            versions = []
+
+        destroyed = 0
+        for v in versions:
+            state = v.get("state", "")
+            version_num = v.get("name", "").split("/")[-1]
+            if state in ("ENABLED", "DISABLED") and version_num:
+                destroy_cmd = [
+                    "gcloud", "kms", "keys", "versions", "destroy",
+                    version_num,
+                    f"--key={self.key_name}",
+                    f"--keyring={self.keyring_name}",
+                    f"--location={self.location}",
+                    f"--project={self.project_id}",
+                ]
+                event = run_sh(destroy_cmd)
+                if "ERROR" in event:
+                    logger.error(f"Failed to destroy key version {version_num}: {event}")
+                else:
+                    destroyed += 1
+
+        logger.warning(
+            f"KMS keyring ({self.keyring_name}) cannot be deleted — GCP does not support keyring deletion. "
+            f"Scheduled {destroyed} key version(s) for destruction."
+        )
 
     def add_permissions(self, sa_email: str):
         command = [
