@@ -420,6 +420,13 @@ class Infra:
             self.cloud_kms.create_key()
             self.cloud_kms.add_permissions(sa_email=self.service_account)
             logger.info(f"KMS key ({self.aigear_config.gcp.kms.key_name}) created successfully.")
+        elif not self.cloud_kms.describe_enabled_key_version():
+            logger.info(
+                f"KMS key ({self.aigear_config.gcp.kms.key_name}) exists but has no enabled versions "
+                f"(previously destroyed). Creating new key version..."
+            )
+            self.cloud_kms.create_key_version()
+            logger.info(f"KMS key version ({self.aigear_config.gcp.kms.key_name}) created successfully.")
         else:
             logger.info(
                 f"KMS key ({self.aigear_config.gcp.kms.key_name}) already exists. Skipping creation."
@@ -508,4 +515,243 @@ class Infra:
             logger.info(
                 f"Kubernetes Cluster ({self.aigear_config.gcp.kubernetes.cluster_name}) already exists in region "
                 f"({self.location})."
+            )
+
+    # ================================================================
+    # Public API: delete
+    # ================================================================
+    def delete(self):
+        self.gcloud_login_check()
+        self.project_switch()
+
+        logger.info("===================================================")
+        logger.info("             Aigear GCP Infra Deleting             ")
+        logger.info("===================================================")
+
+        failed_steps = []
+        cfg = self.aigear_config.gcp
+
+        # ── Phase 1: Cloud Function (reverse of creation phase 3) ────
+        if cfg.cloud_function.on:
+            success = self._step(
+                f"Cloud Function ({cfg.cloud_function.function_name})",
+                self._delete_cloud_function
+            )
+            if not success:
+                failed_steps.append(f"Cloud Function ({cfg.cloud_function.function_name})")
+        else:
+            self._step_skip(f"Cloud Function ({cfg.cloud_function.function_name})")
+
+        # ── Phase 2: Independent resources (parallel) ─────────────────
+        phase2_tasks = {}
+
+        if cfg.bucket.on:
+            phase2_tasks[f"Model Bucket ({cfg.bucket.bucket_name})"] = self._delete_model_bucket
+            phase2_tasks[f"Release Model Bucket ({cfg.bucket.bucket_name_for_release})"] = self._delete_release_bucket
+        else:
+            self._step_skip(f"Model Bucket ({cfg.bucket.bucket_name})")
+            self._step_skip(f"Release Model Bucket ({cfg.bucket.bucket_name_for_release})")
+
+        if cfg.artifacts.on:
+            phase2_tasks[f"Artifact Registry ({cfg.artifacts.repository_name})"] = self._delete_artifacts
+        else:
+            self._step_skip(f"Artifact Registry ({cfg.artifacts.repository_name})")
+
+        if cfg.pub_sub.on:
+            phase2_tasks[f"Pub/Sub Topic ({cfg.pub_sub.topic_name})"] = self._delete_pubsub
+        else:
+            self._step_skip(f"Pub/Sub Topic ({cfg.pub_sub.topic_name})")
+
+        if cfg.kms.on:
+            phase2_tasks[f"Cloud KMS ({cfg.kms.keyring_name}/{cfg.kms.key_name})"] = self._delete_kms
+        else:
+            self._step_skip(f"Cloud KMS ({cfg.kms.keyring_name}/{cfg.kms.key_name})")
+
+        if cfg.cloud_build.on:
+            phase2_tasks[f"Cloud Build Trigger ({cfg.cloud_build.trigger_name})"] = self._delete_cloud_build
+        else:
+            self._step_skip(f"Cloud Build Trigger ({cfg.cloud_build.trigger_name})")
+
+        if cfg.pre_vm_image.on:
+            phase2_tasks["Pre-VM Image (pre_vm_image)"] = self._delete_pre_vm_image
+        else:
+            self._step_skip("Pre-VM Image (pre_vm_image)")
+
+        if cfg.kubernetes.on:
+            phase2_tasks[f"Kubernetes Cluster ({cfg.kubernetes.cluster_name})"] = self._delete_kubernetes_cluster
+        else:
+            self._step_skip(f"Kubernetes Cluster ({cfg.kubernetes.cluster_name})")
+
+        if phase2_tasks:
+            with ThreadPoolExecutor(max_workers=len(phase2_tasks)) as executor:
+                futures = {
+                    executor.submit(self._step, title, fn): title
+                    for title, fn in phase2_tasks.items()
+                }
+                for future in as_completed(futures):
+                    title = futures[future]
+                    if not future.result():
+                        failed_steps.append(title)
+
+        # ── Phase 3: Service Account (reverse of creation phase 1) ───
+        if cfg.iam.on:
+            success = self._step(
+                f"Service Account ({cfg.iam.account_name})",
+                self._delete_service_account
+            )
+            if not success:
+                failed_steps.append(f"Service Account ({cfg.iam.account_name})")
+        else:
+            self._step_skip(f"Service Account ({cfg.iam.account_name})")
+
+        # ── Summary ───────────────────────────────────────────────────
+        logger.info("===================================================")
+        if failed_steps:
+            logger.warning("      Aigear GCP Infra Delete Complete (with errors)")
+            logger.warning("===================================================")
+            logger.warning("The following steps failed:")
+            for step in failed_steps:
+                logger.warning(f"  - {step}")
+            logger.info("Please review the errors above and retry the failed steps.")
+        else:
+            logger.info("           Aigear GCP Infra Delete Complete          ")
+            logger.info("===================================================")
+
+    # ================================================================
+    # Actual delete actions
+    # ================================================================
+    def _delete_cloud_function(self):
+        exists = self.cloud_function.describe()
+        if exists:
+            logger.info(
+                f"Deleting Cloud Function ({self.aigear_config.gcp.cloud_function.function_name})..."
+            )
+            self.cloud_function.delete()
+            logger.info(
+                f"Cloud Function ({self.aigear_config.gcp.cloud_function.function_name}) deleted successfully."
+            )
+        else:
+            logger.info(
+                f"Cloud Function ({self.aigear_config.gcp.cloud_function.function_name}) not found. Skipping."
+            )
+
+    def _delete_model_bucket(self):
+        exists = self.model_bucket.describe()
+        if exists:
+            logger.info(
+                f"Deleting model bucket ({self.aigear_config.gcp.bucket.bucket_name})..."
+            )
+            self.model_bucket.delete()
+            logger.info(
+                f"Model bucket ({self.aigear_config.gcp.bucket.bucket_name}) deleted successfully."
+            )
+        else:
+            logger.info(
+                f"Model bucket ({self.aigear_config.gcp.bucket.bucket_name}) not found. Skipping."
+            )
+
+    def _delete_release_bucket(self):
+        exists = self.release_model_bucket.describe()
+        if exists:
+            logger.info(
+                f"Deleting release model bucket ({self.aigear_config.gcp.bucket.bucket_name_for_release})..."
+            )
+            self.release_model_bucket.delete()
+            logger.info(
+                f"Release model bucket ({self.aigear_config.gcp.bucket.bucket_name_for_release}) deleted successfully."
+            )
+        else:
+            logger.info(
+                f"Release model bucket ({self.aigear_config.gcp.bucket.bucket_name_for_release}) not found. Skipping."
+            )
+
+    def _delete_artifacts(self):
+        exists = self.artifacts.describe()
+        if exists:
+            logger.info(
+                f"Deleting Artifact Registry ({self.aigear_config.gcp.artifacts.repository_name})..."
+            )
+            self.artifacts.delete()
+            logger.info(
+                f"Artifact Registry ({self.aigear_config.gcp.artifacts.repository_name}) deleted successfully."
+            )
+        else:
+            logger.info(
+                f"Artifact Registry ({self.aigear_config.gcp.artifacts.repository_name}) not found. Skipping."
+            )
+
+    def _delete_pubsub(self):
+        exists = self.pubsub.describe()
+        if exists:
+            logger.info(
+                f"Deleting Pub/Sub topic ({self.aigear_config.gcp.pub_sub.topic_name})..."
+            )
+            self.pubsub.delete()
+            logger.info(
+                f"Pub/Sub topic ({self.aigear_config.gcp.pub_sub.topic_name}) deleted successfully."
+            )
+        else:
+            logger.info(
+                f"Pub/Sub topic ({self.aigear_config.gcp.pub_sub.topic_name}) not found. Skipping."
+            )
+
+    def _delete_kms(self):
+        if self.cloud_kms.describe_key():
+            logger.info(
+                f"Scheduling KMS key versions for destruction "
+                f"({self.aigear_config.gcp.kms.keyring_name}/{self.aigear_config.gcp.kms.key_name})..."
+            )
+            self.cloud_kms.delete()
+        else:
+            logger.info(
+                f"KMS key ({self.aigear_config.gcp.kms.key_name}) not found. Skipping."
+            )
+
+    def _delete_cloud_build(self):
+        exists = self.cloud_build.describe()
+        if exists:
+            logger.info(
+                f"Deleting Cloud Build trigger ({self.aigear_config.gcp.cloud_build.trigger_name})..."
+            )
+            self.cloud_build.delete()
+            logger.info(
+                f"Cloud Build trigger ({self.aigear_config.gcp.cloud_build.trigger_name}) deleted successfully."
+            )
+        else:
+            logger.info(
+                f"Cloud Build trigger ({self.aigear_config.gcp.cloud_build.trigger_name}) not found. Skipping."
+            )
+
+    def _delete_pre_vm_image(self):
+        logger.info("Deleting Pre-VM Images (CPU and GPU)...")
+        self.pre_vm_image.delete()
+
+    def _delete_kubernetes_cluster(self):
+        exists = self.kubernetes_cluster.describe()
+        if exists:
+            logger.info(
+                f"Deleting Kubernetes Cluster ({self.aigear_config.gcp.kubernetes.cluster_name})..."
+            )
+            self.kubernetes_cluster.delete()
+            logger.info(
+                f"Kubernetes Cluster ({self.aigear_config.gcp.kubernetes.cluster_name}) deleted successfully."
+            )
+        else:
+            logger.info(
+                f"Kubernetes Cluster ({self.aigear_config.gcp.kubernetes.cluster_name}) not found. Skipping."
+            )
+
+    def _delete_service_account(self):
+        exists = self.service_accounts.describe()
+        if exists:
+            logger.info(
+                f"Deleting service account ({self.aigear_config.gcp.iam.account_name})..."
+            )
+            self.service_accounts.delete()
+            logger.info(
+                f"Service account ({self.aigear_config.gcp.iam.account_name}) deleted successfully."
+            )
+        else:
+            logger.info(
+                f"Service account ({self.aigear_config.gcp.iam.account_name}) not found. Skipping."
             )
