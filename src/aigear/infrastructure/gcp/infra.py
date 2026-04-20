@@ -422,11 +422,11 @@ class Infra:
             logger.info(f"KMS key ({self.aigear_config.gcp.kms.key_name}) created successfully.")
         elif not self.cloud_kms.describe_enabled_key_version():
             logger.info(
-                f"KMS key ({self.aigear_config.gcp.kms.key_name}) exists but has no enabled versions "
-                f"(previously destroyed). Creating new key version..."
+                f"KMS key ({self.aigear_config.gcp.kms.key_name}) exists but has no enabled versions. "
+                f"Restoring and enabling latest available version..."
             )
-            self.cloud_kms.create_key_version()
-            logger.info(f"KMS key version ({self.aigear_config.gcp.kms.key_name}) created successfully.")
+            self.cloud_kms.enable_primary_key_version()
+            logger.info(f"KMS key ({self.aigear_config.gcp.kms.key_name}) re-enabled successfully.")
         else:
             logger.info(
                 f"KMS key ({self.aigear_config.gcp.kms.key_name}) already exists. Skipping creation."

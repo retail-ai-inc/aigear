@@ -103,17 +103,73 @@ class CloudKMS:
         except Exception:
             return False
 
-    def create_key_version(self):
-        command = [
-            "gcloud", "kms", "keys", "versions", "create",
+    def enable_primary_key_version(self):
+        """Restore and enable the primary key version."""
+        describe_cmd = [
+            "gcloud", "kms", "keys", "describe",
+            self.key_name,
+            f"--keyring={self.keyring_name}",
+            f"--location={self.location}",
+            f"--project={self.project_id}",
+            "--format=json",
+        ]
+        output = run_sh(describe_cmd)
+        try:
+            key_info = json.loads(output)
+        except Exception:
+            raise RuntimeError(f"Failed to describe KMS key ({self.key_name}).")
+
+        primary = key_info.get("primary")
+        if not primary:
+            raise RuntimeError(
+                f"No primary version found for key ({self.key_name})."
+            )
+
+        version_num = primary["name"].split("/")[-1]
+        state = primary.get("state", "")
+
+        if state == "ENABLED":
+            logger.info(f"KMS key primary version {version_num} is already ENABLED.")
+            return
+
+        if state == "DESTROYED":
+            raise RuntimeError(
+                f"KMS key primary version {version_num} is already DESTROYED and cannot be recovered."
+            )
+
+        if state not in ("DISABLED", "DESTROY_SCHEDULED"):
+            raise RuntimeError(
+                f"KMS key primary version {version_num} is in unexpected state: {state}."
+            )
+
+        if state == "DESTROY_SCHEDULED":
+            restore_cmd = [
+                "gcloud", "kms", "keys", "versions", "restore",
+                version_num,
+                f"--key={self.key_name}",
+                f"--keyring={self.keyring_name}",
+                f"--location={self.location}",
+                f"--project={self.project_id}",
+            ]
+            event = run_sh(restore_cmd)
+            if "ERROR" in event:
+                logger.error(f"Failed to restore key version {version_num}: {event}")
+                return
+            logger.info(f"KMS primary key version {version_num} restored from DESTROY_SCHEDULED to DISABLED.")
+
+        enable_cmd = [
+            "gcloud", "kms", "keys", "versions", "enable",
+            version_num,
             f"--key={self.key_name}",
             f"--keyring={self.keyring_name}",
             f"--location={self.location}",
             f"--project={self.project_id}",
         ]
-        event = run_sh(command)
+        event = run_sh(enable_cmd)
         if "ERROR" in event:
-            logger.error(f"Failed to create KMS key version ({self.key_name}): {event}")
+            logger.error(f"Failed to enable key version {version_num}: {event}")
+        else:
+            logger.info(f"KMS primary key version {version_num} enabled successfully.")
 
     # ------------------------------------------------------------------ #
     #  IAM                                                                 #
