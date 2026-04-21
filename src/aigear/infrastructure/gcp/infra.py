@@ -468,37 +468,44 @@ class Infra:
             )
 
     def _ensure_pre_vm_image(self):
-        exists = self.pre_vm_image.cpu_image_exists()
-        if not exists:
+        tasks = {}
+
+        if not self.pre_vm_image.cpu_image_exists():
             logger.info(
                 f"Pre-VM custom cpu image ({self.pre_vm_image.cpu_image_name}) not found in project "
-                f"({self.project_id}). Starting VM image creation process (this may take several minutes)..."
+                f"({self.project_id}). Will bake in parallel..."
             )
-            self.pre_vm_image.create_cpu_image()
-            logger.info(
-                f"Pre-VM custom cpu image ({self.pre_vm_image.cpu_image_name}) created successfully."
-            )
+            tasks["cpu"] = self.pre_vm_image.create_cpu_image
         else:
             logger.info(
                 f"Pre-VM custom cpu image ({self.pre_vm_image.cpu_image_name}) already exists in "
                 f"project ({self.project_id}). Skipping creation."
             )
 
-        exists = self.pre_vm_image.gpu_image_exists()
-        if not exists:
+        if not self.pre_vm_image.gpu_image_exists():
             logger.info(
                 f"Pre-VM custom gpu image ({self.pre_vm_image.gpu_image_name}) not found in project "
-                f"({self.project_id}). Starting VM image creation process (this may take several minutes)..."
+                f"({self.project_id}). Will bake in parallel..."
             )
-            self.pre_vm_image.create_gpu_image()
-            logger.info(
-                f"Pre-VM custom gpu image ({self.pre_vm_image.gpu_image_name}) created successfully."
-            )
+            tasks["gpu"] = self.pre_vm_image.create_gpu_image
         else:
             logger.info(
                 f"Pre-VM custom gpu image ({self.pre_vm_image.gpu_image_name}) already exists in "
                 f"project ({self.project_id}). Skipping creation."
             )
+
+        if not tasks:
+            return
+
+        with ThreadPoolExecutor(max_workers=len(tasks)) as executor:
+            futures = {executor.submit(fn): label for label, fn in tasks.items()}
+            for future in as_completed(futures):
+                label = futures[future]
+                future.result()  # re-raise any exception
+                logger.info(
+                    f"Pre-VM custom {label} image ({getattr(self.pre_vm_image, f'{label}_image_name')}) "
+                    f"created successfully."
+                )
 
     def _ensure_kubernetes_cluster(self):
         exists = self.kubernetes_cluster.describe()

@@ -243,12 +243,12 @@ class PreVMImage:
         return result
 
     def _get_serial_output(
-        self, bake_vm: str, start: int | None = None
+        self, bake_vm: str, start: int | None = None, zone: str | None = None
     ) -> tuple[str, int | None]:
         client = compute_v1.InstancesClient()
         req = GetSerialPortOutputInstanceRequest(
             project=self.project_id,
-            zone=self.zone,
+            zone=zone or self.zone,
             instance=bake_vm,
             port=1,
         )
@@ -259,7 +259,7 @@ class PreVMImage:
         next_start = resp.next if getattr(resp, "next", None) is not None else None
         return contents, next_start
 
-    def _wait_bake_done(self, bake_vm: str):
+    def _wait_bake_done(self, bake_vm: str, zone: str | None = None):
         logger.info(f"Waiting for bake to finish on {bake_vm} ...")
         deadline = time.time() + self.bake_timeout_sec
         start    = None
@@ -267,7 +267,7 @@ class PreVMImage:
 
         while time.time() < deadline:
             attempt += 1
-            contents, next_start = self._get_serial_output(bake_vm, start=start)
+            contents, next_start = self._get_serial_output(bake_vm, start=start, zone=zone)
 
             if "startup-script failed" in contents:
                 raise RuntimeError("Startup script failed, see serial console for details")
@@ -285,43 +285,48 @@ class PreVMImage:
 
         raise RuntimeError(f"Bake did not finish within {self.bake_timeout_sec}s")
 
-    def _delete_instance_if_exists(self, bake_vm: str):
+    def _delete_instance_if_exists(self, bake_vm: str, zone: str | None = None):
+        z = zone or self.zone
         client = compute_v1.InstancesClient()
         try:
-            client.get(project=self.project_id, zone=self.zone, instance=bake_vm)
+            client.get(project=self.project_id, zone=z, instance=bake_vm)
         except NotFound:
             return
         except Conflict:
             logger.info("Conflict when checking existing instance - will try to delete.")
         logger.info(f"Instance {bake_vm} already exists - deleting it first.")
-        op = client.delete(project=self.project_id, zone=self.zone, instance=bake_vm)
+        op = client.delete(project=self.project_id, zone=z, instance=bake_vm)
         self._wait_op(op, f"delete existing instance {bake_vm}")
 
-    def _stop_instance(self, bake_vm: str):
+    def _stop_instance(self, bake_vm: str, zone: str | None = None):
+        z = zone or self.zone
         client = compute_v1.InstancesClient()
         logger.info(f"Stopping VM {bake_vm} ...")
-        op = client.stop(project=self.project_id, zone=self.zone, instance=bake_vm)
+        op = client.stop(project=self.project_id, zone=z, instance=bake_vm)
         self._wait_op(op, f"stop {bake_vm}")
 
     def _create_image_from_disk(
-        self, bake_vm: str, image_name: str, image_family: str, extra_labels: dict
+        self, bake_vm: str, image_name: str, image_family: str, extra_labels: dict,
+        zone: str | None = None
     ):
+        z = zone or self.zone
         client = compute_v1.ImagesClient()
         logger.info(f"Creating image {image_name} from disk of {bake_vm} ...")
 
         img             = Image()
         img.name        = image_name
         img.family      = image_family
-        img.source_disk = f"projects/{self.project_id}/zones/{self.zone}/disks/{bake_vm}"
+        img.source_disk = f"projects/{self.project_id}/zones/{z}/disks/{bake_vm}"
         img.labels      = extra_labels
 
         op = client.insert(project=self.project_id, image_resource=img)
         self._wait_op(op, f"create image {image_name}")
 
-    def _delete_instance(self, bake_vm: str):
+    def _delete_instance(self, bake_vm: str, zone: str | None = None):
+        z = zone or self.zone
         client = compute_v1.InstancesClient()
         logger.info(f"Deleting bake VM {bake_vm} ...")
-        op = client.delete(project=self.project_id, zone=self.zone, instance=bake_vm)
+        op = client.delete(project=self.project_id, zone=z, instance=bake_vm)
         self._wait_op(op, f"delete instance {bake_vm}")
 
     def _image_exists(self, image_name: str) -> bool:
@@ -345,11 +350,10 @@ class PreVMImage:
         build_instance_fn,  # (zone: str) -> Instance
         bake_vm: str,
         label: str,
-    ) -> None:
+    ) -> str:
         """
         Try to insert a bake VM across fallback zones.
-        On success, updates self.zone so that all subsequent operations
-        (serial output, stop, image-from-disk, delete) target the correct zone.
+        Returns the zone where the VM was successfully created.
         """
         client   = compute_v1.InstancesClient()
         last_exc: Exception | None = None
@@ -361,9 +365,8 @@ class PreVMImage:
                 try:
                     op = client.insert(project=self.project_id, zone=z, instance_resource=inst)
                     self._wait_op(op, f"create {label} in {z}")
-                    self.zone = z  # lock in the zone that worked
                     logger.info(f"Bake VM {bake_vm} created in zone {z}.")
-                    return
+                    return z
                 except Exception as exc:
                     if self._is_subnet_not_ready(exc):
                         if attempt < self._SUBNET_NOT_READY_RETRIES:
@@ -428,21 +431,22 @@ class PreVMImage:
             inst.metadata = self._build_metadata(STARTUP_SCRIPT_GPU)
             return inst
 
-        self._create_instance_with_fallback(build, self.gpu_bake_vm, "GPU bake VM")
+        return self._create_instance_with_fallback(build, self.gpu_bake_vm, "GPU bake VM")
 
     def create_gpu_image(self):
         """Bake the GPU custom VM image (name: self.gpu_image_name)."""
         self._delete_instance_if_exists(self.gpu_bake_vm)
-        self._create_gpu_bake_instance()
-        self._wait_bake_done(self.gpu_bake_vm)
-        self._stop_instance(self.gpu_bake_vm)
+        zone = self._create_gpu_bake_instance()
+        self._wait_bake_done(self.gpu_bake_vm, zone=zone)
+        self._stop_instance(self.gpu_bake_vm, zone=zone)
         self._create_image_from_disk(
             bake_vm      = self.gpu_bake_vm,
             image_name   = self.gpu_image_name,
             image_family = "ml-training-gpu",
             extra_labels = {"base": "dlvm", "with": "docker-nvidia-kubectl"},
+            zone         = zone,
         )
-        self._delete_instance(self.gpu_bake_vm)
+        self._delete_instance(self.gpu_bake_vm, zone=zone)
         logger.info(
             f"GPU image created: {self.gpu_image_name} "
             f"(family: ml-training-gpu, project: {self.project_id})"
@@ -484,21 +488,22 @@ class PreVMImage:
             inst.metadata = self._build_metadata(STARTUP_SCRIPT_CPU)
             return inst
 
-        self._create_instance_with_fallback(build, self.cpu_bake_vm, "CPU bake VM")
+        return self._create_instance_with_fallback(build, self.cpu_bake_vm, "CPU bake VM")
 
     def create_cpu_image(self):
         """Bake the CPU custom VM image (name: self.cpu_image_name)."""
         self._delete_instance_if_exists(self.cpu_bake_vm)
-        self._create_cpu_bake_instance()
-        self._wait_bake_done(self.cpu_bake_vm)
-        self._stop_instance(self.cpu_bake_vm)
+        zone = self._create_cpu_bake_instance()
+        self._wait_bake_done(self.cpu_bake_vm, zone=zone)
+        self._stop_instance(self.cpu_bake_vm, zone=zone)
         self._create_image_from_disk(
             bake_vm      = self.cpu_bake_vm,
             image_name   = self.cpu_image_name,
             image_family = "ml-training-cpu",
             extra_labels = {"base": "ubuntu-2204", "with": "docker-kubectl"},
+            zone         = zone,
         )
-        self._delete_instance(self.cpu_bake_vm)
+        self._delete_instance(self.cpu_bake_vm, zone=zone)
         logger.info(
             f"CPU image created: {self.cpu_image_name} "
             f"(family: ml-training-cpu, project: {self.project_id})"
