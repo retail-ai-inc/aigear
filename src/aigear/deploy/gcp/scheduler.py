@@ -47,6 +47,23 @@ class Scheduler:
         else:
             logger.info(f"Scheduler job '{self.name}' created successfully. (schedule: {self.schedule}, timezone: {self.time_zone})")
 
+    def update(self):
+        message_body = json.dumps(self.message)
+        command = [
+            "gcloud", "scheduler", "jobs", "update", "pubsub",
+            self.name,
+            "--location", self.location,
+            "--schedule", self.schedule,
+            "--topic", self.topic_name,
+            "--message-body", message_body,
+            "--project", self.project_id,
+        ]
+        event = run_sh(command)
+        if "ERROR" in event:
+            logger.error(f"Failed to update scheduler job '{self.name}': {event}")
+        else:
+            logger.info(f"Scheduler job '{self.name}' updated successfully. (schedule: {self.schedule})")
+
     def delete(self):
         command = [
             "gcloud", "scheduler", "jobs", "delete",
@@ -129,31 +146,6 @@ class Scheduler:
         else:
             logger.info(f"Scheduler job '{self.name}' resumed.")
 
-    @staticmethod
-    def update(
-        name,
-        project_id,
-        location,
-        schedule,
-        topic_name,
-        message,
-    ):
-        message_body = json.dumps(message)
-        command = [
-            "gcloud", "scheduler", "jobs", "update", "pubsub",
-            name,
-            "--location", location,
-            "--schedule", schedule,
-            "--topic", topic_name,
-            "--message-body", message_body,
-            "--project", project_id,
-        ]
-        event = run_sh(command)
-        if "ERROR" in event:
-            logger.error(f"Failed to update scheduler job '{name}': {event}")
-        else:
-            logger.info(f"Scheduler job '{name}' updated successfully. (schedule: {schedule})")
-
 
 def _build_step_message(
     step_config: dict,
@@ -203,34 +195,44 @@ def _build_step_message(
     return message
 
 
-def create_scheduler(
-    pipeline_version: str, 
-    step_names: list[str], 
-    env: str = ENV_STAGING
-):
+def _make_scheduler(pipeline_version: str, message: any = None) -> Scheduler:
+    aigear_config    = AigearConfig.get_config()
+    pipeline_config  = PipelinesConfig.get_version_config(pipeline_version)
+    scheduler_config = pipeline_config.get("scheduler", {})
+    return Scheduler(
+        name       = scheduler_config.get("name"),
+        location   = aigear_config.gcp.location,
+        project_id = aigear_config.gcp.gcp_project_id,
+        schedule   = scheduler_config.get("schedule"),
+        topic_name = aigear_config.gcp.pub_sub.topic_name,
+        message    = message,
+        time_zone  = scheduler_config.get("time_zone", "Etc/UTC"),
+    )
+
+
+def _build_messages(
+    pipeline_version: str,
+    step_names: list[str],
+    env: str = ENV_STAGING,
+) -> list[dict]:
     aigear_config   = AigearConfig.get_config()
     pipeline_config = PipelinesConfig.get_version_config(pipeline_version)
 
-
     pl_image = get_image_path(is_service=False)
     ms_image = get_image_path(is_service=True)
-    # GKE info comes from the global aigear config
+
     kubernetes_config = aigear_config.gcp.kubernetes
     gke_cluster = kubernetes_config.cluster_name
     gke_zone    = aigear_config.gcp.location
 
-    scheduler_config  = pipeline_config.get("scheduler", {})
     venv_pl = pipeline_config.get("venv_pl")
     venv_ms = pipeline_config.get("model_service", {}).get("venv_ms")
-
     ms_config = pipeline_config.get("model_service", {})
 
-    scheduler_messages = []
+    messages = []
     for step_name in step_names:
-        step_config = pipeline_config.get(step_name, {})
-
-        # model_service uses ms image, all other steps use pl image
-        is_model_service  = step_name == "model_service"
+        step_config      = pipeline_config.get(step_name, {})
+        is_model_service = step_name == "model_service"
 
         if is_model_service and not ms_config.get("release", False):
             logger.warning(
@@ -241,8 +243,8 @@ def create_scheduler(
 
         step_docker_image = ms_image if is_model_service else pl_image
         step_venv         = venv_ms if is_model_service else venv_pl
-        env = env if is_model_service else None
-        step_name= None if is_model_service else step_name
+        step_env          = env if is_model_service else None
+        resolved_step_name = None if is_model_service else step_name
 
         message = _build_step_message(
             step_config      = step_config,
@@ -251,20 +253,44 @@ def create_scheduler(
             gke_cluster      = gke_cluster,
             gke_zone         = gke_zone,
             venv             = step_venv,
-            env              = env,
-            step_name        = step_name,
+            env              = step_env,
+            step_name        = resolved_step_name,
         )
-        scheduler_messages.append(message)
-    scheduler = Scheduler(
-        name       = scheduler_config.get("name"),
-        location   = aigear_config.gcp.location,
-        project_id = aigear_config.gcp.gcp_project_id,
-        schedule   = scheduler_config.get("schedule"),
-        topic_name = aigear_config.gcp.pub_sub.topic_name,
-        message    = scheduler_messages,
-        time_zone  = scheduler_config.get("time_zone", "Etc/UTC"),
-    )
+        messages.append(message)
+    return messages
 
-    is_exist = scheduler.describe()
-    if not is_exist:
+
+def create_scheduler(
+    pipeline_version: str,
+    step_names: list[str],
+    env: str = ENV_STAGING,
+):
+    messages  = _build_messages(pipeline_version, step_names, env)
+    scheduler = _make_scheduler(pipeline_version, messages)
+    if not scheduler.describe():
         scheduler.create()
+
+
+def update_scheduler(
+    pipeline_version: str,
+    step_names: list[str],
+    env: str = ENV_STAGING,
+):
+    messages  = _build_messages(pipeline_version, step_names, env)
+    scheduler = _make_scheduler(pipeline_version, messages)
+    scheduler.update()
+
+
+def delete_scheduler(pipeline_version: str):
+    scheduler = _make_scheduler(pipeline_version)
+    scheduler.delete()
+
+
+def status_scheduler(pipeline_version: str):
+    scheduler = _make_scheduler(pipeline_version)
+    scheduler.describe()
+
+
+def run_scheduler(pipeline_version: str):
+    scheduler = _make_scheduler(pipeline_version)
+    scheduler.run()
