@@ -98,21 +98,47 @@ aigear-task grpc --version VERSION
 
 ### `aigear-scheduler`
 
-Create a Cloud Scheduler job that triggers the given pipeline steps.
+Manage Cloud Scheduler jobs that trigger pipeline steps via Pub/Sub.
 
 ```
-aigear-scheduler --version VERSION --step_names STEPS [--create]
+aigear-scheduler <command> --version VERSION [--step_names STEPS] [--env ENV]
 ```
+
+| Command | `--step_names` required | Description |
+|---|---|---|
+| `--create` | yes | Create a new scheduler job (skips if already exists) |
+| `--update` | yes | Update schedule and message body of an existing job |
+| `--delete` | — | Delete the scheduler job |
+| `--status` | — | Print the current status of the scheduler job |
+| `--list` | — | List scheduler jobs filtered by name |
+| `--run` | — | Manually trigger the scheduler job immediately |
+| `--pause` | — | Pause the scheduler job (stops automatic execution) |
+| `--resume` | — | Resume a paused scheduler job |
 
 | Argument | Default | Description |
 |---|---|---|
-| `--create` | — | Create GCP scheduler job. Runs by default if omitted. |
-| `--version` | — | Pipeline version (required) |
-| `--step_names` | — | Comma-separated step names, e.g. `fetch_data,training` (required) |
+| `--version` | — | Pipeline version (required for all commands) |
+| `--step_names` | — | Comma-separated step names, e.g. `fetch_data,training` (required for `--create` / `--update`) |
+| `--env` | `staging` | Deployment environment for model service: `staging` or `production` |
 
-> `--version` and `--step_names` are required; the command will print a reminder and exit if either is missing.
->
-> Future commands: `--delete`, `--update`, `--run`...
+**Examples**
+
+```bash
+# Create a scheduler job for two pipeline steps
+aigear-scheduler --create --version logistic_regression --step_names fetch_data,training
+
+# Update the schedule or message body
+aigear-scheduler --update --version logistic_regression --step_names fetch_data,training --env production
+
+# Trigger an immediate run without waiting for the cron schedule
+aigear-scheduler --run --version logistic_regression
+
+# Pause / resume
+aigear-scheduler --pause  --version logistic_regression
+aigear-scheduler --resume --version logistic_regression
+```
+
+> The scheduler job name, cron schedule, and Pub/Sub topic are read from the `scheduler` block in `env.json` for the given `--version`.
 
 ---
 
