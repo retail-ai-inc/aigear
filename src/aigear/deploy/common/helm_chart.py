@@ -4,6 +4,7 @@ from string import Template
 
 from aigear.common.config import get_project_name
 from aigear.common.constant import ENV_LOCAL, VENV_BASE_DIR
+from aigear.service.grpc.constant import DEFAULT_GRPC_PORT
 from aigear.common.image import get_image_path
 from aigear.common.logger import Logging
 
@@ -49,9 +50,9 @@ def _create_helm_chart(
         helm_path,
         service_name,
         service_image,
-        service_ports: str = "50051",
+        service_ports: str = DEFAULT_GRPC_PORT,
         replicas: int = 1,
-        port: str = "50051",
+        port: str = DEFAULT_GRPC_PORT,
         pipeline_version=None,
         model_class_path=None,
         env: str = ENV_LOCAL,
@@ -106,9 +107,9 @@ def _create_helm_chart(
 def create_helm_file(
     pipeline_version: str = None,
     model_class_path: str = None,
-    service_ports: str = "50051",
+    service_ports: str = DEFAULT_GRPC_PORT,
     replicas: int = 1,
-    port: str = "50051",
+    port: str = DEFAULT_GRPC_PORT,
     env: str = ENV_LOCAL,
     venv: str = None,
     force: bool = False,

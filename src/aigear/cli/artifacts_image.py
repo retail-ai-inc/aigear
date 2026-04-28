@@ -1,5 +1,6 @@
 import argparse
 
+from aigear.common.constant import DOCKERFILE_PIPELINE, DOCKERFILE_SERVICE
 from aigear.deploy.gcp.artifacts_image import create_artifacts_image
 
 
@@ -36,7 +37,7 @@ def get_argument() -> argparse.Namespace:
 def _run_images(args: argparse.Namespace) -> None:
     if args.dockerfile_path is None:
         print("No '--dockerfile_path' provided, operating on all default images.")
-        for dockerfile, is_service in [("Dockerfile.pl", False), ("Dockerfile.ms", True)]:
+        for dockerfile, is_service in [(DOCKERFILE_PIPELINE, False), (DOCKERFILE_SERVICE, True)]:
             print(f"Processing image: '{dockerfile}'...")
             success = create_artifacts_image(
                 dockerfile_path=dockerfile,

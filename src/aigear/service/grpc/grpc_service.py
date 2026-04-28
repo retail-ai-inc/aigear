@@ -12,6 +12,7 @@ from sentry_sdk import init as sentry_init
 from sentry_sdk.integrations.grpc.server import ServerInterceptor
 
 from aigear.common.config import PipelinesConfig, get_environment
+from aigear.service.grpc.constant import DEFAULT_GRPC_HOST, DEFAULT_GRPC_PORT
 from aigear.common.loading_module import LoadModule
 from aigear.common.logger import Logging
 from aigear.service.grpc.grpc_package import grpc_features, thread_config
@@ -111,8 +112,8 @@ def grpc_service(pipeline_version: str, model_class_path: str) -> None:
     # grpc
     is_windows = platform.system().lower() == "windows"
     process_switch = multi_processing.get("on", False)
-    port = int(grpc_config.get("port", "50051"))
-    service_host = grpc_config.get("service_host", "0.0.0.0")
+    port = int(grpc_config.get("port", DEFAULT_GRPC_PORT))
+    service_host = grpc_config.get("service_host", DEFAULT_GRPC_HOST)
     if process_switch and not is_windows:
         # Move PyTorch model weights to shared memory to avoid COW on C++ refcount updates
         inner_model = getattr(model_instance, 'model', None)

@@ -38,3 +38,7 @@ VENV_BASE_DIR = "/opt/venv"
 ENV_LOCAL      = "local"
 ENV_STAGING    = "staging"
 ENV_PRODUCTION = "production"
+
+# Standard Dockerfile names — used by artifacts_image CLI and project initialisation.
+DOCKERFILE_PIPELINE = "Dockerfile.pl"
+DOCKERFILE_SERVICE  = "Dockerfile.ms"

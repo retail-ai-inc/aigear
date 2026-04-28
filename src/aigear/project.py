@@ -3,6 +3,8 @@ import stat
 from pathlib import Path
 from typing import List, Optional
 
+from aigear.common.constant import DOCKERFILE_PIPELINE, DOCKERFILE_SERVICE
+
 
 
 class Project:
@@ -35,13 +37,13 @@ class Project:
 
         (project_path / ".gitignore").touch(exist_ok=True)
         (project_path / "docker-compose-ms.yml").touch(exist_ok=True)
-        (project_path / "Dockerfile.ms").touch(exist_ok=True)
-        (project_path / "Dockerfile.ms.dockerignore").touch(exist_ok=True)
+        (project_path / DOCKERFILE_SERVICE).touch(exist_ok=True)
+        (project_path / f"{DOCKERFILE_SERVICE}.dockerignore").touch(exist_ok=True)
         (project_path / "requirements_ms.txt").touch(exist_ok=True)
 
         (project_path / "docker-compose-pl.yml").touch(exist_ok=True)
-        (project_path / "Dockerfile.pl").touch(exist_ok=True)
-        (project_path / "Dockerfile.pl.dockerignore").touch(exist_ok=True)
+        (project_path / DOCKERFILE_PIPELINE).touch(exist_ok=True)
+        (project_path / f"{DOCKERFILE_PIPELINE}.dockerignore").touch(exist_ok=True)
         (project_path / "requirements_pl.txt").touch(exist_ok=True)
 
         (project_path / "env.sample.json").touch(exist_ok=True)
@@ -50,13 +52,13 @@ class Project:
         self._copy_file(self._template_path, project_path / "cloudbuild" / "cloudbuild.yaml")
 
         self._copy_file(self._template_path, project_path / "docker-compose-ms.yml")
-        self._copy_file(self._template_path, project_path / "Dockerfile.ms")
-        self._copy_file(self._template_path, project_path / "Dockerfile.ms.dockerignore")
+        self._copy_file(self._template_path, project_path / DOCKERFILE_SERVICE)
+        self._copy_file(self._template_path, project_path / f"{DOCKERFILE_SERVICE}.dockerignore")
         self._copy_file(self._template_path, project_path / "requirements_ms.txt")
 
         self._copy_file(self._template_path, project_path / "docker-compose-pl.yml")
-        self._copy_file(self._template_path, project_path / "Dockerfile.pl")
-        self._copy_file(self._template_path, project_path / "Dockerfile.pl.dockerignore")
+        self._copy_file(self._template_path, project_path / DOCKERFILE_PIPELINE)
+        self._copy_file(self._template_path, project_path / f"{DOCKERFILE_PIPELINE}.dockerignore")
         self._copy_file(self._template_path, project_path / "requirements_pl.txt")
 
         self._copy_file(self._template_path, project_path / "env.sample.json")

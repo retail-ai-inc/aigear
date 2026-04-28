@@ -1,6 +1,7 @@
 import argparse
 
 from aigear.common.constant import ENV_PRODUCTION, ENV_STAGING
+from aigear.service.grpc.constant import DEFAULT_GRPC_PORT
 from aigear.deploy.gcp.grpc_gcp_deploy import delete_gcp_grpc, deploy_gcp_grpc
 from aigear.deploy.local.grpc_local_deploy import delete_local_grpc, deploy_local_grpc
 
@@ -11,11 +12,11 @@ def get_argument() -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--version',
                         help='Version of the pipeline')
-    parser.add_argument('--service_ports', default="50051",
+    parser.add_argument('--service_ports', default=DEFAULT_GRPC_PORT,
                         help='Internal interface of service')
     parser.add_argument('--replicas', default=1,
                         help='Number of copies')
-    parser.add_argument('--port', default="50051",
+    parser.add_argument('--port', default=DEFAULT_GRPC_PORT,
                         help='External interface of service')
 
     env_group = parser.add_mutually_exclusive_group(required=True)

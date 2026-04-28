@@ -1,6 +1,7 @@
 from aigear.common import run_sh
 from aigear.common.config import AigearConfig, PipelinesConfig
 from aigear.common.constant import ENV_STAGING
+from aigear.service.grpc.constant import DEFAULT_GRPC_PORT
 from aigear.common.logger import Logging
 from aigear.deploy.common.helm_chart import create_helm_file, get_helm_path
 from aigear.deploy.common.kubectl_command import helm_deploy, helm_deployment_delete
@@ -21,9 +22,9 @@ def switch_gcp_context(cluster_name: str, project_id: str, region: str) -> None:
 
 def deploy_gcp_grpc(
     pipeline_version: str | None = None,
-    service_ports: str = "50051",
+    service_ports: str = DEFAULT_GRPC_PORT,
     replicas: int = 1,
-    port: str = "50051",
+    port: str = DEFAULT_GRPC_PORT,
     env: str = ENV_STAGING,
 ):
     pipe_config       = PipelinesConfig.get_version_config(pipeline_version)
