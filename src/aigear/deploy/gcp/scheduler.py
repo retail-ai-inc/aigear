@@ -11,6 +11,8 @@ logger = Logging(log_name=__name__).console_logging()
 
 
 class Scheduler:
+    """Wraps gcloud scheduler jobs commands; each instance represents one Cloud Scheduler job."""
+
     def __init__(
         self,
         name: str,
@@ -30,6 +32,7 @@ class Scheduler:
         self.time_zone = time_zone
 
     def create(self):
+        """Create a Pub/Sub Cloud Scheduler job."""
         message_body = json.dumps(self.message)
         command = [
             "gcloud", "scheduler", "jobs", "create", "pubsub",
@@ -48,6 +51,7 @@ class Scheduler:
             logger.info(f"Scheduler job '{self.name}' created successfully. (schedule: {self.schedule}, timezone: {self.time_zone})")
 
     def update(self):
+        """Update an existing Pub/Sub Cloud Scheduler job (schedule, message body, etc.)."""
         message_body = json.dumps(self.message)
         command = [
             "gcloud", "scheduler", "jobs", "update", "pubsub",
@@ -65,6 +69,7 @@ class Scheduler:
             logger.info(f"Scheduler job '{self.name}' updated successfully. (schedule: {self.schedule})")
 
     def delete(self):
+        """Delete the Cloud Scheduler job, auto-confirming the prompt."""
         command = [
             "gcloud", "scheduler", "jobs", "delete",
             self.name,
@@ -77,7 +82,8 @@ class Scheduler:
         else:
             logger.info(f"Scheduler job '{self.name}' deleted.")
 
-    def describe(self):
+    def describe(self) -> bool:
+        """Describe the job status. Returns True if the job exists and is ENABLED."""
         is_exist = False
         command = [
             "gcloud", "scheduler", "jobs", "describe",
@@ -98,6 +104,7 @@ class Scheduler:
         return is_exist
 
     def list(self):
+        """List Cloud Scheduler jobs filtered by this job's name."""
         command = [
             "gcloud", "scheduler", "jobs", "list",
             "--location", self.location,
@@ -108,6 +115,7 @@ class Scheduler:
         logger.info(f"\n{event}")
 
     def run(self):
+        """Manually trigger the Cloud Scheduler job immediately."""
         command = [
             "gcloud", "scheduler", "jobs", "run",
             self.name,
@@ -121,6 +129,7 @@ class Scheduler:
             logger.info(f"Scheduler job '{self.name}' triggered successfully.")
 
     def pause(self):
+        """Pause the Cloud Scheduler job, stopping automatic execution."""
         command = [
             "gcloud", "scheduler", "jobs", "pause",
             self.name,
@@ -134,6 +143,7 @@ class Scheduler:
             logger.info(f"Scheduler job '{self.name}' paused.")
 
     def resume(self):
+        """Resume a paused Cloud Scheduler job, re-enabling automatic execution."""
         command = [
             "gcloud", "scheduler", "jobs", "resume",
             self.name,
@@ -196,6 +206,7 @@ def _build_step_message(
 
 
 def _make_scheduler(pipeline_version: str, message: any = None) -> Scheduler:
+    """Build a Scheduler instance from the pipeline version config. message may be None for delete/status/run."""
     aigear_config    = AigearConfig.get_config()
     pipeline_config  = PipelinesConfig.get_version_config(pipeline_version)
     scheduler_config = pipeline_config.get("scheduler", {})
@@ -215,6 +226,7 @@ def _build_messages(
     step_names: list[str],
     env: str = ENV_STAGING,
 ) -> list[dict]:
+    """Build the list of Pub/Sub message bodies for each pipeline step (used by create/update)."""
     aigear_config   = AigearConfig.get_config()
     pipeline_config = PipelinesConfig.get_version_config(pipeline_version)
 
@@ -265,6 +277,7 @@ def create_scheduler(
     step_names: list[str],
     env: str = ENV_STAGING,
 ):
+    """Create a Cloud Scheduler job; skips if a job with the same name already exists."""
     messages  = _build_messages(pipeline_version, step_names, env)
     scheduler = _make_scheduler(pipeline_version, messages)
     if not scheduler.describe():
@@ -276,21 +289,43 @@ def update_scheduler(
     step_names: list[str],
     env: str = ENV_STAGING,
 ):
+    """Update an existing Cloud Scheduler job (schedule and message body)."""
     messages  = _build_messages(pipeline_version, step_names, env)
     scheduler = _make_scheduler(pipeline_version, messages)
     scheduler.update()
 
 
 def delete_scheduler(pipeline_version: str):
+    """Delete the Cloud Scheduler job for the given pipeline version."""
     scheduler = _make_scheduler(pipeline_version)
     scheduler.delete()
 
 
 def status_scheduler(pipeline_version: str):
+    """Print the status of the Cloud Scheduler job for the given pipeline version."""
     scheduler = _make_scheduler(pipeline_version)
     scheduler.describe()
 
 
 def run_scheduler(pipeline_version: str):
+    """Manually trigger the Cloud Scheduler job for the given pipeline version."""
     scheduler = _make_scheduler(pipeline_version)
     scheduler.run()
+
+
+def pause_scheduler(pipeline_version: str):
+    """Pause the Cloud Scheduler job for the given pipeline version."""
+    scheduler = _make_scheduler(pipeline_version)
+    scheduler.pause()
+
+
+def resume_scheduler(pipeline_version: str):
+    """Resume the paused Cloud Scheduler job for the given pipeline version."""
+    scheduler = _make_scheduler(pipeline_version)
+    scheduler.resume()
+
+
+def list_scheduler(pipeline_version: str):
+    """List Cloud Scheduler jobs filtered by the job name for the given pipeline version."""
+    scheduler = _make_scheduler(pipeline_version)
+    scheduler.list()

@@ -5,7 +5,10 @@ from aigear.deploy.gcp.scheduler import (
     update_scheduler,
     delete_scheduler,
     status_scheduler,
+    list_scheduler,
     run_scheduler,
+    pause_scheduler,
+    resume_scheduler,
 )
 
 
@@ -18,7 +21,10 @@ def get_argument() -> argparse.Namespace:
     group.add_argument("--update", action="store_true", help="Update an existing GCP scheduler job.")
     group.add_argument("--delete", action="store_true", help="Delete a GCP scheduler job.")
     group.add_argument("--status", action="store_true", help="Show status of a GCP scheduler job.")
+    group.add_argument("--list",   action="store_true", help="List GCP scheduler jobs filtered by name.")
     group.add_argument("--run",    action="store_true", help="Manually trigger a GCP scheduler job.")
+    group.add_argument("--pause",  action="store_true", help="Pause a GCP scheduler job.")
+    group.add_argument("--resume", action="store_true", help="Resume a paused GCP scheduler job.")
     parser.add_argument("--version", default="",
                         help="Version of the pipeline.")
     parser.add_argument("--step_names", default="",
@@ -51,5 +57,11 @@ def gcp_scheduler() -> None:
         delete_scheduler(args.version)
     elif args.status:
         status_scheduler(args.version)
+    elif args.list:
+        list_scheduler(args.version)
     elif args.run:
         run_scheduler(args.version)
+    elif args.pause:
+        pause_scheduler(args.version)
+    elif args.resume:
+        resume_scheduler(args.version)
