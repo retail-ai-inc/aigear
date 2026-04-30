@@ -213,6 +213,24 @@ class Infra:
         logger.info(f"⚠️ {title} SKIPPED (disabled in configuration)")
         logger.info("---------------------------------------------------")
 
+    def _step_fail(self, title, reason):
+        logger.info(f"[{title}]")
+        logger.error(f"❌ {title} FAILED ({reason})")
+        logger.info("---------------------------------------------------")
+
+    def _log_summary(self, failed_steps, title):
+        logger.info("===================================================")
+        if failed_steps:
+            logger.warning(f"     Aigear GCP Infra {title} Complete (with errors)")
+            logger.warning("===================================================")
+            logger.warning("The following steps failed:")
+            for step in failed_steps:
+                logger.warning(f"  - {step}")
+            logger.info("Please review the errors above and retry the failed steps.")
+        else:
+            logger.info(f"          Aigear GCP Infra {title} Complete          ")
+            logger.info("===================================================")
+
     # ================================================================
     # Public API called from CLI
     # ================================================================
@@ -225,21 +243,31 @@ class Infra:
         logger.info("===================================================")
 
         failed_steps = []
+        cfg = self.aigear_config.gcp
 
         # ── Phase 1: Service Account (must be first) ─────────────────
-        if self.aigear_config.gcp.iam.on:
+        if cfg.iam.on:
             success = self._step(
-                f"Service Account ({self.aigear_config.gcp.iam.account_name})",
+                f"Service Account ({cfg.iam.account_name})",
                 self._ensure_service_account
             )
             if not success:
-                failed_steps.append(f"Service Account ({self.aigear_config.gcp.iam.account_name})")
+                failed_steps.append(f"Service Account ({cfg.iam.account_name})")
         else:
-            self._step_skip(f"Service Account ({self.aigear_config.gcp.iam.account_name})")
+            self._step_skip(f"Service Account ({cfg.iam.account_name})")
+
+        # ── Gate 1→2: Service Account must exist ─────────────────────
+        if not self.service_accounts.describe():
+            self._step_fail(
+                f"Gate 1→2: Service Account ({cfg.iam.account_name})",
+                "not found — Phase 2 and Phase 3 skipped"
+            )
+            failed_steps.append(f"Gate 1→2: Service Account ({cfg.iam.account_name}) not found")
+            self._log_summary(failed_steps, "Init")
+            return
 
         # ── Phase 2: Independent resources (parallel) ─────────────────
         phase2_tasks = {}
-        cfg = self.aigear_config.gcp
 
         if cfg.bucket.on:
             phase2_tasks[f"Model Bucket ({cfg.bucket.bucket_name})"] = self._ensure_model_bucket
@@ -289,7 +317,17 @@ class Infra:
                     if not future.result():
                         failed_steps.append(title)
 
-        # ── Phase 3: Cloud Function (depends on Pub/Sub) ──────────────
+        # ── Gate 2→3: Pub/Sub must exist ──────────────────────────────
+        if cfg.cloud_function.on and not self.pubsub.describe():
+            self._step_fail(
+                f"Gate 2→3: Pub/Sub Topic ({cfg.pub_sub.topic_name})",
+                "not found — Phase 3 skipped"
+            )
+            failed_steps.append(f"Gate 2→3: Pub/Sub Topic ({cfg.pub_sub.topic_name}) not found")
+            self._log_summary(failed_steps, "Init")
+            return
+
+        # ── Phase 3: Cloud Function ────────────────────────────────────
         if cfg.cloud_function.on:
             success = self._step(
                 f"Cloud Function ({cfg.cloud_function.function_name})",
@@ -300,18 +338,7 @@ class Infra:
         else:
             self._step_skip(f"Cloud Function ({cfg.cloud_function.function_name})")
 
-        # ── Summary ───────────────────────────────────────────────────
-        logger.info("===================================================")
-        if failed_steps:
-            logger.warning("       Aigear GCP Infra Init Complete (with errors)")
-            logger.warning("===================================================")
-            logger.warning("The following steps failed:")
-            for step in failed_steps:
-                logger.warning(f"  - {step}")
-            logger.info("Please review the errors above and retry the failed steps.")
-        else:
-            logger.info("            Aigear GCP Infra Init Complete         ")
-            logger.info("===================================================")
+        self._log_summary(failed_steps, "Init")
 
     # ================================================================
     # Actual infra actions (use your existing classes)
@@ -611,18 +638,7 @@ class Infra:
         else:
             self._step_skip(f"Service Account ({cfg.iam.account_name})")
 
-        # ── Summary ───────────────────────────────────────────────────
-        logger.info("===================================================")
-        if failed_steps:
-            logger.warning("      Aigear GCP Infra Delete Complete (with errors)")
-            logger.warning("===================================================")
-            logger.warning("The following steps failed:")
-            for step in failed_steps:
-                logger.warning(f"  - {step}")
-            logger.info("Please review the errors above and retry the failed steps.")
-        else:
-            logger.info("           Aigear GCP Infra Delete Complete          ")
-            logger.info("===================================================")
+        self._log_summary(failed_steps, "Delete")
 
     # ================================================================
     # Actual delete actions
