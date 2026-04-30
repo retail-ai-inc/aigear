@@ -22,6 +22,8 @@ def deploy_local_grpc(
         service_ports: str = DEFAULT_GRPC_PORT,
         replicas: int = 1,
         port: str = DEFAULT_GRPC_PORT,
+        env: str = ENV_LOCAL,
+        force: bool = False,
 ):
     pipe_config       = PipelinesConfig.get_version_config(pipeline_version)
     ms_config         = pipe_config.get("model_service", {})
@@ -34,8 +36,9 @@ def deploy_local_grpc(
         service_ports=service_ports,
         replicas=replicas,
         port=port,
-        env=ENV_LOCAL,
+        env=env,
         venv=venv,
+        force=force,
     )
 
     switch_local_context()
@@ -51,6 +54,8 @@ def update_local_grpc(
         service_ports: str = DEFAULT_GRPC_PORT,
         replicas: int = 1,
         port: str = DEFAULT_GRPC_PORT,
+        env: str = ENV_LOCAL,
+        force: bool = False,
 ) -> None:
     pipe_config      = PipelinesConfig.get_version_config(pipeline_version)
     ms_config        = pipe_config.get("model_service", {})
@@ -63,9 +68,9 @@ def update_local_grpc(
         service_ports=service_ports,
         replicas=replicas,
         port=port,
-        env=ENV_LOCAL,
+        env=env,
         venv=venv,
-        force=True,
+        force=force,
     )
 
     switch_local_context()

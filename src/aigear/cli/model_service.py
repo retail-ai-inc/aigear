@@ -1,6 +1,6 @@
 import argparse
 
-from aigear.common.constant import ENV_PRODUCTION, ENV_STAGING
+from aigear.common.constant import ENV_LOCAL, ENV_PRODUCTION, ENV_STAGING
 from aigear.service.grpc.constant import DEFAULT_GRPC_PORT
 from aigear.deploy.gcp.grpc_gcp_deploy import delete_gcp_grpc, deploy_gcp_grpc, status_gcp_grpc, update_gcp_grpc
 from aigear.deploy.local.grpc_local_deploy import delete_local_grpc, deploy_local_grpc, status_local_grpc, update_local_grpc
@@ -12,11 +12,11 @@ def get_argument() -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--version',
                         help='Version of the pipeline')
-    parser.add_argument('--service_ports', default=DEFAULT_GRPC_PORT,
+    parser.add_argument('--service_ports', default=None,
                         help='Internal interface of service')
-    parser.add_argument('--replicas', default=1,
+    parser.add_argument('--replicas', default=None, type=int,
                         help='Number of copies')
-    parser.add_argument('--port', default=DEFAULT_GRPC_PORT,
+    parser.add_argument('--port', default=None,
                         help='External interface of service')
 
     env_group = parser.add_mutually_exclusive_group(required=True)
@@ -42,42 +42,59 @@ def get_argument() -> argparse.Namespace:
 def deploy_grpc_service() -> None:
     args = get_argument()
 
-    if args.staging or args.production:
-        env = ENV_PRODUCTION if args.production else ENV_STAGING
+    force = any(x is not None for x in [args.service_ports, args.replicas, args.port])
+    service_ports = args.service_ports or DEFAULT_GRPC_PORT
+    replicas      = args.replicas if args.replicas is not None else 1
+    port          = args.port or DEFAULT_GRPC_PORT
+
+    if args.local:
+        env = ENV_LOCAL
+    elif args.staging:
+        env = ENV_STAGING
+    else:
+        env = ENV_PRODUCTION
+
+    if not args.local:
         if args.deploy:
             deploy_gcp_grpc(
                 pipeline_version=args.version,
-                service_ports=args.service_ports,
-                replicas=args.replicas,
-                port=args.port,
+                service_ports=service_ports,
+                replicas=replicas,
+                port=port,
                 env=env,
+                force=force,
             )
         elif args.update:
             update_gcp_grpc(
                 pipeline_version=args.version,
-                service_ports=args.service_ports,
-                replicas=args.replicas,
-                port=args.port,
+                service_ports=service_ports,
+                replicas=replicas,
+                port=port,
                 env=env,
+                force=force,
             )
         elif args.delete:
             delete_gcp_grpc(pipeline_version=args.version, env=env)
         elif args.status:
             status_gcp_grpc(pipeline_version=args.version, env=env)
-    else:
+    else:  # args.local
         if args.deploy:
             deploy_local_grpc(
                 pipeline_version=args.version,
-                service_ports=args.service_ports,
-                replicas=args.replicas,
-                port=args.port,
+                service_ports=service_ports,
+                replicas=replicas,
+                port=port,
+                env=env,
+                force=force,
             )
         elif args.update:
             update_local_grpc(
                 pipeline_version=args.version,
-                service_ports=args.service_ports,
-                replicas=args.replicas,
-                port=args.port,
+                service_ports=service_ports,
+                replicas=replicas,
+                port=port,
+                env=env,
+                force=force,
             )
         elif args.delete:
             delete_local_grpc(pipeline_version=args.version)

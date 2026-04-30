@@ -26,6 +26,7 @@ def deploy_gcp_grpc(
     replicas: int = 1,
     port: str = DEFAULT_GRPC_PORT,
     env: str = ENV_STAGING,
+    force: bool = False,
 ):
     pipe_config       = PipelinesConfig.get_version_config(pipeline_version)
     ms_config         = pipe_config.get("model_service", {})
@@ -40,6 +41,7 @@ def deploy_gcp_grpc(
         port=port,
         env=env,
         venv=venv,
+        force=force,
     )
 
     aigear_config = AigearConfig.get_config()
@@ -61,6 +63,7 @@ def update_gcp_grpc(
     replicas: int = 1,
     port: str = DEFAULT_GRPC_PORT,
     env: str = ENV_STAGING,
+    force: bool = False,
 ):
     pipe_config      = PipelinesConfig.get_version_config(pipeline_version)
     ms_config        = pipe_config.get("model_service", {})
@@ -75,7 +78,7 @@ def update_gcp_grpc(
         port=port,
         env=env,
         venv=venv,
-        force=True,
+        force=force,
     )
 
     aigear_config = AigearConfig.get_config()
