@@ -21,3 +21,13 @@ def helm_deployment_delete(
     ]
     event = run_sh(command)
     logger.info(event)
+
+
+def helm_deployment_status(helm_path: Path):
+    command = [
+        "kubectl", "get", "-f", helm_path.as_posix()
+    ]
+    event = run_sh(command)
+    for line in event.splitlines():
+        logger.info(line)
+    return event

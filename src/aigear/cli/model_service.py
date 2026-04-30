@@ -2,8 +2,8 @@ import argparse
 
 from aigear.common.constant import ENV_PRODUCTION, ENV_STAGING
 from aigear.service.grpc.constant import DEFAULT_GRPC_PORT
-from aigear.deploy.gcp.grpc_gcp_deploy import delete_gcp_grpc, deploy_gcp_grpc
-from aigear.deploy.local.grpc_local_deploy import delete_local_grpc, deploy_local_grpc
+from aigear.deploy.gcp.grpc_gcp_deploy import delete_gcp_grpc, deploy_gcp_grpc, status_gcp_grpc, update_gcp_grpc
+from aigear.deploy.local.grpc_local_deploy import delete_local_grpc, deploy_local_grpc, status_local_grpc, update_local_grpc
 
 
 def get_argument() -> argparse.Namespace:
@@ -27,8 +27,15 @@ def get_argument() -> argparse.Namespace:
     env_group.add_argument('--production', action='store_true',
                            help='Deploy to GCP production environment')
 
-    parser.add_argument('--delete', action='store_true',
-                        help='Delete deployment of services')
+    op_group = parser.add_mutually_exclusive_group(required=True)
+    op_group.add_argument('--deploy', action='store_true',
+                          help='Deploy the gRPC model service.')
+    op_group.add_argument('--update', action='store_true',
+                          help='Update an existing gRPC model service (re-applies with new params).')
+    op_group.add_argument('--delete', action='store_true',
+                          help='Delete the gRPC model service deployment.')
+    op_group.add_argument('--status', action='store_true',
+                          help='Show the status of the gRPC model service deployment.')
     return parser.parse_args()
 
 
@@ -37,9 +44,7 @@ def deploy_grpc_service() -> None:
 
     if args.staging or args.production:
         env = ENV_PRODUCTION if args.production else ENV_STAGING
-        if args.delete:
-            delete_gcp_grpc(pipeline_version=args.version, env=env)
-        else:
+        if args.deploy:
             deploy_gcp_grpc(
                 pipeline_version=args.version,
                 service_ports=args.service_ports,
@@ -47,13 +52,34 @@ def deploy_grpc_service() -> None:
                 port=args.port,
                 env=env,
             )
+        elif args.update:
+            update_gcp_grpc(
+                pipeline_version=args.version,
+                service_ports=args.service_ports,
+                replicas=args.replicas,
+                port=args.port,
+                env=env,
+            )
+        elif args.delete:
+            delete_gcp_grpc(pipeline_version=args.version, env=env)
+        elif args.status:
+            status_gcp_grpc(pipeline_version=args.version, env=env)
     else:
-        if args.delete:
-            delete_local_grpc(pipeline_version=args.version)
-        else:
+        if args.deploy:
             deploy_local_grpc(
                 pipeline_version=args.version,
                 service_ports=args.service_ports,
                 replicas=args.replicas,
                 port=args.port,
             )
+        elif args.update:
+            update_local_grpc(
+                pipeline_version=args.version,
+                service_ports=args.service_ports,
+                replicas=args.replicas,
+                port=args.port,
+            )
+        elif args.delete:
+            delete_local_grpc(pipeline_version=args.version)
+        elif args.status:
+            status_local_grpc(pipeline_version=args.version)

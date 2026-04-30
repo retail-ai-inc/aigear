@@ -4,7 +4,7 @@ from aigear.common.constant import ENV_LOCAL
 from aigear.service.grpc.constant import DEFAULT_GRPC_PORT
 from aigear.common.logger import Logging
 from aigear.deploy.common.helm_chart import create_helm_file, get_helm_path
-from aigear.deploy.common.kubectl_command import helm_deploy, helm_deployment_delete
+from aigear.deploy.common.kubectl_command import helm_deploy, helm_deployment_delete, helm_deployment_status
 
 logger = Logging(log_name=__name__).console_logging()
 
@@ -46,8 +46,46 @@ def deploy_local_grpc(
         logger.info("Deployment completed.")
 
 
+def update_local_grpc(
+        pipeline_version: str | None = None,
+        service_ports: str = DEFAULT_GRPC_PORT,
+        replicas: int = 1,
+        port: str = DEFAULT_GRPC_PORT,
+) -> None:
+    pipe_config      = PipelinesConfig.get_version_config(pipeline_version)
+    ms_config        = pipe_config.get("model_service", {})
+    model_class_path = ms_config.get("model_class_path")
+    venv             = ms_config.get("venv_ms")
+
+    helm_path = create_helm_file(
+        pipeline_version=pipeline_version,
+        model_class_path=model_class_path,
+        service_ports=service_ports,
+        replicas=replicas,
+        port=port,
+        env=ENV_LOCAL,
+        venv=venv,
+        force=True,
+    )
+
+    switch_local_context()
+    event = helm_deploy(helm_path)
+    if "error" in event:
+        logger.info(f"Error: {event}.")
+    else:
+        logger.info("Update completed.")
+
+
 def delete_local_grpc(pipeline_version: str | None = None) -> None:
     pipe_config      = PipelinesConfig.get_version_config(pipeline_version)
     model_class_path = pipe_config.get("model_service", {}).get("model_class_path")
     helm_path        = get_helm_path(model_class_path=model_class_path, env=ENV_LOCAL)
     helm_deployment_delete(helm_path)
+
+
+def status_local_grpc(pipeline_version: str | None = None) -> None:
+    pipe_config      = PipelinesConfig.get_version_config(pipeline_version)
+    model_class_path = pipe_config.get("model_service", {}).get("model_class_path")
+    helm_path        = get_helm_path(model_class_path=model_class_path, env=ENV_LOCAL)
+    switch_local_context()
+    helm_deployment_status(helm_path)
