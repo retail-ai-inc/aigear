@@ -202,7 +202,7 @@ class Infra:
             if success:
                 logger.info(f"✅ {title} SUCCESS")
             else:
-                logger.error(f"✖ {title} FAILED")
+                logger.error(f"❌ {title} FAILED")
                 logger.error(f"Error details: {str(exc)}")
                 logger.error(f"Error type: {type(exc).__name__}")
             logger.info("---------------------------------------------------")
@@ -210,7 +210,7 @@ class Infra:
 
     def _step_skip(self, title):
         logger.info(f"[{title}]")
-        logger.info(f"✅ {title} SKIPPED (disabled in configuration)")
+        logger.info(f"⚠️ {title} SKIPPED (disabled in configuration)")
         logger.info("---------------------------------------------------")
 
     # ================================================================
