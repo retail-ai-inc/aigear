@@ -61,9 +61,14 @@ class KubernetesCluster:
             self.cluster_name,
             f"--location={self.zone}",
             f"--project={self.project_id}",
+            "--async",
+            "--quiet",
         ]
-        event = run_sh(command, "yes\n")
-        logger.info(f"\n{event}")
+        event = run_sh(command)
+        if "ERROR" in event:
+            logger.error(f"Error occurred while deleting GKE cluster ({self.cluster_name}): {event}")
+        else:
+            logger.info(f"GKE cluster '{self.cluster_name}' deletion initiated (async).")
 
 
 if __name__ == "__main__":
