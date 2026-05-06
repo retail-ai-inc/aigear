@@ -1,4 +1,5 @@
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 from aigear.common import run_sh
 from aigear.common.logger import Logging
@@ -67,32 +68,43 @@ class ServiceAccounts:
             "roles/container.developer",
         ]
 
-        for role in roles:
+        # Project-level bindings share the same IAM policy ETag, so they must
+        # run sequentially to avoid optimistic-concurrency conflicts.
+        def _bind_project_roles():
+            for role in roles:
+                command = [
+                    "gcloud", "projects", "add-iam-policy-binding", self.project_id,
+                    f"--member=serviceAccount:{self.sa_email}",
+                    f"--role={role}",
+                    "--condition=None"
+                ]
+                event = run_sh(command)
+                if "Updated IAM policy" in event:
+                    logger.info(f"✅ Successfully granted: {role}")
+                elif "ERROR" in event:
+                    logger.error(f"❌ Failed: {event}")
+
+        # SA self-binding operates on a different resource (SA IAM policy, not
+        # project IAM policy), so it can safely run in parallel.
+        def _bind_sa_self():
             command = [
-                "gcloud", "projects", "add-iam-policy-binding", self.project_id,
+                "gcloud", "iam", "service-accounts", "add-iam-policy-binding",
+                self.sa_email,
                 f"--member=serviceAccount:{self.sa_email}",
-                f"--role={role}",
-                "--condition=None"
+                "--role=roles/iam.serviceAccountUser",
+                f"--project={self.project_id}",
             ]
             event = run_sh(command)
             if "Updated IAM policy" in event:
-                logger.info(f"✅ Successfully granted: {role}")
+                logger.info("✅ Successfully granted: roles/iam.serviceAccountUser (self-binding)")
             elif "ERROR" in event:
-                logger.error(f"❌ Failed: {event}")
+                logger.error(f"❌ Failed self-binding: {event}")
 
-        # SA level self binding, precise authorization
-        command = [
-            "gcloud", "iam", "service-accounts", "add-iam-policy-binding",
-            self.sa_email,
-            f"--member=serviceAccount:{self.sa_email}",
-            "--role=roles/iam.serviceAccountUser",
-            f"--project={self.project_id}",
-        ]
-        event = run_sh(command)
-        if "Updated IAM policy" in event:
-            logger.info("✅ Successfully granted: roles/iam.serviceAccountUser (self-binding)")
-        elif "ERROR" in event:
-            logger.error(f"❌ Failed self-binding: {event}")
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            f_project = executor.submit(_bind_project_roles)
+            f_sa = executor.submit(_bind_sa_self)
+            f_project.result()
+            f_sa.result()
 
     def describe(self):
         is_exist = False
