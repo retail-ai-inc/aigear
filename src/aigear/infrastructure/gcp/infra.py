@@ -122,43 +122,54 @@ class Infra:
     # ================================================================
     # Preflight checks: gcloud login + project switch
     # ================================================================
-    def gcloud_login_check(self):
-        """Check gcloud CLI installation and authentication status."""
+    def _preflight_check(self):
+        """Verify gcloud is installed, then check auth and project in parallel."""
         logger.info("===================================================")
         logger.info("             Aigear GCP Environment Check          ")
         logger.info("===================================================")
 
-        # 1. check gcloud installed
+        # Step 1: confirm gcloud is installed (prerequisite for everything below)
         try:
             run_sh(["gcloud", "--version"])
         except Exception:
             raise RuntimeError("`gcloud` CLI not found. Install Google Cloud SDK first.")
 
-        # 2. check login
-        try:
-            output = run_sh(["gcloud", "auth", "list", "--format=json"])
-            accounts = json.loads(output)
-            active = [a for a in accounts if a.get("status") == "ACTIVE"]
-        except Exception as e:
-            raise RuntimeError(f"Cannot check gcloud auth status: {e}")
+        # Step 2: auth check and project check are independent — run in parallel
+        auth_result: list = []
+        project_result: list = []
 
-        if not active:
+        def _check_auth():
+            try:
+                output = run_sh(["gcloud", "auth", "list", "--format=json"])
+                accounts = json.loads(output)
+                auth_result.extend([a for a in accounts if a.get("status") == "ACTIVE"])
+            except Exception as e:
+                raise RuntimeError(f"Cannot check gcloud auth status: {e}")
+
+        def _check_project():
+            current = run_sh(["gcloud", "config", "get-value", "project"]).strip()
+            project_result.append(current)
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            f_auth = executor.submit(_check_auth)
+            f_proj = executor.submit(_check_project)
+            f_auth.result()
+            f_proj.result()
+
+        # Step 3: act on results (interactive / config change — must be sequential)
+        if not auth_result:
             logger.info("No active gcloud account detected. Running `gcloud auth login`...")
             run_sh(["gcloud", "auth", "login"])
         else:
-            logger.info(f"Logged in as: {active[0]['account']}")
-
+            logger.info(f"Logged in as: {auth_result[0]['account']}")
         logger.info("✅ Login check OK.")
 
-    def project_switch(self):
-        """Ensure gcloud project matches the configured project ID."""
-        current_project = run_sh(["gcloud", "config", "get-value", "project"]).strip()
+        current_project = project_result[0]
         if current_project != self.project_id:
             logger.info(f"Switching gcloud project -> {self.project_id}")
             run_sh(["gcloud", "config", "set", "project", self.project_id])
         else:
             logger.info(f"Project already set to {self.project_id}")
-
         logger.info("✅ Project switch OK.")
 
     # ================================================================
@@ -229,8 +240,7 @@ class Infra:
     # Public API called from CLI
     # ================================================================
     def create(self):
-        self.gcloud_login_check()
-        self.project_switch()
+        self._preflight_check()
 
         logger.info("===================================================")
         logger.info("             Aigear GCP Infra Creating             ")
@@ -555,8 +565,7 @@ class Infra:
     # Public API: delete
     # ================================================================
     def delete(self):
-        self.gcloud_login_check()
-        self.project_switch()
+        self._preflight_check()
 
         logger.info("===================================================")
         logger.info("             Aigear GCP Infra Deleting             ")
