@@ -82,8 +82,8 @@ class Scheduler:
         else:
             logger.info(f"Scheduler job '{self.name}' deleted.")
 
-    def describe(self) -> bool:
-        """Describe the job status. Returns True if the job exists (any state)."""
+    def describe(self) -> tuple[bool, str]:
+        """Return (exists, state). exists=False when job is not found or an error occurs."""
         command = [
             "gcloud", "scheduler", "jobs", "describe",
             self.name,
@@ -92,16 +92,12 @@ class Scheduler:
         ]
         event = run_sh(command)
         if "NOT_FOUND" in event:
-            logger.info(f"Scheduler job '{self.name}' not found.")
-            return False
+            return False, "NOT_FOUND"
         if "ERROR" in event:
             logger.error(f"Unexpected response describing scheduler job '{self.name}': {event}")
-            return False
-        schedule = next((line.split(": ", 1)[1] for line in event.splitlines() if line.startswith("schedule:")), "?")
-        timezone = next((line.split(": ", 1)[1] for line in event.splitlines() if line.startswith("timeZone:")), "?")
+            return False, "ERROR"
         state = next((line.split(": ", 1)[1] for line in event.splitlines() if line.startswith("state:")), "UNKNOWN")
-        logger.info(f"Scheduler job '{self.name}' exists. (state: {state}, schedule: {schedule}, timezone: {timezone})")
-        return True
+        return True, state
 
     def list(self):
         """List Cloud Scheduler jobs filtered by this job's name."""
@@ -280,8 +276,11 @@ def create_scheduler(
     """Create a Cloud Scheduler job; skips if a job with the same name already exists."""
     messages  = _build_messages(pipeline_version, step_names, env)
     scheduler = _make_scheduler(pipeline_version, messages)
-    if not scheduler.describe():
-        scheduler.create()
+    exists, state = scheduler.describe()
+    if exists:
+        logger.info(f"Scheduler job '{scheduler.name}' already exists (state: {state}), skipping create.")
+        return
+    scheduler.create()
 
 
 def update_scheduler(
@@ -304,7 +303,17 @@ def delete_scheduler(pipeline_version: str):
 def status_scheduler(pipeline_version: str):
     """Print the status of the Cloud Scheduler job for the given pipeline version."""
     scheduler = _make_scheduler(pipeline_version)
-    scheduler.describe()
+    exists, state = scheduler.describe()
+    if not exists:
+        logger.info(f"Scheduler job '{scheduler.name}' does not exist.")
+    elif state == "ENABLED":
+        logger.info(f"Scheduler job '{scheduler.name}' is ENABLED (running on schedule).")
+    elif state == "PAUSED":
+        logger.info(f"Scheduler job '{scheduler.name}' is PAUSED (not running).")
+    elif state == "DISABLED":
+        logger.info(f"Scheduler job '{scheduler.name}' is DISABLED.")
+    else:
+        logger.info(f"Scheduler job '{scheduler.name}' state: {state}.")
 
 
 def run_scheduler(pipeline_version: str):
