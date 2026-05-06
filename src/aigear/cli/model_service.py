@@ -2,29 +2,6 @@ import argparse
 
 from aigear.common.constant import ENV_LOCAL, ENV_PRODUCTION, ENV_STAGING
 from aigear.deploy.common.helm_chart import create_helm_file, get_helm_path
-from aigear.deploy.gcp.grpc_gcp_deploy import delete_gcp_grpc, deploy_gcp_grpc, status_gcp_grpc, update_gcp_grpc
-from aigear.deploy.local.grpc_local_deploy import delete_local_grpc, deploy_local_grpc, status_local_grpc, update_local_grpc
-
-_OPS = {
-    ENV_LOCAL: {
-        "deploy": deploy_local_grpc,
-        "update": update_local_grpc,
-        "delete": delete_local_grpc,
-        "status": status_local_grpc,
-    },
-    ENV_STAGING: {
-        "deploy": deploy_gcp_grpc,
-        "update": update_gcp_grpc,
-        "delete": delete_gcp_grpc,
-        "status": status_gcp_grpc,
-    },
-    ENV_PRODUCTION: {
-        "deploy": deploy_gcp_grpc,
-        "update": update_gcp_grpc,
-        "delete": delete_gcp_grpc,
-        "status": status_gcp_grpc,
-    },
-}
 
 
 def _get_parser() -> argparse.ArgumentParser:
@@ -90,4 +67,26 @@ def run_model_cli() -> None:
         helm_path = get_helm_path(pipeline_version=args.version, env=env)
 
     op = next(k for k in ("deploy", "update", "delete", "status") if getattr(args, k))
-    _OPS[env][op](helm_path)
+
+    if env == ENV_LOCAL:
+        from aigear.deploy.local.grpc_local_deploy import (
+            delete_local_grpc, deploy_local_grpc, status_local_grpc, update_local_grpc,
+        )
+        ops = {
+            "deploy": deploy_local_grpc,
+            "update": update_local_grpc,
+            "delete": delete_local_grpc,
+            "status": status_local_grpc,
+        }
+    else:
+        from aigear.deploy.gcp.grpc_gcp_deploy import (
+            delete_gcp_grpc, deploy_gcp_grpc, status_gcp_grpc, update_gcp_grpc,
+        )
+        ops = {
+            "deploy": deploy_gcp_grpc,
+            "update": update_gcp_grpc,
+            "delete": delete_gcp_grpc,
+            "status": status_gcp_grpc,
+        }
+
+    ops[op](helm_path)
