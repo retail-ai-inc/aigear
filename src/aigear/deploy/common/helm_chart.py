@@ -2,7 +2,7 @@ import platform
 from pathlib import Path
 from string import Template
 
-from aigear.common.config import get_project_name
+from aigear.common.config import AppConfig, get_project_name
 from aigear.common.constant import ENV_LOCAL, VENV_BASE_DIR
 from aigear.service.grpc.constant import DEFAULT_GRPC_PORT
 from aigear.common.image import get_image_path
@@ -29,9 +29,14 @@ def _to_hostpath(path: Path) -> str:
 
 
 def get_helm_path(
-        model_class_path=None,
+        pipeline_version: str = None,
+        model_class_path: str = None,
         env: str = ENV_LOCAL,
 ) -> Path:
+    if model_class_path is None and pipeline_version is not None:
+        pipe_config      = AppConfig.pipeline(pipeline_version)
+        model_class_path = pipe_config.get("model_service", {}).get("model_class_path")
+
     project_path = Path.cwd()
     if model_class_path is None:
         helm_location = project_path
@@ -105,23 +110,30 @@ def _create_helm_chart(
 
 
 def create_helm_file(
-    pipeline_version: str = None,
-    model_class_path: str = None,
-    service_ports: str = DEFAULT_GRPC_PORT,
-    replicas: int = 1,
-    port: str = DEFAULT_GRPC_PORT,
+    pipeline_version: str,
+    service_ports: str = None,
+    replicas: int = None,
+    port: str = None,
     env: str = ENV_LOCAL,
-    venv: str = None,
     force: bool = False,
-):
-    artifacts_image = get_image_path(is_service=True)
+) -> Path | None:
     if pipeline_version is None:
         logger.info("The 'pipeline_version' is empty, don't know which service to deploy.")
-        return
-    service_name = pipeline_version.replace("_", "-")
-    project_name = get_project_name()
-    project_name = project_name.replace("_", "-")
-    service_name = f"{project_name}-{service_name}-service"
+        return None
+
+    pipe_config      = AppConfig.pipeline(pipeline_version)
+    ms_config        = pipe_config.get("model_service", {})
+    model_class_path = ms_config.get("model_class_path")
+    venv             = ms_config.get("venv_ms")
+
+    service_ports = service_ports or DEFAULT_GRPC_PORT
+    replicas      = replicas if replicas is not None else 1
+    port          = port or DEFAULT_GRPC_PORT
+
+    artifacts_image = get_image_path(is_service=True)
+    service_name    = pipeline_version.replace("_", "-")
+    project_name    = get_project_name().replace("_", "-")
+    service_name    = f"{project_name}-{service_name}-service"
 
     helm_path = get_helm_path(model_class_path=model_class_path, env=env)
     if helm_path.exists() and not force:
