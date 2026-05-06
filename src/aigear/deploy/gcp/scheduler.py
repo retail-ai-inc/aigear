@@ -237,9 +237,17 @@ def _build_messages(
     venv_ms = pipeline_config.get("model_service", {}).get("venv_ms")
     ms_config = pipeline_config.get("model_service", {})
 
+    invalid = [s for s in step_names if s not in pipeline_config]
+    if invalid:
+        valid = [k for k in pipeline_config if not k.startswith("venv_") and k != "scheduler"]
+        raise ValueError(
+            f"Unknown step name(s) for '{pipeline_version}': {invalid}. "
+            f"Valid steps: {','.join(valid)}"
+        )
+
     messages = []
     for step_name in step_names:
-        step_config      = pipeline_config.get(step_name, {})
+        step_config      = pipeline_config[step_name]
         is_model_service = step_name == "model_service"
 
         if is_model_service and not ms_config.get("release", False):
