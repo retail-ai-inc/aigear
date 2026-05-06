@@ -326,7 +326,11 @@ class Infra:
                         failed_steps.append(title)
 
         # ── Gate 2→3: Pub/Sub must exist ──────────────────────────────
-        if cfg.cloud_function.on and not self.pubsub.describe():
+        # Phase 2 already verified pubsub state; reuse that result instead of
+        # calling describe() again.
+        pubsub_step_key = f"Pub/Sub Topic ({cfg.pub_sub.topic_name})"
+        pubsub_ok = cfg.pub_sub.on and pubsub_step_key not in failed_steps
+        if cfg.cloud_function.on and not pubsub_ok:
             self._step_fail(
                 f"Gate 2→3: Pub/Sub Topic ({cfg.pub_sub.topic_name})",
                 "not found — Phase 3 skipped"
@@ -660,7 +664,7 @@ class Infra:
             )
             self.cloud_function.delete()
             logger.info(
-                f"Cloud Function ({self.aigear_config.gcp.cloud_function.function_name}) deleted successfully."
+                f"Cloud Function ({self.aigear_config.gcp.cloud_function.function_name}) deletion initiated (async)."
             )
         else:
             logger.info(

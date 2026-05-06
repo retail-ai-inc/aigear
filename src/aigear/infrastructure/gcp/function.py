@@ -111,9 +111,14 @@ class CloudFunction:
             self.function_name,
             f"--region={self.region}",
             f"--project={self.project_id}",
+            "--async",
+            "--quiet",
         ]
-        event = run_sh(command, "yes\n")
-        logger.info(f"\n{event}")
+        event = run_sh(command)
+        if "ERROR" in event:
+            logger.error(f"Failed to delete cloud function ({self.function_name}): {event}")
+        else:
+            logger.info(f"Cloud Function '{self.function_name}' deletion initiated (async).")
 
 if __name__ == "__main__":
     cloud_function = CloudFunction(
