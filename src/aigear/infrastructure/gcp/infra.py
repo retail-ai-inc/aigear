@@ -16,7 +16,6 @@ from aigear.infrastructure.gcp.function import CloudFunction
 from aigear.infrastructure.gcp.iam import ServiceAccounts
 from aigear.infrastructure.gcp.kms import CloudKMS
 from aigear.infrastructure.gcp.kubernetes import KubernetesCluster
-from aigear.infrastructure.gcp.pre_vm_image import PreVMImage
 from aigear.infrastructure.gcp.pub_sub import PubSub
 
 logger = Logging(log_name=__name__).console_logging()
@@ -102,11 +101,6 @@ class Infra:
             repository_name=self.aigear_config.gcp.artifacts.repository_name,
             location=self.location,
             project_id=self.project_id,
-        )
-
-        self.pre_vm_image = PreVMImage(
-            project_id=self.project_id,
-            zone=f"{self.location}-a",
         )
 
         self.kubernetes_cluster = KubernetesCluster(
@@ -246,6 +240,7 @@ class Infra:
         cfg = self.aigear_config.gcp
 
         # ── Phase 1: Service Account (must be first) ─────────────────
+        sa_exists = False
         if cfg.iam.on:
             success = self._step(
                 f"Service Account ({cfg.iam.account_name})",
@@ -253,11 +248,14 @@ class Infra:
             )
             if not success:
                 failed_steps.append(f"Service Account ({cfg.iam.account_name})")
+            else:
+                sa_exists = True  # step succeeded → SA is guaranteed to exist
         else:
             self._step_skip(f"Service Account ({cfg.iam.account_name})")
+            sa_exists = self.service_accounts.describe()  # iam off → must verify
 
         # ── Gate 1→2: Service Account must exist ─────────────────────
-        if not self.service_accounts.describe():
+        if not sa_exists:
             self._step_fail(
                 f"Gate 1→2: Service Account ({cfg.iam.account_name})",
                 "not found — Phase 2 and Phase 3 skipped"
@@ -495,6 +493,8 @@ class Infra:
             )
 
     def _ensure_pre_vm_image(self):
+        from aigear.infrastructure.gcp.pre_vm_image import PreVMImage
+        self.pre_vm_image = PreVMImage(project_id=self.project_id, zone=f"{self.location}-a")
         tasks = {}
 
         if not self.pre_vm_image.cpu_image_exists():
@@ -746,6 +746,8 @@ class Infra:
             )
 
     def _delete_pre_vm_image(self):
+        from aigear.infrastructure.gcp.pre_vm_image import PreVMImage
+        self.pre_vm_image = PreVMImage(project_id=self.project_id, zone=f"{self.location}-a")
         logger.info("Deleting Pre-VM Images (CPU and GPU)...")
         self.pre_vm_image.delete()
 
@@ -757,7 +759,7 @@ class Infra:
             )
             self.kubernetes_cluster.delete()
             logger.info(
-                f"Kubernetes Cluster ({self.aigear_config.gcp.kubernetes.cluster_name}) deleted successfully."
+                f"Kubernetes Cluster ({self.aigear_config.gcp.kubernetes.cluster_name}) deletion initiated (async)."
             )
         else:
             logger.info(
