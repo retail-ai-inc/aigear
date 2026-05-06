@@ -310,8 +310,6 @@ def status_scheduler(pipeline_version: str):
         logger.info(f"Scheduler job '{scheduler.name}' is ENABLED (running on schedule).")
     elif state == "PAUSED":
         logger.info(f"Scheduler job '{scheduler.name}' is PAUSED (not running).")
-    elif state == "DISABLED":
-        logger.info(f"Scheduler job '{scheduler.name}' is DISABLED.")
     else:
         logger.info(f"Scheduler job '{scheduler.name}' state: {state}.")
 
