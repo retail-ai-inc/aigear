@@ -306,28 +306,3 @@ class CloudKMS:
         self.decrypt(ciphertext_file=input_path, plaintext_file=output_path)
         logger.info(f"Decrypted: {input_path} -> {output_path}")
 
-
-if __name__ == "__main__":
-    project_id = ""
-    location = ""
-    keyring_name = ""
-    key_name = ""
-
-    cloud_kms = CloudKMS(
-        project_id=project_id,
-        location=location,
-        keyring_name=keyring_name,
-        key_name=key_name,
-    )
-
-    # Create resources (idempotent — skip if already exist)
-    if not cloud_kms.describe_keyring():
-        cloud_kms.create_keyring()
-    if not cloud_kms.describe_key():
-        cloud_kms.create_key()
-
-    # Encrypt env.json
-    cloud_kms.encrypt_env()
-
-    # Decrypt env.json.enc back to env.json
-    # kms.decrypt_env()

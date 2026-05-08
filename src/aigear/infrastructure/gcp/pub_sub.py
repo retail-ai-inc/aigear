@@ -79,16 +79,3 @@ class PubSub:
         ]
         event = run_sh(command)
         logger.info(event)
-
-
-if __name__ == "__main__":
-    project_id = ""
-    topic_name = "ml-test-pubsub"
-    pubsub = PubSub(
-        topic_name=topic_name,
-        project_id=project_id,
-    )
-    topic_exist = pubsub.describe()
-    print("topic_name: ", topic_exist)
-    if not topic_exist:
-        pubsub.create()

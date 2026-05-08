@@ -34,10 +34,10 @@ class CloudFunction:
         if not function_file_dst.exists():
             content = Path(function_path_src).read_text(encoding="utf-8")
             content = content.replace(
-                "PROJECTID", self.project_id
-            ).replace("REGION", self.region
-            ).replace("TOPICSNAME", self.topic_name
-            ).replace("VENVBASEDIR", VENV_BASE_DIR)
+                "{{PROJECTID}}", self.project_id
+            ).replace("{{REGION}}", self.region
+            ).replace("{{TOPICSNAME}}", self.topic_name
+            ).replace("{{VENVBASEDIR}}", VENV_BASE_DIR)
             function_file_dst.write_text(content, encoding="utf-8")
 
         package_file_src = source_path / "package.json"
@@ -119,17 +119,3 @@ class CloudFunction:
             logger.error(f"Failed to delete cloud function ({self.function_name}): {event}")
         else:
             logger.info(f"Cloud Function '{self.function_name}' deletion initiated (async).")
-
-if __name__ == "__main__":
-    cloud_function = CloudFunction(
-        function_name="ml-test-run",
-        region="asia-northeast1",
-        entry_point="cronjobProcessPubSub",
-        topic_name="ml-test-pubsub",
-        project_id="",
-        service_account=""
-    )
-    cloud_function_exist = cloud_function.describe()
-    print("cloud_function: ", cloud_function_exist)
-    if not cloud_function_exist:
-        cloud_function.deploy()

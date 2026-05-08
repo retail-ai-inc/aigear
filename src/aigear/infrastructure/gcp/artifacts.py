@@ -55,16 +55,3 @@ class Artifacts:
         event = run_sh(command)
         if "ERROR" in event:
             logger.error(f"Failed to delete artifact registry ({self.repository_name}): {event}")
-
-
-if __name__ == "__main__":
-    project_id = ""
-    repository_name = "test"
-    location = ""
-    repositories = Artifacts(
-        repository_name=repository_name,
-        location=location,
-        project_id=project_id,
-    )
-    repository_exist = repositories.describe()
-    print("repository: ", repository_exist)

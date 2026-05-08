@@ -69,18 +69,3 @@ class KubernetesCluster:
             logger.error(f"Error occurred while deleting GKE cluster ({self.cluster_name}): {event}")
         else:
             logger.info(f"GKE cluster '{self.cluster_name}' deletion initiated (async).")
-
-
-if __name__ == "__main__":
-    kubernetes_cluster = KubernetesCluster(
-        cluster_name="my-grpc-cluster",
-        zone="asia-northeast1-a",
-        num_nodes=1,
-        min_nodes=1,
-        max_nodes=5,
-        project_id="",
-    )
-    kubernetes_cluster_exist = kubernetes_cluster.describe()
-    print("kubernetes_cluster: ", kubernetes_cluster_exist)
-    if not kubernetes_cluster_exist:
-        kubernetes_cluster.create()

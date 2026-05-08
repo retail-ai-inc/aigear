@@ -50,6 +50,7 @@ class AppConfig:
     """
 
     _raw: dict | None = None
+    _aigear: "Config | None" = None
 
     @classmethod
     def _ensure_loaded(cls) -> dict:
@@ -72,7 +73,9 @@ class AppConfig:
     @classmethod
     def aigear(cls) -> Config:
         """Return the validated aigear config as a typed Pydantic model."""
-        return Config.model_validate(cls._ensure_loaded().get("aigear", {}))
+        if cls._aigear is None:
+            cls._aigear = Config.model_validate(cls._ensure_loaded().get("aigear", {}))
+        return cls._aigear
 
     # ── pipelines section ────────────────────────────────────────────────────
 

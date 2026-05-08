@@ -133,10 +133,3 @@ class ServiceAccounts:
         else:
             logger.info(event or "No owner role found.")
         return is_owner
-
-if __name__ == "__main__":
-    service_accounts = ServiceAccounts(
-        project_id="",
-        account_name="test-pipelines",
-    )
-    service_accounts.add_iam_policy_binding()

@@ -69,15 +69,3 @@ class Bucket:
         ]
         event = run_sh(command)
         logger.info(event)
-
-if __name__ == "__main__":
-    project_id = ""
-    bucket_name = ""
-    location = ""
-    bucket = Bucket(
-        bucket_name=bucket_name,
-        project_id=project_id,
-        location=location,
-    )
-    bucket_exist = bucket.describe()
-    print("bucket: ", bucket_exist)
