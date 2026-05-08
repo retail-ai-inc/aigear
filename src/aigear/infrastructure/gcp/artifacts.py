@@ -25,9 +25,7 @@ class Artifacts:
             f"--repository-format={self.repository_format}",
             f"--project={self.project_id}",
         ]
-        event = run_sh(command)
-        if "ERROR" in event:
-            logger.error(f"Failed to create artifact registry ({self.repository_name}): {event}")
+        run_sh(command, check=True)
 
     def describe(self):
         is_exist = False

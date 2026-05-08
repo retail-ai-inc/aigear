@@ -27,6 +27,7 @@ def run_sh(
     command: list,
     inputs: str | None = None,
     timeout: int = 30,
+    check: bool = False,
 ):
     use_shell = (platform.system() == "Windows")
     try:
@@ -40,7 +41,12 @@ def run_sh(
         )
         stdout = (result.stdout or b"").decode("utf-8", errors="replace")
         stderr = (result.stderr or b"").decode("utf-8", errors="replace")
-        return _clean_output(stdout + stderr)
+        output = _clean_output(stdout + stderr)
+        if check and result.returncode != 0:
+            raise RuntimeError(
+                f"Command failed (exit {result.returncode}): {output.strip()}"
+            )
+        return output
     except subprocess.TimeoutExpired:
         return f"Error: Command({command}) execution timeout."
 

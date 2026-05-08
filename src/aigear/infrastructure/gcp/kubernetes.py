@@ -35,10 +35,7 @@ class KubernetesCluster:
             "--async",
             "--quiet"
         ]
-        event = run_sh(command)
-        if "ERROR" in event:
-            logger.info(event)
-            logger.error("Error occurred while creating GKE cluster.")
+        run_sh(command, check=True)
 
     def describe(self):
         is_exist = False

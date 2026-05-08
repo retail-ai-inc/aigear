@@ -19,9 +19,7 @@ class PubSub:
             self.topic_name,
             f"--project={self.project_id}",
         ]
-        event = run_sh(command)
-        if "ERROR" in event:
-            logger.error(f"Failed to create Pub/Sub topic ({self.topic_name}): {event}")
+        run_sh(command, check=True)
 
     def add_permissions_to_pubsub(self, sa_email):
         topic = f"projects/{self.project_id}/topics/{self.topic_name}"
@@ -33,11 +31,8 @@ class PubSub:
                 f"--role={role}",
                 f"--project={self.project_id}",
             ]
-            event = run_sh(command)
-            if "Updated IAM policy for topic" in event:
-                logger.info(f"✅ Successfully granted: {role}")
-            elif "ERROR" in event:
-                logger.error(f"❌ Failed to grant {role}: {event}")
+            run_sh(command, check=True)
+            logger.info(f"✅ Successfully granted: {role}")
 
     def describe(self):
         is_exist = False

@@ -34,9 +34,7 @@ class CloudKMS:
             f"--location={self.location}",
             f"--project={self.project_id}",
         ]
-        event = run_sh(command)
-        if "ERROR" in event:
-            logger.error(f"Failed to create KMS keyring ({self.keyring_name}): {event}")
+        run_sh(command, check=True)
 
     def describe_keyring(self) -> bool:
         is_exist = False
@@ -66,9 +64,7 @@ class CloudKMS:
             "--purpose=encryption",
             f"--project={self.project_id}",
         ]
-        event = run_sh(command)
-        if "ERROR" in event:
-            logger.error(f"Failed to create KMS key ({self.key_name}): {event}")
+        run_sh(command, check=True)
 
     def describe_key(self) -> bool:
         is_exist = False
@@ -151,10 +147,7 @@ class CloudKMS:
                 f"--location={self.location}",
                 f"--project={self.project_id}",
             ]
-            event = run_sh(restore_cmd)
-            if "ERROR" in event:
-                logger.error(f"Failed to restore key version {version_num}: {event}")
-                return
+            run_sh(restore_cmd, check=True)
             logger.info(f"KMS primary key version {version_num} restored from DESTROY_SCHEDULED to DISABLED.")
 
         enable_cmd = [
@@ -165,11 +158,8 @@ class CloudKMS:
             f"--location={self.location}",
             f"--project={self.project_id}",
         ]
-        event = run_sh(enable_cmd)
-        if "ERROR" in event:
-            logger.error(f"Failed to enable key version {version_num}: {event}")
-        else:
-            logger.info(f"KMS primary key version {version_num} enabled successfully.")
+        run_sh(enable_cmd, check=True)
+        logger.info(f"KMS primary key version {version_num} enabled successfully.")
 
     # ------------------------------------------------------------------ #
     #  IAM                                                                 #
@@ -224,11 +214,8 @@ class CloudKMS:
             "--role=roles/cloudkms.cryptoKeyEncrypterDecrypter",
             f"--project={self.project_id}",
         ]
-        event = run_sh(command)
-        if "Updated IAM policy" in event:
-            logger.info("✅ Successfully granted: roles/cloudkms.cryptoKeyEncrypterDecrypter")
-        elif "ERROR" in event:
-            logger.error(f"❌ Failed to grant KMS permissions: {event}")
+        run_sh(command, check=True)
+        logger.info("✅ Successfully granted: roles/cloudkms.cryptoKeyEncrypterDecrypter")
 
     # ------------------------------------------------------------------ #
     #  Encrypt / Decrypt generic files                                     #
@@ -248,9 +235,7 @@ class CloudKMS:
             f"--ciphertext-file={ciphertext_file}",
             f"--project={self.project_id}",
         ]
-        event = run_sh(command)
-        if "ERROR" in event:
-            logger.error(f"Failed to encrypt file: {event}")
+        run_sh(command, check=True)
 
     def decrypt(
         self, 
@@ -266,9 +251,7 @@ class CloudKMS:
             f"--plaintext-file={plaintext_file}",
             f"--project={self.project_id}",
         ]
-        event = run_sh(command)
-        if "ERROR" in event:
-            logger.error(f"Failed to decrypt file: {event}")
+        run_sh(command, check=True)
 
     # ------------------------------------------------------------------ #
     #  env.json helpers                                                    #

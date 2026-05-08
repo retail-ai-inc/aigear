@@ -22,9 +22,7 @@ class Bucket:
             "--uniform-bucket-level-access",
             f"--project={self.project_id}",
         ]
-        event = run_sh(command)
-        if "ERROR" in event:
-            logger.error(f"Failed to create bucket ({self.bucket_gs}): {event}")
+        run_sh(command, check=True)
 
     def add_permissions_to_gcs(self, sa_email):
         command = [
@@ -34,9 +32,7 @@ class Bucket:
             "--role=roles/storage.admin",
             f"--project={self.project_id}",
         ]
-        event = run_sh(command)
-        if "ERROR" in event:
-            logger.error(f"Failed to add IAM policy to bucket ({self.bucket_gs}): {event}")
+        run_sh(command, check=True)
 
     def describe(self):
         is_exist = False

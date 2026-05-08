@@ -31,11 +31,7 @@ class ServiceAccounts:
                 command.append(f"--description={self.description}")
             if self.display_name:
                 command.append(f"--display-name={self.display_name}")
-            event = run_sh(command)
-            if "ERROR" in event:
-                logger.error(f"Failed to create service account ({self.account_name}): {event}")
-            elif not event.strip():
-                logger.info("The currently logged in GCP account does not have owner privileges.")
+            run_sh(command, check=True)
 
     def delete(self):
         command = [
@@ -78,11 +74,8 @@ class ServiceAccounts:
                     f"--role={role}",
                     "--condition=None"
                 ]
-                event = run_sh(command)
-                if "Updated IAM policy" in event:
-                    logger.info(f"✅ Successfully granted: {role}")
-                elif "ERROR" in event:
-                    logger.error(f"❌ Failed: {event}")
+                run_sh(command, check=True)
+                logger.info(f"✅ Successfully granted: {role}")
 
         # SA self-binding operates on a different resource (SA IAM policy, not
         # project IAM policy), so it can safely run in parallel.
@@ -94,11 +87,8 @@ class ServiceAccounts:
                 "--role=roles/iam.serviceAccountUser",
                 f"--project={self.project_id}",
             ]
-            event = run_sh(command)
-            if "Updated IAM policy" in event:
-                logger.info("✅ Successfully granted: roles/iam.serviceAccountUser (self-binding)")
-            elif "ERROR" in event:
-                logger.error(f"❌ Failed self-binding: {event}")
+            run_sh(command, check=True)
+            logger.info("✅ Successfully granted: roles/iam.serviceAccountUser (self-binding)")
 
         with ThreadPoolExecutor(max_workers=2) as executor:
             f_project = executor.submit(_bind_project_roles)

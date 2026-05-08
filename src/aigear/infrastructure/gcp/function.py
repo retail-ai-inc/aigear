@@ -63,9 +63,7 @@ class CloudFunction:
             "--quiet",
             "--no-allow-unauthenticated",
         ]
-        event = run_sh(command, timeout=600)
-        if "ERROR" in event:
-            logger.error(f"Failed to deploy cloud function ({self.function_name}): {event}")
+        run_sh(command, timeout=600, check=True)
     
     def add_permissions_to_cloud_function(self, sa_email):
         command = [
@@ -74,11 +72,8 @@ class CloudFunction:
             f"--member=serviceAccount:{sa_email}",
             "--role=roles/run.invoker",
         ]
-        event = run_sh(command)
-        if "Updated IAM policy" in event:
-            logger.info(f"✅ run.invoker granted on {self.function_name}")
-        elif "ERROR" in event:
-            logger.error(f"❌ Failed on {self.function_name}: {event}")
+        run_sh(command, check=True)
+        logger.info(f"✅ run.invoker granted on {self.function_name}")
 
     def describe(self):
         is_exist = False
