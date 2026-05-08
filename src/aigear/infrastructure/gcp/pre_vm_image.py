@@ -50,7 +50,8 @@ kubectl version --client || true
 """
 
 # CPU image: Docker CE + gcloud CLI + kubectl (no GPU dependencies)
-STARTUP_SCRIPT_CPU = r"""#!/usr/bin/env bash
+STARTUP_SCRIPT_CPU = (
+    r"""#!/usr/bin/env bash
 set -euxo pipefail
 
 BAKE_STATUS="OK"
@@ -77,12 +78,16 @@ https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CO
 apt-get update -y
 apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 systemctl enable --now docker
-""" + _INSTALL_GCLOUD_KUBECTL + r"""
+"""
+    + _INSTALL_GCLOUD_KUBECTL
+    + r"""
 docker --version || true
 """
+)
 
 # GPU image: Docker CE + NVIDIA Container Toolkit + gcloud CLI + kubectl
-STARTUP_SCRIPT_GPU = r"""#!/usr/bin/env bash
+STARTUP_SCRIPT_GPU = (
+    r"""#!/usr/bin/env bash
 set -euxo pipefail
 
 BAKE_STATUS="OK"
@@ -128,13 +133,17 @@ apt-get update -y
 apt-get install -y nvidia-container-toolkit
 nvidia-ctk runtime configure --runtime=docker
 systemctl restart docker
-""" + _INSTALL_GCLOUD_KUBECTL + r"""
+"""
+    + _INSTALL_GCLOUD_KUBECTL
+    + r"""
 docker --version || true
 nvidia-smi || true
 """
+)
 
 
 # ─── PreVMImage ───────────────────────────────────────────────────────────────
+
 
 class PreVMImage:
     """
@@ -153,23 +162,23 @@ class PreVMImage:
         project_id: str,
         zone: str,
         # GPU bake parameters
-        gpu_machine_type: str        = "n1-standard-8",
-        gpu_type: str                = "nvidia-tesla-t4",
-        gpu_count: int               = 1,
-        gpu_boot_disk_gb: int        = 100,
-        dlvm_family: str             = "common-cu129-ubuntu-2204-nvidia-580",
-        gpu_bake_vm: str             = "ml-dlvm-gpu",
+        gpu_machine_type: str = "n1-standard-8",
+        gpu_type: str = "nvidia-tesla-t4",
+        gpu_count: int = 1,
+        gpu_boot_disk_gb: int = 100,
+        dlvm_family: str = "common-cu129-ubuntu-2204-nvidia-580",
+        gpu_bake_vm: str = "ml-dlvm-gpu",
         # CPU bake parameters
-        cpu_machine_type: str        = "e2-standard-4",
-        cpu_boot_disk_gb: int        = 50,
-        cpu_base_image: str          = "projects/ubuntu-os-cloud/global/images/family/ubuntu-2204-lts",
-        cpu_bake_vm: str             = "ml-dlvm-cpu",
+        cpu_machine_type: str = "e2-standard-4",
+        cpu_boot_disk_gb: int = 50,
+        cpu_base_image: str = "projects/ubuntu-os-cloud/global/images/family/ubuntu-2204-lts",
+        cpu_bake_vm: str = "ml-dlvm-cpu",
         # Image names (customisable; defaults match the Cloud Function CONFIG)
-        gpu_image_name: str          = "ml-training-gpu-image",
-        cpu_image_name: str          = "ml-training-cpu-image",
+        gpu_image_name: str = "ml-training-gpu-image",
+        cpu_image_name: str = "ml-training-cpu-image",
         # Shared parameters
-        bake_timeout_sec: int        = 1200,
-        bake_poll_interval_sec: int  = 20,
+        bake_timeout_sec: int = 1200,
+        bake_poll_interval_sec: int = 20,
     ):
         if not project_id:
             raise ValueError("project_id must not be empty")
@@ -179,28 +188,30 @@ class PreVMImage:
         # Strip trailing '-X' suffix to derive the region, then build a/b/c fallbacks
         region = zone[:-2] if (len(zone) >= 2 and zone[-2] == "-") else zone
         self.fallback_zones = [f"{region}-a", f"{region}-b", f"{region}-c"]
-        self.zone = self.fallback_zones[0]  # active zone; updated on successful fallback
+        self.zone = self.fallback_zones[
+            0
+        ]  # active zone; updated on successful fallback
 
         # GPU
         self.gpu_machine_type = gpu_machine_type
-        self.gpu_type         = gpu_type
-        self.gpu_count        = gpu_count
+        self.gpu_type = gpu_type
+        self.gpu_count = gpu_count
         self.gpu_boot_disk_gb = gpu_boot_disk_gb
-        self.dlvm_family      = dlvm_family
-        self.gpu_bake_vm      = gpu_bake_vm
+        self.dlvm_family = dlvm_family
+        self.gpu_bake_vm = gpu_bake_vm
 
         # CPU
         self.cpu_machine_type = cpu_machine_type
         self.cpu_boot_disk_gb = cpu_boot_disk_gb
-        self.cpu_base_image   = cpu_base_image
-        self.cpu_bake_vm      = cpu_bake_vm
+        self.cpu_base_image = cpu_base_image
+        self.cpu_bake_vm = cpu_bake_vm
 
         # Image names
         self.gpu_image_name = gpu_image_name
         self.cpu_image_name = cpu_image_name
 
         # Shared
-        self.bake_timeout_sec       = bake_timeout_sec
+        self.bake_timeout_sec = bake_timeout_sec
         self.bake_poll_interval_sec = bake_poll_interval_sec
 
     # ── Internal helpers ─────────────────────────────────────────────────────
@@ -226,6 +237,7 @@ class PreVMImage:
         # Only treat 404 as a zone-skip if it concerns an accelerator resource;
         # all other 404s (wrong project, missing image, etc.) should propagate.
         from google.api_core.exceptions import NotFound
+
         if isinstance(exc, NotFound) and "acceleratorTypes" not in str(exc):
             return False
         msg = str(exc)
@@ -255,27 +267,33 @@ class PreVMImage:
         if start is not None:
             req.start = start
         resp = client.get_serial_port_output(request=req)
-        contents   = resp.contents or ""
+        contents = resp.contents or ""
         next_start = resp.next if getattr(resp, "next", None) is not None else None
         return contents, next_start
 
     def _wait_bake_done(self, bake_vm: str, zone: str | None = None):
         logger.info(f"Waiting for bake to finish on {bake_vm} ...")
         deadline = time.time() + self.bake_timeout_sec
-        start    = None
-        attempt  = 0
+        start = None
+        attempt = 0
 
         while time.time() < deadline:
             attempt += 1
-            contents, next_start = self._get_serial_output(bake_vm, start=start, zone=zone)
+            contents, next_start = self._get_serial_output(
+                bake_vm, start=start, zone=zone
+            )
 
             if "startup-script failed" in contents:
-                raise RuntimeError("Startup script failed, see serial console for details")
+                raise RuntimeError(
+                    "Startup script failed, see serial console for details"
+                )
             if "BAKE_DONE" in contents:
                 if "BAKE_DONE:OK" in contents:
                     logger.info("Bake done (OK).")
                     return
-                raise RuntimeError("Bake script reported BAKE_DONE but with failure status")
+                raise RuntimeError(
+                    "Bake script reported BAKE_DONE but with failure status"
+                )
 
             if next_start is not None:
                 start = next_start
@@ -293,7 +311,9 @@ class PreVMImage:
         except NotFound:
             return
         except Conflict:
-            logger.info("Conflict when checking existing instance - will try to delete.")
+            logger.info(
+                "Conflict when checking existing instance - will try to delete."
+            )
         logger.info(f"Instance {bake_vm} already exists - deleting it first.")
         op = client.delete(project=self.project_id, zone=z, instance=bake_vm)
         self._wait_op(op, f"delete existing instance {bake_vm}")
@@ -306,18 +326,22 @@ class PreVMImage:
         self._wait_op(op, f"stop {bake_vm}")
 
     def _create_image_from_disk(
-        self, bake_vm: str, image_name: str, image_family: str, extra_labels: dict,
-        zone: str | None = None
+        self,
+        bake_vm: str,
+        image_name: str,
+        image_family: str,
+        extra_labels: dict,
+        zone: str | None = None,
     ):
         z = zone or self.zone
         client = compute_v1.ImagesClient()
         logger.info(f"Creating image {image_name} from disk of {bake_vm} ...")
 
-        img             = Image()
-        img.name        = image_name
-        img.family      = image_family
+        img = Image()
+        img.name = image_name
+        img.family = image_family
         img.source_disk = f"projects/{self.project_id}/zones/{z}/disks/{bake_vm}"
-        img.labels      = extra_labels
+        img.labels = extra_labels
 
         op = client.insert(project=self.project_id, image_resource=img)
         self._wait_op(op, f"create image {image_name}")
@@ -355,7 +379,7 @@ class PreVMImage:
         Try to insert a bake VM across fallback zones.
         Returns the zone where the VM was successfully created.
         """
-        client   = compute_v1.InstancesClient()
+        client = compute_v1.InstancesClient()
         last_exc: Exception | None = None
 
         for z in self.fallback_zones:
@@ -363,7 +387,9 @@ class PreVMImage:
             inst = build_instance_fn(z)
             for attempt in range(1, self._SUBNET_NOT_READY_RETRIES + 1):
                 try:
-                    op = client.insert(project=self.project_id, zone=z, instance_resource=inst)
+                    op = client.insert(
+                        project=self.project_id, zone=z, instance_resource=inst
+                    )
                     self._wait_op(op, f"create {label} in {z}")
                     logger.info(f"Bake VM {bake_vm} created in zone {z}.")
                     return z
@@ -385,53 +411,51 @@ class PreVMImage:
                         break
                     raise
 
-        raise RuntimeError(
-            f"All fallback zones exhausted for {label}."
-        ) from last_exc
+        raise RuntimeError(f"All fallback zones exhausted for {label}.") from last_exc
 
     # ── GPU image ────────────────────────────────────────────────────────────
 
     def _create_gpu_bake_instance(self):
         def build(zone: str) -> Instance:
-            inst              = Instance()
-            inst.name         = self.gpu_bake_vm
+            inst = Instance()
+            inst.name = self.gpu_bake_vm
             inst.machine_type = f"zones/{zone}/machineTypes/{self.gpu_machine_type}"
 
-            ga                   = AcceleratorConfig()
-            ga.accelerator_type  = (
+            ga = AcceleratorConfig()
+            ga.accelerator_type = (
                 f"projects/{self.project_id}/zones/{zone}"
                 f"/acceleratorTypes/{self.gpu_type}"
             )
-            ga.accelerator_count    = self.gpu_count
+            ga.accelerator_count = self.gpu_count
             inst.guest_accelerators = [ga]
 
-            boot_disk                   = AttachedDisk()
-            boot_disk.boot              = True
-            boot_disk.auto_delete       = True
-            init_params                 = AttachedDiskInitializeParams()
-            init_params.source_image    = (
-                f"projects/deeplearning-platform-release/global/images/family/{self.dlvm_family}"
-            )
-            init_params.disk_size_gb    = self.gpu_boot_disk_gb
+            boot_disk = AttachedDisk()
+            boot_disk.boot = True
+            boot_disk.auto_delete = True
+            init_params = AttachedDiskInitializeParams()
+            init_params.source_image = f"projects/deeplearning-platform-release/global/images/family/{self.dlvm_family}"
+            init_params.disk_size_gb = self.gpu_boot_disk_gb
             boot_disk.initialize_params = init_params
-            inst.disks                  = [boot_disk]
+            inst.disks = [boot_disk]
 
-            nic                     = NetworkInterface()
-            nic.network             = f"projects/{self.project_id}/global/networks/default"
-            access                  = AccessConfig()
-            access.name             = "External NAT"
-            access.type_            = compute_v1.AccessConfig.Type.ONE_TO_ONE_NAT.name
-            nic.access_configs      = [access]
+            nic = NetworkInterface()
+            nic.network = f"projects/{self.project_id}/global/networks/default"
+            access = AccessConfig()
+            access.name = "External NAT"
+            access.type_ = compute_v1.AccessConfig.Type.ONE_TO_ONE_NAT.name
+            nic.access_configs = [access]
             inst.network_interfaces = [nic]
 
-            sched                     = Scheduling()
+            sched = Scheduling()
             sched.on_host_maintenance = Scheduling.OnHostMaintenance.TERMINATE.name
-            inst.scheduling           = sched
+            inst.scheduling = sched
 
             inst.metadata = self._build_metadata(STARTUP_SCRIPT_GPU)
             return inst
 
-        return self._create_instance_with_fallback(build, self.gpu_bake_vm, "GPU bake VM")
+        return self._create_instance_with_fallback(
+            build, self.gpu_bake_vm, "GPU bake VM"
+        )
 
     def create_gpu_image(self):
         """Bake the GPU custom VM image (name: self.gpu_image_name)."""
@@ -440,11 +464,11 @@ class PreVMImage:
         self._wait_bake_done(self.gpu_bake_vm, zone=zone)
         self._stop_instance(self.gpu_bake_vm, zone=zone)
         self._create_image_from_disk(
-            bake_vm      = self.gpu_bake_vm,
-            image_name   = self.gpu_image_name,
-            image_family = "ml-training-gpu",
-            extra_labels = {"base": "dlvm", "with": "docker-nvidia-kubectl"},
-            zone         = zone,
+            bake_vm=self.gpu_bake_vm,
+            image_name=self.gpu_image_name,
+            image_family="ml-training-gpu",
+            extra_labels={"base": "dlvm", "with": "docker-nvidia-kubectl"},
+            zone=zone,
         )
         self._delete_instance(self.gpu_bake_vm, zone=zone)
         logger.info(
@@ -459,36 +483,38 @@ class PreVMImage:
 
     def _create_cpu_bake_instance(self):
         def build(zone: str) -> Instance:
-            inst              = Instance()
-            inst.name         = self.cpu_bake_vm
+            inst = Instance()
+            inst.name = self.cpu_bake_vm
             inst.machine_type = f"zones/{zone}/machineTypes/{self.cpu_machine_type}"
 
-            boot_disk                   = AttachedDisk()
-            boot_disk.boot              = True
-            boot_disk.auto_delete       = True
-            init_params                 = AttachedDiskInitializeParams()
-            init_params.source_image    = self.cpu_base_image
-            init_params.disk_size_gb    = self.cpu_boot_disk_gb
+            boot_disk = AttachedDisk()
+            boot_disk.boot = True
+            boot_disk.auto_delete = True
+            init_params = AttachedDiskInitializeParams()
+            init_params.source_image = self.cpu_base_image
+            init_params.disk_size_gb = self.cpu_boot_disk_gb
             boot_disk.initialize_params = init_params
-            inst.disks                  = [boot_disk]
+            inst.disks = [boot_disk]
 
-            nic                     = NetworkInterface()
-            nic.network             = f"projects/{self.project_id}/global/networks/default"
-            access                  = AccessConfig()
-            access.name             = "External NAT"
-            access.type_            = compute_v1.AccessConfig.Type.ONE_TO_ONE_NAT.name
-            nic.access_configs      = [access]
+            nic = NetworkInterface()
+            nic.network = f"projects/{self.project_id}/global/networks/default"
+            access = AccessConfig()
+            access.name = "External NAT"
+            access.type_ = compute_v1.AccessConfig.Type.ONE_TO_ONE_NAT.name
+            nic.access_configs = [access]
             inst.network_interfaces = [nic]
 
             # CPU instances support live migration; MIGRATE is fine
-            sched                     = Scheduling()
+            sched = Scheduling()
             sched.on_host_maintenance = Scheduling.OnHostMaintenance.MIGRATE.name
-            inst.scheduling           = sched
+            inst.scheduling = sched
 
             inst.metadata = self._build_metadata(STARTUP_SCRIPT_CPU)
             return inst
 
-        return self._create_instance_with_fallback(build, self.cpu_bake_vm, "CPU bake VM")
+        return self._create_instance_with_fallback(
+            build, self.cpu_bake_vm, "CPU bake VM"
+        )
 
     def create_cpu_image(self):
         """Bake the CPU custom VM image (name: self.cpu_image_name)."""
@@ -497,11 +523,11 @@ class PreVMImage:
         self._wait_bake_done(self.cpu_bake_vm, zone=zone)
         self._stop_instance(self.cpu_bake_vm, zone=zone)
         self._create_image_from_disk(
-            bake_vm      = self.cpu_bake_vm,
-            image_name   = self.cpu_image_name,
-            image_family = "ml-training-cpu",
-            extra_labels = {"base": "ubuntu-2204", "with": "docker-kubectl"},
-            zone         = zone,
+            bake_vm=self.cpu_bake_vm,
+            image_name=self.cpu_image_name,
+            image_family="ml-training-cpu",
+            extra_labels={"base": "ubuntu-2204", "with": "docker-kubectl"},
+            zone=zone,
         )
         self._delete_instance(self.cpu_bake_vm, zone=zone)
         logger.info(
@@ -554,4 +580,3 @@ class PreVMImage:
     def delete(self):
         self.delete_gpu_image()
         self.delete_cpu_image()
-    

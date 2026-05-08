@@ -3,14 +3,21 @@ from pathlib import Path
 from aigear.common import run_sh
 from aigear.common.config import AigearConfig
 from aigear.common.logger import Logging
-from aigear.deploy.common.kubectl_command import kubectl_apply, kubectl_delete, kubectl_status
+from aigear.deploy.common.kubectl_command import (
+    kubectl_apply,
+    kubectl_delete,
+    kubectl_status,
+)
 
 logger = Logging(log_name=__name__).console_logging()
 
 
 def switch_gcp_context(cluster_name: str, project_id: str, region: str) -> None:
     command = [
-        "gcloud", "container", "clusters", "get-credentials",
+        "gcloud",
+        "container",
+        "clusters",
+        "get-credentials",
         cluster_name,
         f"--region={region}",
         f"--project={project_id}",

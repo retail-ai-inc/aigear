@@ -13,7 +13,7 @@ _thread_local = threading.local()
 # ----------------------------
 class _ThreadAwareStreamHandler(logging.StreamHandler):
     def emit(self, record):
-        buf = getattr(_thread_local, 'log_buffer', None)
+        buf = getattr(_thread_local, "log_buffer", None)
         if buf is not None:
             buf.append(self.format(record))
         else:
@@ -76,6 +76,7 @@ class Logging:
 
         if self._client is None:
             from google.cloud import logging as gcp_logging
+
             self._client = gcp_logging.Client(project=self.project_id)
             self._cloud_logger = self._client.logger(self.log_name)
 

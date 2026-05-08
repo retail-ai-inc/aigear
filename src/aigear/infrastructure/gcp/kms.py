@@ -9,7 +9,6 @@ from aigear.common.logger import Logging
 logger = Logging(log_name=__name__).console_logging()
 
 
-
 class CloudKMS:
     def __init__(
         self,
@@ -29,7 +28,10 @@ class CloudKMS:
 
     def create_keyring(self):
         command = [
-            "gcloud", "kms", "keyrings", "create",
+            "gcloud",
+            "kms",
+            "keyrings",
+            "create",
             self.keyring_name,
             f"--location={self.location}",
             f"--project={self.project_id}",
@@ -39,7 +41,10 @@ class CloudKMS:
     def describe_keyring(self) -> bool:
         is_exist = False
         command = [
-            "gcloud", "kms", "keyrings", "describe",
+            "gcloud",
+            "kms",
+            "keyrings",
+            "describe",
             self.keyring_name,
             f"--location={self.location}",
             f"--project={self.project_id}",
@@ -48,7 +53,9 @@ class CloudKMS:
         if self.keyring_name in event and "ERROR" not in event:
             is_exist = True
         elif "ERROR" in event and "NOT_FOUND" not in event:
-            logger.error(f"Unexpected error describing keyring ({self.keyring_name}): {event}")
+            logger.error(
+                f"Unexpected error describing keyring ({self.keyring_name}): {event}"
+            )
         return is_exist
 
     # ------------------------------------------------------------------ #
@@ -57,7 +64,10 @@ class CloudKMS:
 
     def create_key(self):
         command = [
-            "gcloud", "kms", "keys", "create",
+            "gcloud",
+            "kms",
+            "keys",
+            "create",
             self.key_name,
             f"--keyring={self.keyring_name}",
             f"--location={self.location}",
@@ -69,7 +79,10 @@ class CloudKMS:
     def describe_key(self) -> bool:
         is_exist = False
         command = [
-            "gcloud", "kms", "keys", "describe",
+            "gcloud",
+            "kms",
+            "keys",
+            "describe",
             self.key_name,
             f"--keyring={self.keyring_name}",
             f"--location={self.location}",
@@ -84,7 +97,11 @@ class CloudKMS:
 
     def describe_enabled_key_version(self) -> bool:
         command = [
-            "gcloud", "kms", "keys", "versions", "list",
+            "gcloud",
+            "kms",
+            "keys",
+            "versions",
+            "list",
             f"--key={self.key_name}",
             f"--keyring={self.keyring_name}",
             f"--location={self.location}",
@@ -102,7 +119,10 @@ class CloudKMS:
     def enable_primary_key_version(self):
         """Restore and enable the primary key version."""
         describe_cmd = [
-            "gcloud", "kms", "keys", "describe",
+            "gcloud",
+            "kms",
+            "keys",
+            "describe",
             self.key_name,
             f"--keyring={self.keyring_name}",
             f"--location={self.location}",
@@ -117,9 +137,7 @@ class CloudKMS:
 
         primary = key_info.get("primary")
         if not primary:
-            raise RuntimeError(
-                f"No primary version found for key ({self.key_name})."
-            )
+            raise RuntimeError(f"No primary version found for key ({self.key_name}).")
 
         version_num = primary["name"].split("/")[-1]
         state = primary.get("state", "")
@@ -140,7 +158,11 @@ class CloudKMS:
 
         if state == "DESTROY_SCHEDULED":
             restore_cmd = [
-                "gcloud", "kms", "keys", "versions", "restore",
+                "gcloud",
+                "kms",
+                "keys",
+                "versions",
+                "restore",
                 version_num,
                 f"--key={self.key_name}",
                 f"--keyring={self.keyring_name}",
@@ -148,10 +170,16 @@ class CloudKMS:
                 f"--project={self.project_id}",
             ]
             run_sh(restore_cmd, check=True)
-            logger.info(f"KMS primary key version {version_num} restored from DESTROY_SCHEDULED to DISABLED.")
+            logger.info(
+                f"KMS primary key version {version_num} restored from DESTROY_SCHEDULED to DISABLED."
+            )
 
         enable_cmd = [
-            "gcloud", "kms", "keys", "versions", "enable",
+            "gcloud",
+            "kms",
+            "keys",
+            "versions",
+            "enable",
             version_num,
             f"--key={self.key_name}",
             f"--keyring={self.keyring_name}",
@@ -167,7 +195,11 @@ class CloudKMS:
 
     def delete(self):
         list_cmd = [
-            "gcloud", "kms", "keys", "versions", "list",
+            "gcloud",
+            "kms",
+            "keys",
+            "versions",
+            "list",
             f"--key={self.key_name}",
             f"--keyring={self.keyring_name}",
             f"--location={self.location}",
@@ -186,7 +218,11 @@ class CloudKMS:
             version_num = v.get("name", "").split("/")[-1]
             if state in ("ENABLED", "DISABLED") and version_num:
                 destroy_cmd = [
-                    "gcloud", "kms", "keys", "versions", "destroy",
+                    "gcloud",
+                    "kms",
+                    "keys",
+                    "versions",
+                    "destroy",
                     version_num,
                     f"--key={self.key_name}",
                     f"--keyring={self.keyring_name}",
@@ -195,7 +231,9 @@ class CloudKMS:
                 ]
                 event = run_sh(destroy_cmd)
                 if "ERROR" in event:
-                    logger.error(f"Failed to destroy key version {version_num}: {event}")
+                    logger.error(
+                        f"Failed to destroy key version {version_num}: {event}"
+                    )
                 else:
                     destroyed += 1
 
@@ -206,7 +244,10 @@ class CloudKMS:
 
     def add_permissions(self, sa_email: str):
         command = [
-            "gcloud", "kms", "keys", "add-iam-policy-binding",
+            "gcloud",
+            "kms",
+            "keys",
+            "add-iam-policy-binding",
             self.key_name,
             f"--keyring={self.keyring_name}",
             f"--location={self.location}",
@@ -215,19 +256,19 @@ class CloudKMS:
             f"--project={self.project_id}",
         ]
         run_sh(command, check=True)
-        logger.info("✅ Successfully granted: roles/cloudkms.cryptoKeyEncrypterDecrypter")
+        logger.info(
+            "✅ Successfully granted: roles/cloudkms.cryptoKeyEncrypterDecrypter"
+        )
 
     # ------------------------------------------------------------------ #
     #  Encrypt / Decrypt generic files                                     #
     # ------------------------------------------------------------------ #
 
-    def encrypt(
-        self, 
-        plaintext_file: str | Path, 
-        ciphertext_file: str | Path
-    ):
+    def encrypt(self, plaintext_file: str | Path, ciphertext_file: str | Path):
         command = [
-            "gcloud", "kms", "encrypt",
+            "gcloud",
+            "kms",
+            "encrypt",
             f"--key={self.key_name}",
             f"--keyring={self.keyring_name}",
             f"--location={self.location}",
@@ -237,13 +278,11 @@ class CloudKMS:
         ]
         run_sh(command, check=True)
 
-    def decrypt(
-        self, 
-        ciphertext_file: str | Path, 
-        plaintext_file: str | Path
-    ):
+    def decrypt(self, ciphertext_file: str | Path, plaintext_file: str | Path):
         command = [
-            "gcloud", "kms", "decrypt",
+            "gcloud",
+            "kms",
+            "decrypt",
             f"--key={self.key_name}",
             f"--keyring={self.keyring_name}",
             f"--location={self.location}",
@@ -288,4 +327,3 @@ class CloudKMS:
             raise FileNotFoundError(f"Encrypted env file not found: {input_path}")
         self.decrypt(ciphertext_file=input_path, plaintext_file=output_path)
         logger.info(f"Decrypted: {input_path} -> {output_path}")
-

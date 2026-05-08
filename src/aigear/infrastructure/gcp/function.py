@@ -7,6 +7,7 @@ from aigear.common.logger import Logging
 
 logger = Logging(log_name=__name__).console_logging()
 
+
 class CloudFunction:
     def __init__(
         self,
@@ -15,7 +16,7 @@ class CloudFunction:
         entry_point,
         topic_name,
         project_id,
-        service_account
+        service_account,
     ):
         self.function_name = function_name
         self.region = region
@@ -33,11 +34,12 @@ class CloudFunction:
         function_file_dst = destination_path / "index.js"
         if not function_file_dst.exists():
             content = Path(function_path_src).read_text(encoding="utf-8")
-            content = content.replace(
-                "{{PROJECTID}}", self.project_id
-            ).replace("{{REGION}}", self.region
-            ).replace("{{TOPICSNAME}}", self.topic_name
-            ).replace("{{VENVBASEDIR}}", VENV_BASE_DIR)
+            content = (
+                content.replace("{{PROJECTID}}", self.project_id)
+                .replace("{{REGION}}", self.region)
+                .replace("{{TOPICSNAME}}", self.topic_name)
+                .replace("{{VENVBASEDIR}}", VENV_BASE_DIR)
+            )
             function_file_dst.write_text(content, encoding="utf-8")
 
         package_file_src = source_path / "package.json"
@@ -50,7 +52,9 @@ class CloudFunction:
     def deploy(self):
         source_path = self._function_path()
         command = [
-            "gcloud", "functions", "deploy",
+            "gcloud",
+            "functions",
+            "deploy",
             self.function_name,
             "--gen2",
             "--runtime=nodejs24",
@@ -64,10 +68,14 @@ class CloudFunction:
             "--no-allow-unauthenticated",
         ]
         run_sh(command, timeout=600, check=True)
-    
+
     def add_permissions_to_cloud_function(self, sa_email):
         command = [
-            "gcloud", "run", "services", "add-iam-policy-binding", self.function_name,
+            "gcloud",
+            "run",
+            "services",
+            "add-iam-policy-binding",
+            self.function_name,
             f"--region={self.region}",
             f"--member=serviceAccount:{sa_email}",
             "--role=roles/run.invoker",
@@ -78,7 +86,10 @@ class CloudFunction:
     def describe(self):
         is_exist = False
         command = [
-            "gcloud", "run", "services", "describe",
+            "gcloud",
+            "run",
+            "services",
+            "describe",
             self.function_name,
             f"--region={self.region}",
             f"--project={self.project_id}",
@@ -87,12 +98,17 @@ class CloudFunction:
         if f"Service {self.function_name} in region {self.region}" in event:
             is_exist = True
         elif "ERROR" in event and "Cannot find service" not in event:
-            logger.error(f"Unexpected error describing cloud function ({self.function_name}): {event}")
+            logger.error(
+                f"Unexpected error describing cloud function ({self.function_name}): {event}"
+            )
         return is_exist
 
     def list(self):
         command = [
-            "gcloud", "run", "services", "list",
+            "gcloud",
+            "run",
+            "services",
+            "list",
             f"--region={self.region}",
             f"--filter={self.function_name}",
             f"--project={self.project_id}",
@@ -102,7 +118,10 @@ class CloudFunction:
 
     def delete(self):
         command = [
-            "gcloud", "run", "services", "delete",
+            "gcloud",
+            "run",
+            "services",
+            "delete",
             self.function_name,
             f"--region={self.region}",
             f"--project={self.project_id}",
@@ -111,6 +130,10 @@ class CloudFunction:
         ]
         event = run_sh(command)
         if "ERROR" in event:
-            logger.error(f"Failed to delete cloud function ({self.function_name}): {event}")
+            logger.error(
+                f"Failed to delete cloud function ({self.function_name}): {event}"
+            )
         else:
-            logger.info(f"Cloud Function '{self.function_name}' deletion initiated (async).")
+            logger.info(
+                f"Cloud Function '{self.function_name}' deletion initiated (async)."
+            )

@@ -4,7 +4,7 @@ import subprocess
 import sys
 
 # Windows cmd.exe tmpfile redirect artifacts (e.g. D:\...\tmpfile)
-_WIN_TMPFILE_RE = re.compile(r'^[A-Za-z]:[/\\].*tmpfile\s*$')
+_WIN_TMPFILE_RE = re.compile(r"^[A-Za-z]:[/\\].*tmpfile\s*$")
 
 
 def _clean_output(text: str) -> str:
@@ -13,14 +13,14 @@ def _clean_output(text: str) -> str:
         return text
     result = []
     for line in text.splitlines(keepends=True):
-        stripped = line.rstrip('\r\n')
+        stripped = line.rstrip("\r\n")
         if _WIN_TMPFILE_RE.match(stripped):
             continue
         # GBK error messages decoded as UTF-8 produce mostly replacement chars
-        if stripped and stripped.count('\ufffd') > len(stripped) * 0.3:
+        if stripped and stripped.count("\ufffd") > len(stripped) * 0.3:
             continue
         result.append(line)
-    return ''.join(result)
+    return "".join(result)
 
 
 def run_sh(
@@ -29,7 +29,7 @@ def run_sh(
     timeout: int = 30,
     check: bool = False,
 ):
-    use_shell = (platform.system() == "Windows")
+    use_shell = platform.system() == "Windows"
     try:
         input_bytes = inputs.encode("utf-8") if inputs else None
         result = subprocess.run(
@@ -52,7 +52,7 @@ def run_sh(
 
 
 def run_sh_stream(command: list, inputs: str | None = None) -> int:
-    use_shell = (platform.system() == "Windows")
+    use_shell = platform.system() == "Windows"
     proc = subprocess.Popen(
         command,
         shell=use_shell,

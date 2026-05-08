@@ -20,6 +20,7 @@ ENV_PATH = Path(_env_override) if _env_override else Path.cwd() / "env.json"
 
 # ─── Raw config loader ───────────────────────────────────────────────────────
 
+
 def _load_raw(env_path: Path = ENV_PATH) -> dict:
     """
     Load and return the raw env.json as a dict.
@@ -32,6 +33,7 @@ def _load_raw(env_path: Path = ENV_PATH) -> dict:
 
 
 # ─── Unified config ──────────────────────────────────────────────────────────
+
 
 class AppConfig:
     """
@@ -140,6 +142,7 @@ class AppConfig:
 # These allow existing code that imports AigearConfig / PipelinesConfig / EnvConfig
 # to keep working without modification.
 
+
 class AigearConfig:
     @classmethod
     def get_config(cls) -> Config:
@@ -176,6 +179,7 @@ class EnvConfig:
 
 
 # ─── Module-level helpers (backwards compatible) ─────────────────────────────
+
 
 def get_project_name() -> str | None:
     return AppConfig.project_name()

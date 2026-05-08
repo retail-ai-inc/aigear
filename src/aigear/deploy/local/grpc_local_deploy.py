@@ -2,7 +2,11 @@ from pathlib import Path
 
 from aigear.common import run_sh
 from aigear.common.logger import Logging
-from aigear.deploy.common.kubectl_command import kubectl_apply, kubectl_delete, kubectl_status
+from aigear.deploy.common.kubectl_command import (
+    kubectl_apply,
+    kubectl_delete,
+    kubectl_status,
+)
 
 logger = Logging(log_name=__name__).console_logging()
 
