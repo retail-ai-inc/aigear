@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Type, TypeVar
 
@@ -13,7 +14,8 @@ from aigear.common.schema.config_schema import Config
 T = TypeVar("T", bound=BaseModel)
 logger = Logging(log_name=__name__).console_logging()
 
-ENV_PATH = Path.cwd() / "env.json"
+_env_override = os.environ.get("AIGEAR_ENV_PATH")
+ENV_PATH = Path(_env_override) if _env_override else Path.cwd() / "env.json"
 
 
 # ─── Raw config loader ───────────────────────────────────────────────────────

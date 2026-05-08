@@ -41,9 +41,7 @@ class ServiceAccounts:
             "--quiet",
         ]
         event = run_sh(command)
-        if event == "":
-            logger.info("The currently logged in GCP account does not have owner privileges.")
-        else:
+        if event.strip():
             logger.info(event)
 
     def _wait_for_sa_ready(self, retries: int = 10, interval: int = 6):
