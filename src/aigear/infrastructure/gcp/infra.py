@@ -652,6 +652,99 @@ class Infra:
         )
 
     # ================================================================
+    # Public API: update
+    # ================================================================
+    def update(self):
+        self._preflight_check()
+
+        logger.info("===================================================")
+        logger.info("             Aigear GCP Infra Updating             ")
+        logger.info("===================================================")
+
+        failed_steps = []
+        cfg = self.aigear_config.gcp
+
+        # ── Phase 1: Service Account ───────────────────────────────────
+        self._step_no_update(f"Service Account ({cfg.iam.account_name})")
+
+        # ── Phase 2: Independent resources (parallel) ──────────────────
+        phase2_tasks = {}
+
+        # Resources that support update
+        if cfg.cloud_build.on:
+            phase2_tasks[f"Cloud Build Trigger ({cfg.cloud_build.trigger_name})"] = (
+                self._update_cloud_build
+            )
+        else:
+            self._step_skip(f"Cloud Build Trigger ({cfg.cloud_build.trigger_name})")
+
+        if cfg.kubernetes.on:
+            phase2_tasks[f"Kubernetes Cluster ({cfg.kubernetes.cluster_name})"] = (
+                self._update_kubernetes
+            )
+        else:
+            self._step_skip(f"Kubernetes Cluster ({cfg.kubernetes.cluster_name})")
+
+        # Resources that do not support update
+        if cfg.bucket.on:
+            self._step_no_update(f"Model Bucket ({cfg.bucket.bucket_name})")
+            self._step_no_update(
+                f"Release Model Bucket ({cfg.bucket.bucket_name_for_release})"
+            )
+        else:
+            self._step_skip(f"Model Bucket ({cfg.bucket.bucket_name})")
+            self._step_skip(
+                f"Release Model Bucket ({cfg.bucket.bucket_name_for_release})"
+            )
+
+        if cfg.artifacts.on:
+            self._step_no_update(
+                f"Artifact Registry ({cfg.artifacts.repository_name})"
+            )
+        else:
+            self._step_skip(f"Artifact Registry ({cfg.artifacts.repository_name})")
+
+        if cfg.pub_sub.on:
+            self._step_no_update(f"Pub/Sub Topic ({cfg.pub_sub.topic_name})")
+        else:
+            self._step_skip(f"Pub/Sub Topic ({cfg.pub_sub.topic_name})")
+
+        if cfg.kms.on:
+            self._step_no_update(
+                f"Cloud KMS ({cfg.kms.keyring_name}/{cfg.kms.key_name})"
+            )
+        else:
+            self._step_skip(
+                f"Cloud KMS ({cfg.kms.keyring_name}/{cfg.kms.key_name})"
+            )
+
+        if cfg.pre_vm_image.on:
+            self._step_no_update("Pre-VM Image (pre_vm_image)")
+        else:
+            self._step_skip("Pre-VM Image (pre_vm_image)")
+
+        if phase2_tasks:
+            with ThreadPoolExecutor(max_workers=len(phase2_tasks)) as executor:
+                futures = {
+                    executor.submit(self._step, title, fn): title
+                    for title, fn in phase2_tasks.items()
+                }
+                for future in as_completed(futures):
+                    title = futures[future]
+                    if not future.result():
+                        failed_steps.append(title)
+
+        # ── Phase 3: Cloud Function ────────────────────────────────────
+        if cfg.cloud_function.on:
+            self._step_no_update(
+                f"Cloud Function ({cfg.cloud_function.function_name})"
+            )
+        else:
+            self._step_skip(f"Cloud Function ({cfg.cloud_function.function_name})")
+
+        self._log_summary(failed_steps, "Update")
+
+    # ================================================================
     # Public API: delete
     # ================================================================
     def delete(self):
