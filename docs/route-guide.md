@@ -338,7 +338,7 @@ All CLI commands read `env.json` from the current working directory.
 | Command | Arguments | Description |
 | :--- | :--- | :--- |
 | `aigear-init` | `--name`, `--pipeline_versions` | Scaffold a new project |
-| `aigear-gcp-infra` | `--create`, `--delete`, `--status` | Provision, tear down, or query all GCP infrastructure defined in `env.json` |
+| `aigear-gcp-infra` | `--create`, `--update`, `--delete`, `--status` | Provision, update, tear down, or query all GCP infrastructure defined in `env.json` |
 | `aigear-env-schema` | `--generate`, `--force` | Auto-generate a Pydantic schema from `env.json` |
 | `aigear-kms-env` | `--encrypt`, `--decrypt`, `--environment`, `--input`, `--output`, `--project-id`, `--location`, `--keyring`, `--key` | Encrypt or decrypt `env.json` using Cloud KMS |
 | `aigear-image` | `--create`, `--push`, `--dockerfile_path`, `--build_context`, `--is_service` | Build and/or push Docker images to Artifact Registry |

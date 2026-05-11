@@ -37,12 +37,13 @@ aigear-init [--name NAME] [--pipeline_versions VERSIONS]
 Read `env.json` and manage all defined GCP resources (buckets, Pub/Sub topics, Cloud Function, Artifact Registry, KMS, Cloud Build trigger, GKE cluster, service accounts, etc.).
 
 ```
-aigear-gcp-infra {--create | --delete | --status}
+aigear-gcp-infra {--create | --update | --delete | --status}
 ```
 
 | Argument | Description |
 |---|---|
 | `--create` | Initialize GCP infrastructure resources. |
+| `--update` | Update resources that support update: Cloud Build trigger (config) and Kubernetes cluster (node count, autoscaling). Resources that do not support update are skipped with a log message. |
 | `--delete` | Delete GCP infrastructure resources. Note: Artifact Registry, Cloud KMS, and Pre-VM Images require manual deletion. |
 | `--status` | Query and display the live state of all GCP infrastructure resources. |
 
@@ -57,8 +58,6 @@ Resource creation runs in three ordered phases:
 - Each step is idempotent — existing resources are detected and skipped.
 - If the GCP default subnet is not yet ready (common in new projects), Pre-VM Image creation retries automatically up to 5 times with a 30-second wait between attempts.
 - Requires owner-level GCP permissions. Recommended to run from Cloud Shell.
-
-> Future commands: `--update`
 
 ---
 
