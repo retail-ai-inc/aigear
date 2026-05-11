@@ -65,6 +65,9 @@ mongodb = [
     "pymongo>=4.0.0",
     "pymongoarrow>=0.7.0",
 ]
+dev = [
+    "pytest>=7.0",
+]
 
 [project.scripts]
 aigear-init = "aigear.cli.project_cli:project_init"
