@@ -32,3 +32,4 @@ def test_create_flag_does_not_call_update():
 
             mock_infra.create.assert_called_once()
             mock_infra.update.assert_not_called()
+            mock_infra.delete.assert_not_called()
