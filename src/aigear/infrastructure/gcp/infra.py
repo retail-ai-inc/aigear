@@ -222,6 +222,11 @@ class Infra:
         logger.info(f"⚠️ {title} SKIPPED (disabled in configuration)")
         logger.info("---------------------------------------------------")
 
+    def _step_no_update(self, title):
+        logger.info(f"[{title}]")
+        logger.info(f"⚠️ {title} SKIPPED (update not supported)")
+        logger.info("---------------------------------------------------")
+
     def _step_fail(self, title, reason):
         logger.info(f"[{title}]")
         logger.error(f"❌ {title} FAILED ({reason})")
