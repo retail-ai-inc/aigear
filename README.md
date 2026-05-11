@@ -186,12 +186,11 @@ See the full [CLI Reference](docs/cli-reference.md) for all commands and argumen
 | Command | Description |
 |---|---|
 | `aigear-init` | Initialize a new project scaffold |
-| `aigear-gcp-infra` | Create GCP infrastructure (buckets, IAM, Pub/Sub, schedulers) |
+| `aigear-gcp-infra` | Provision or tear down GCP infrastructure (buckets, IAM, Pub/Sub, Cloud Build, etc.) |
 | `aigear-task` | Run a pipeline step (`workflow`) or start a gRPC model server (`grpc`) |
 | `aigear-scheduler` | Manage Cloud Scheduler jobs (create / update / delete / run / pause / resume) |
 | `aigear-image` | Build and/or push Docker images to Artifact Registry |
-| `aigear-model-yaml` | Generate Kubernetes deployment YAML files for model services |
-| `aigear-deploy-model` | Deploy or delete a gRPC model service (local Kubernetes or GCP) |
+| `aigear-model` | Generate YAML and manage the full lifecycle of a gRPC model service (deploy, update, delete, status) |
 | `aigear-env-schema` | Auto-generate a Pydantic schema from `env.json` |
 | `aigear-kms-env` | Encrypt or decrypt `env.json` using Cloud KMS |
 
@@ -205,9 +204,8 @@ See the full [CLI Reference](docs/cli-reference.md) for all commands and argumen
 - **Compute:** Ephemeral VMs(self-terminating after each job)
 
 **Known limitations:**
-- Some commands only support creation — update and delete operations are not yet available for all resources
+- Some commands only support creation — update operations are not yet available for all resources
 - Resource management is incomplete — version tracking and lifecycle management are missing
-- No Cloud Build support yet
 - Pipeline orchestration is step-based only — no DAG/dependency analysis yet
 
 **Planned:**
