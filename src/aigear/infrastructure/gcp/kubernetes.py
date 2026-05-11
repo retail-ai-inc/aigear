@@ -86,7 +86,7 @@ class KubernetesCluster:
             f"--project={self.project_id}",
             "--quiet",
         ]
-        run_sh(command_autoscaling, check=True)
+        run_sh(command_autoscaling, check=True, timeout=600)
 
         command_resize = [
             "gcloud", "container", "clusters", "resize",

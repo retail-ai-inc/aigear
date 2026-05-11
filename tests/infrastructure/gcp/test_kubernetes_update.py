@@ -21,10 +21,11 @@ def test_update_calls_autoscaling_command(mock_run_sh):
             "--max-nodes=5",
             "--region=asia-northeast1",
             "--node-pool=default-pool",
-            f"--project=my-project",
+            "--project=my-project",
             "--quiet",
         ],
         check=True,
+        timeout=600,
     )
     assert autoscaling_call in mock_run_sh.call_args_list
 
@@ -68,6 +69,6 @@ def test_update_calls_autoscaling_before_resize(mock_run_sh):
     cluster.update()
     assert mock_run_sh.call_count == 2
     first_cmd = mock_run_sh.call_args_list[0][0][0]
-    assert "update" in first_cmd
+    assert first_cmd[3] == "update"
     second_cmd = mock_run_sh.call_args_list[1][0][0]
-    assert "resize" in second_cmd
+    assert second_cmd[3] == "resize"
