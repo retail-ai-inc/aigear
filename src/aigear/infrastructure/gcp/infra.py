@@ -699,9 +699,7 @@ class Infra:
             )
 
         if cfg.artifacts.on:
-            self._step_no_update(
-                f"Artifact Registry ({cfg.artifacts.repository_name})"
-            )
+            self._step_no_update(f"Artifact Registry ({cfg.artifacts.repository_name})")
         else:
             self._step_skip(f"Artifact Registry ({cfg.artifacts.repository_name})")
 
@@ -715,9 +713,7 @@ class Infra:
                 f"Cloud KMS ({cfg.kms.keyring_name}/{cfg.kms.key_name})"
             )
         else:
-            self._step_skip(
-                f"Cloud KMS ({cfg.kms.keyring_name}/{cfg.kms.key_name})"
-            )
+            self._step_skip(f"Cloud KMS ({cfg.kms.keyring_name}/{cfg.kms.key_name})")
 
         if cfg.pre_vm_image.on:
             self._step_no_update("Pre-VM Image (pre_vm_image)")
@@ -737,9 +733,7 @@ class Infra:
 
         # ── Phase 3: Cloud Function ────────────────────────────────────
         if cfg.cloud_function.on:
-            self._step_no_update(
-                f"Cloud Function ({cfg.cloud_function.function_name})"
-            )
+            self._step_no_update(f"Cloud Function ({cfg.cloud_function.function_name})")
         else:
             self._step_skip(f"Cloud Function ({cfg.cloud_function.function_name})")
 

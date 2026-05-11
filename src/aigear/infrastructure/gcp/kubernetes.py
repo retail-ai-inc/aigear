@@ -76,7 +76,10 @@ class KubernetesCluster:
 
     def update(self):
         command_autoscaling = [
-            "gcloud", "container", "clusters", "update",
+            "gcloud",
+            "container",
+            "clusters",
+            "update",
             self.cluster_name,
             "--enable-autoscaling",
             f"--min-nodes={self.min_nodes}",
@@ -89,7 +92,10 @@ class KubernetesCluster:
         run_sh(command_autoscaling, check=True, timeout=600)
 
         command_resize = [
-            "gcloud", "container", "clusters", "resize",
+            "gcloud",
+            "container",
+            "clusters",
+            "resize",
             self.cluster_name,
             f"--num-nodes={self.num_nodes}",
             f"--region={self.zone}",
