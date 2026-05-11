@@ -537,6 +537,22 @@ class Infra:
                 f"({self.location}). Skipping creation."
             )
 
+    def _update_cloud_build(self):
+        exists = self.cloud_build.describe()
+        if not exists:
+            logger.warning(
+                f"Cloud Build trigger ({self.aigear_config.gcp.cloud_build.trigger_name}) not found in region "
+                f"({self.location}). Skipping update — run --create first."
+            )
+            return
+        logger.info(
+            f"Updating Cloud Build trigger ({self.aigear_config.gcp.cloud_build.trigger_name})..."
+        )
+        self.cloud_build.update()
+        logger.info(
+            f"Cloud Build trigger ({self.aigear_config.gcp.cloud_build.trigger_name}) updated successfully."
+        )
+
     def _ensure_cloud_function(self):
         exists = self.cloud_function.describe()
         if not exists:
@@ -618,6 +634,22 @@ class Infra:
                 f"Kubernetes Cluster ({self.aigear_config.gcp.kubernetes.cluster_name}) already exists in region "
                 f"({self.location})."
             )
+
+    def _update_kubernetes(self):
+        exists = self.kubernetes_cluster.describe()
+        if not exists:
+            logger.warning(
+                f"Kubernetes Cluster ({self.aigear_config.gcp.kubernetes.cluster_name}) not found in region "
+                f"({self.location}). Skipping update — run --create first."
+            )
+            return
+        logger.info(
+            f"Updating Kubernetes Cluster ({self.aigear_config.gcp.kubernetes.cluster_name})..."
+        )
+        self.kubernetes_cluster.update()
+        logger.info(
+            f"Kubernetes Cluster ({self.aigear_config.gcp.kubernetes.cluster_name}) updated successfully."
+        )
 
     # ================================================================
     # Public API: delete
