@@ -540,11 +540,10 @@ class Infra:
     def _update_cloud_build(self):
         exists = self.cloud_build.describe()
         if not exists:
-            logger.warning(
-                f"Cloud Build trigger ({self.aigear_config.gcp.cloud_build.trigger_name}) not found in region "
-                f"({self.location}). Skipping update — run --create first."
+            raise RuntimeError(
+                f"Cloud Build trigger ({self.aigear_config.gcp.cloud_build.trigger_name}) not found "
+                f"in region ({self.location}). Run --create first."
             )
-            return
         logger.info(
             f"Updating Cloud Build trigger ({self.aigear_config.gcp.cloud_build.trigger_name})..."
         )
@@ -638,11 +637,10 @@ class Infra:
     def _update_kubernetes(self):
         exists = self.kubernetes_cluster.describe()
         if not exists:
-            logger.warning(
-                f"Kubernetes Cluster ({self.aigear_config.gcp.kubernetes.cluster_name}) not found in region "
-                f"({self.location}). Skipping update — run --create first."
+            raise RuntimeError(
+                f"Kubernetes Cluster ({self.aigear_config.gcp.kubernetes.cluster_name}) not found "
+                f"in region ({self.location}). Run --create first."
             )
-            return
         logger.info(
             f"Updating Kubernetes Cluster ({self.aigear_config.gcp.kubernetes.cluster_name})..."
         )
@@ -665,7 +663,10 @@ class Infra:
         cfg = self.aigear_config.gcp
 
         # ── Phase 1: Service Account ───────────────────────────────────
-        self._step_no_update(f"Service Account ({cfg.iam.account_name})")
+        if cfg.iam.on:
+            self._step_no_update(f"Service Account ({cfg.iam.account_name})")
+        else:
+            self._step_skip(f"Service Account ({cfg.iam.account_name})")
 
         # ── Phase 2: Independent resources (parallel) ──────────────────
         phase2_tasks = {}

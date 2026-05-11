@@ -1,3 +1,4 @@
+import pytest
 from unittest.mock import MagicMock
 
 from aigear.infrastructure.gcp.infra import Infra
@@ -29,11 +30,12 @@ def test_update_cloud_build_calls_update_when_exists():
     infra.cloud_build.update.assert_called_once()
 
 
-def test_update_cloud_build_skips_when_not_exists():
+def test_update_cloud_build_raises_when_not_exists():
     infra = _make_infra()
     infra.cloud_build.describe.return_value = False
 
-    infra._update_cloud_build()
+    with pytest.raises(RuntimeError, match="Run --create first"):
+        infra._update_cloud_build()
 
     infra.cloud_build.update.assert_not_called()
 
@@ -47,10 +49,11 @@ def test_update_kubernetes_calls_update_when_exists():
     infra.kubernetes_cluster.update.assert_called_once()
 
 
-def test_update_kubernetes_skips_when_not_exists():
+def test_update_kubernetes_raises_when_not_exists():
     infra = _make_infra()
     infra.kubernetes_cluster.describe.return_value = False
 
-    infra._update_kubernetes()
+    with pytest.raises(RuntimeError, match="Run --create first"):
+        infra._update_kubernetes()
 
     infra.kubernetes_cluster.update.assert_not_called()
