@@ -341,7 +341,7 @@ All CLI commands read `env.json` from the current working directory.
 | `aigear-gcp-infra` | `--create`, `--update`, `--delete`, `--status` | Provision, update, tear down, or query all GCP infrastructure defined in `env.json` |
 | `aigear-env-schema` | `--generate`, `--force` | Auto-generate a Pydantic schema from `env.json` |
 | `aigear-kms-env` | `--encrypt`, `--decrypt`, `--environment`, `--input`, `--output`, `--project-id`, `--location`, `--keyring`, `--key` | Encrypt or decrypt `env.json` using Cloud KMS |
-| `aigear-image` | `--create`, `--push`, `--dockerfile_path`, `--build_context`, `--is_service` | Build and/or push Docker images to Artifact Registry |
+| `aigear-image` | `--create`, `--delete`, `--retag`, `--push`, `--all`, `--dockerfile_path`, `--build_context`, `--is_service`, `--src_tag`, `--target_tag` | Build, delete, or re-tag Docker images; optionally sync to Artifact Registry |
 | `aigear-scheduler` | `--create`, `--update`, `--delete`, `--status`, `--list`, `--run`, `--pause`, `--resume`, `--version`, `--step_names` | Manage Cloud Scheduler jobs for pipeline steps |
 | `aigear-task workflow` | `--version`, `--step` | Run a single pipeline step locally (step name looked up from `env.json`) |
 | `aigear-task grpc` | `--version` | Start a gRPC model serving server (model class path read from `env.json`) |

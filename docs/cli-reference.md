@@ -144,26 +144,58 @@ aigear-scheduler --resume --version logistic_regression
 
 ### `aigear-image`
 
-Build Docker images for the pipeline (`Dockerfile.pl`) and/or model service (`Dockerfile.ms`), and optionally push to Artifact Registry.
+Manage the full lifecycle of Docker images for the pipeline (`Dockerfile.pl`) and model service (`Dockerfile.ms`): build, delete, or re-tag locally and optionally sync to Artifact Registry.
 
 ```
-aigear-image [--create]
+aigear-image {--create | --delete | --retag}
+             [--push]
              [--dockerfile_path PATH] [--build_context DIR]
-             [--image_name NAME] [--image_version TAG]
-             [--is_service] [--force] [--push]
+             [--is_service] [--all]
+             [--src_tag TAG] [--target_tag TAG]
 ```
 
-At least one of `--create` or `--push` is required. They can be combined to build then push in a single command.
+One action (`--create`, `--delete`, `--retag`) is required. `--push` syncs the operation to Artifact Registry after the local step succeeds.
+
+**Actions (mutually exclusive)**
+
+| Argument | Description |
+|---|---|
+| `--create` | Build the Docker image locally |
+| `--delete` | Remove the Docker image locally |
+| `--retag` | Tag an existing local image with a new tag (requires `--src_tag` and `--target_tag`) |
+
+**Scope modifiers**
 
 | Argument | Default | Description |
 |---|---|---|
-| `--create` | — | Build the Docker image(s) |
-| `--push` | — | Push the Docker image(s) to Artifact Registry. Can be used alone (push-only) or together with `--create` (build then push). |
-| `--dockerfile_path` | `None` | Path to a specific Dockerfile. If omitted, operates on both `Dockerfile.pl` and `Dockerfile.ms` |
-| `--build_context` | `.` | Docker build context directory |
-| `--is_service` | `false` | Mark image as a model service image (auto-set when building `Dockerfile.ms`) |
+| `--all` | `false` | Operate on both `Dockerfile.pl` (pipeline) and `Dockerfile.ms` (service) in one command |
+| `--dockerfile_path` | `None` | Path to a specific Dockerfile. `Dockerfile.ms` automatically implies `--is_service`; `Dockerfile.pl` implies pipeline |
+| `--is_service` | `false` | Target the model service image. Ignored when `--dockerfile_path` is `Dockerfile.pl` or `Dockerfile.ms` (inferred automatically) |
+| `--build_context` | `.` | Docker build context directory (used with `--create`) |
 
-> Future commands: `--delete`, `--update`
+**Remote sync**
+
+| Argument | Description |
+|---|---|
+| `--push` | After the local operation succeeds, sync to Artifact Registry (push image, delete remote tag, or add remote tag) |
+
+**Re-tag arguments**
+
+| Argument | Description |
+|---|---|
+| `--src_tag` | Source tag (required with `--retag`) |
+| `--target_tag` | Destination tag (required with `--retag`) |
+
+**Scope resolution (without `--all`)**
+
+| `--dockerfile_path` | `--is_service` | Target |
+|---|---|---|
+| `Dockerfile.ms` | any | service image |
+| `Dockerfile.pl` | any | pipeline image |
+| custom path | `false` (default) | pipeline image |
+| custom path | `true` | service image |
+| omitted | `false` (default) | pipeline image |
+| omitted | `true` | service image |
 
 ---
 

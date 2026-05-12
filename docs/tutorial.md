@@ -494,8 +494,8 @@ scikit_learn==1.8.0
 Build both images:
 
 ```bash
-# Build locally (no push)
-aigear-image --create
+# Build both images locally (no push)
+aigear-image --create --all
 ```
 
 > **Local build:** Make sure `gcs_switch = False` in `src/pipelines/common/constant.py`. When running locally, files are stored under `asset/` instead of GCS.
@@ -643,7 +643,7 @@ src/pipelines/logistic_regression/model_service/
 Once the pipeline has been validated locally and the YAML files have been generated (Step 9), push the images to GCP Artifact Registry:
 
 ```bash
-aigear-image --create --push
+aigear-image --create --push --all
 ```
 
 > **Before pushing to GCP:** Make sure `gcs_switch = True` in `src/pipelines/common/constant.py`. Pipeline steps running on GCP need to read and write files via GCS.
@@ -682,7 +682,7 @@ aigear-gcp-infra --create
 
 # ── Step 6: Build Docker images locally ───────────────────────────────────────
 # Requires: gcs_switch = False in src/pipelines/common/constant.py
-aigear-image --create
+aigear-image --create --all
 
 # ── Step 7: Run pipeline and model service locally (Docker Compose) ───────────
 # Option A (default): build fresh image from Dockerfile on every run
@@ -715,7 +715,7 @@ aigear-model --version logistic_regression --production --yaml
 
 # ── Step 10: Push images to Artifact Registry (YAML baked in) ─────────────────
 # Requires: gcs_switch = True in src/pipelines/common/constant.py
-aigear-image --create --push
+aigear-image --create --push --all
 
 # ── Step 11: Schedule recurring pipeline runs on GCP ──────────────────────────
 aigear-scheduler --create \
