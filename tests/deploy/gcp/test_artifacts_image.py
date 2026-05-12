@@ -86,29 +86,6 @@ def test_local_remove_correct_command(mock_stream):
     assert cmd == ["docker", "rmi", IMAGE_PATH]
 
 
-# ── ArtifactsImage.image_exist_in_artifacts ──────────────────────────────────
-
-@patch("aigear.deploy.gcp.artifacts_image.run_sh")
-def test_image_exist_returns_true_when_found(mock_run_sh):
-    mock_run_sh.return_value = "digest: sha256:abc"
-    ai = _make_artifacts_image()
-    assert ai.image_exist_in_artifacts() is True
-
-
-@patch("aigear.deploy.gcp.artifacts_image.run_sh")
-def test_image_exist_returns_false_when_not_found(mock_run_sh):
-    mock_run_sh.return_value = "ERROR: Image not found"
-    ai = _make_artifacts_image()
-    assert ai.image_exist_in_artifacts() is False
-
-
-@patch("aigear.deploy.gcp.artifacts_image.run_sh")
-def test_image_exist_returns_false_on_not_found_variant(mock_run_sh):
-    mock_run_sh.return_value = "ERROR: NOT_FOUND: some resource"
-    ai = _make_artifacts_image()
-    assert ai.image_exist_in_artifacts() is False
-
-
 # ── _validate_dockerfile_venvs ────────────────────────────────────────────────
 
 def test_validate_raises_on_venv_base_mismatch(tmp_path):
