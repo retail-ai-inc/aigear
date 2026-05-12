@@ -274,6 +274,16 @@ def test_registry_exists_false_on_not_found_variant(mock_run_sh):
     assert _make_registry().exists() is False
 
 
+@patch("aigear.deploy.gcp.artifacts_image.run_sh")
+def test_registry_exists_correct_command(mock_run_sh):
+    mock_run_sh.return_value = "digest: sha256:abc"
+    _make_registry().exists()
+    cmd = mock_run_sh.call_args[0][0]
+    assert cmd == [
+        "gcloud", "artifacts", "docker", "images", "describe", IMAGE_PATH
+    ]
+
+
 # ── RegistryImage.delete ──────────────────────────────────────────────────────
 
 @patch("aigear.deploy.gcp.artifacts_image.run_sh")
