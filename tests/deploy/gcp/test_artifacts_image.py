@@ -371,10 +371,10 @@ def test_registry_prune_keep_1_deletes_two(mock_run_sh):
 
 @patch("aigear.deploy.gcp.artifacts_image.run_sh")
 def test_registry_prune_skips_failed_deletes(mock_run_sh):
-    mock_run_sh.side_effect = [GCLOUD_TAGS_OUTPUT, "ERROR: not found"]
+    # keep=1, 3 tags (v3,v2,v1) → delete v2 (fails) and v1 (succeeds)
+    mock_run_sh.side_effect = [GCLOUD_TAGS_OUTPUT, "ERROR: not found", "Deleted."]
     deleted = _make_registry().prune(keep=1)
-    assert "v3" not in deleted  # v3 is kept
-    assert deleted == []  # failed delete not included
+    assert deleted == ["v1"]  # v2 failed but v1 still deleted
 
 
 @patch("aigear.deploy.gcp.artifacts_image.run_sh")

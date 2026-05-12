@@ -114,7 +114,6 @@ class RegistryImage:
                 deleted.append(tag)
             else:
                 logger.warning(f"Failed to delete registry tag {tag}: {result}")
-                break
         return deleted
 
 
