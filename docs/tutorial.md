@@ -220,7 +220,7 @@ aigear-infra --create
 Resources are created in three phases:
 
 1. **Service Account** — created first; IAM bindings wait for propagation automatically
-2. **Buckets, Artifact Registry, Pub/Sub, KMS, Kubernetes** — run in **parallel**
+2. **Buckets, Artifact Registry, Pub/Sub, KMS, Cloud Build, Pre-VM Image, Kubernetes** — run in **parallel**
 3. **Cloud Function** — created last (depends on the Pub/Sub topic from Phase 2)
 
 Each step is idempotent — re-running the command safely skips already-existing resources. The log output uses structured JSON and shows only meaningful status per step.
@@ -666,7 +666,7 @@ After creation, go to [Cloud Scheduler](https://console.cloud.google.com/cloudsc
 
 ---
 
-## 11. End-to-End Command Reference
+## 12. End-to-End Command Reference
 
 ```bash
 cd example/aigear_sklearn_pipeline
@@ -724,5 +724,5 @@ aigear-image --create --push --all
 # ── Step 11: Schedule recurring pipeline runs on GCP ──────────────────────────
 aigear-scheduler --create \
     --version logistic_regression \
-    --step_names fetch_data,preprocessing,training
+    --step_names fetch_data,preprocessing,training,model_service
 ```

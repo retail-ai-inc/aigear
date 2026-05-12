@@ -44,7 +44,7 @@ aigear-infra {--create | --update | --delete | --status}
 |---|---|
 | `--create` | Initialize GCP infrastructure resources. |
 | `--update` | Update resources that support update: Cloud Build trigger (config) and Kubernetes cluster (node count, autoscaling). Resources that do not support update are skipped with a log message. |
-| `--delete` | Delete GCP infrastructure resources. Note: Artifact Registry, Cloud KMS, and Pre-VM Images require manual deletion. |
+| `--delete` | Delete GCP infrastructure resources. Note: Cloud KMS keyrings cannot be deleted (a GCP platform limitation); key versions are scheduled for destruction but the keyring itself persists. |
 | `--status` | Query and display the live state of all GCP infrastructure resources. |
 
 Resource creation runs in three ordered phases:
