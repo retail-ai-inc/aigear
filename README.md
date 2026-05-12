@@ -78,18 +78,22 @@ my_ml_service/
 
 Copy `env.sample.json` to `env.json` and fill in your GCP project, bucket, service accounts, etc. See the [configuration guide](docs/route-guide.md).
 
-### 3. Create GCP infrastructure
+### 3. Create infrastructure
 
 ```bash
-aigear-gcp-infra --create
+aigear-infra --create
 ```
 
 ### 4. Generate env schema (optional)
 
 ```bash
 aigear-env-schema --generate
-# Force regenerate
+# Force regenerate after env.json changes
 aigear-env-schema --generate --force
+# Show current schema
+aigear-env-schema --show
+# Delete schema
+aigear-env-schema --delete
 ```
 
 Auto-generates a Pydantic model from your `env.json`. This gives you full type hints and IDE auto-complete when reading configuration, so you can navigate from any variable directly back to its definition in `env.json` instead of looking up string keys manually.
@@ -186,12 +190,12 @@ See the full [CLI Reference](docs/cli-reference.md) for all commands and argumen
 | Command | Description |
 |---|---|
 | `aigear-init` | Initialize a new project scaffold |
-| `aigear-gcp-infra` | Provision or tear down GCP infrastructure (buckets, IAM, Pub/Sub, Cloud Build, etc.) |
+| `aigear-infra` | Provision or tear down infrastructure (buckets, IAM, Pub/Sub, Cloud Build, etc.) |
 | `aigear-task` | Run a pipeline step (`workflow`) or start a gRPC model server (`grpc`) |
 | `aigear-scheduler` | Manage Cloud Scheduler jobs (create / update / delete / run / pause / resume) |
 | `aigear-image` | Build and/or push Docker images to Artifact Registry |
 | `aigear-model` | Generate YAML and manage the full lifecycle of a gRPC model service (deploy, update, delete, status) |
-| `aigear-env-schema` | Auto-generate a Pydantic schema from `env.json` |
+| `aigear-env-schema` | Generate, delete, or show the Pydantic schema derived from `env.json` |
 | `aigear-kms-env` | Encrypt or decrypt `env.json` using Cloud KMS |
 
 ---

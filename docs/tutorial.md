@@ -187,6 +187,10 @@ Auto-generate a typed Pydantic schema from your `env.json` so all pipeline code 
 aigear-env-schema --generate
 # Force regenerate after env.json changes
 aigear-env-schema --generate --force
+# Show current schema content
+aigear-env-schema --show
+# Delete schema
+aigear-env-schema --delete
 ```
 
 This writes a schema to `config_schema/env_schema.py`. Every pipeline step imports it:
@@ -674,8 +678,8 @@ cp env.sample.json env.json
 # ── Step 3: Generate typed config schema ──────────────────────────────────────
 aigear-env-schema --generate
 
-# ── Step 4: Provision GCP infrastructure (owner-level access required) ────────
-aigear-gcp-infra --create
+# ── Step 4: Provision infrastructure (owner-level access required) ────────────
+aigear-infra --create
 
 # ── Step 5: Implement pipeline code ───────────────────────────────────────────
 # Fill in src/pipelines/logistic_regression/{fetch_data,preprocessing,training,model_service}/
