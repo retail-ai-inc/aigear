@@ -58,24 +58,30 @@ def test_create_includes_schedule_and_topic(mock_run_sh):
 # ── Scheduler.describe ────────────────────────────────────────────────────────
 
 @patch("aigear.deploy.gcp.scheduler.run_sh")
-def test_describe_returns_true_when_enabled(mock_run_sh):
+def test_describe_returns_exists_true_and_state_when_enabled(mock_run_sh):
     mock_run_sh.return_value = "state: ENABLED\nschedule: 0 9 * * *\ntimeZone: Asia/Tokyo"
     s = _make_scheduler()
-    assert s.describe() is True
+    exists, state = s.describe()
+    assert exists is True
+    assert state == "ENABLED"
 
 
 @patch("aigear.deploy.gcp.scheduler.run_sh")
-def test_describe_returns_false_when_not_found(mock_run_sh):
+def test_describe_returns_exists_false_when_not_found(mock_run_sh):
     mock_run_sh.return_value = "ERROR: NOT_FOUND"
     s = _make_scheduler()
-    assert s.describe() is False
+    exists, state = s.describe()
+    assert exists is False
+    assert state == ""
 
 
 @patch("aigear.deploy.gcp.scheduler.run_sh")
-def test_describe_returns_false_when_not_enabled(mock_run_sh):
+def test_describe_returns_exists_true_and_state_when_paused(mock_run_sh):
     mock_run_sh.return_value = "state: PAUSED\nschedule: 0 9 * * *"
     s = _make_scheduler()
-    assert s.describe() is False
+    exists, state = s.describe()
+    assert exists is True
+    assert state == "PAUSED"
 
 
 # ── Scheduler.delete ──────────────────────────────────────────────────────────

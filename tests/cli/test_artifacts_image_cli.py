@@ -213,6 +213,59 @@ def test_all_retag_dispatches_both_images():
     )
 
 
+# ── --clear ───────────────────────────────────────────────────────────────────
+
+
+def test_clear_dispatches_to_clear_artifacts_image():
+    with patch("sys.argv", ["cmd", "--clear"]):
+        import aigear.cli.artifacts_image as cli_mod
+
+        importlib.reload(cli_mod)
+        with patch(
+            "aigear.cli.artifacts_image.clear_artifacts_image", return_value=True
+        ) as mock_fn:
+            cli_mod.docker_image()
+    mock_fn.assert_called_once_with(is_service=False, is_push=False)
+
+
+def test_clear_is_service_targets_service():
+    with patch("sys.argv", ["cmd", "--clear", "--is_service"]):
+        import aigear.cli.artifacts_image as cli_mod
+
+        importlib.reload(cli_mod)
+        with patch(
+            "aigear.cli.artifacts_image.clear_artifacts_image", return_value=True
+        ) as mock_fn:
+            cli_mod.docker_image()
+    mock_fn.assert_called_once_with(is_service=True, is_push=False)
+
+
+def test_clear_push_sets_is_push_true():
+    with patch("sys.argv", ["cmd", "--clear", "--push"]):
+        import aigear.cli.artifacts_image as cli_mod
+
+        importlib.reload(cli_mod)
+        with patch(
+            "aigear.cli.artifacts_image.clear_artifacts_image", return_value=True
+        ) as mock_fn:
+            cli_mod.docker_image()
+    assert mock_fn.call_args.kwargs["is_push"] is True
+
+
+def test_all_clear_dispatches_both_images():
+    with patch("sys.argv", ["cmd", "--clear", "--all"]):
+        import aigear.cli.artifacts_image as cli_mod
+
+        importlib.reload(cli_mod)
+        with patch(
+            "aigear.cli.artifacts_image.clear_artifacts_image", return_value=True
+        ) as mock_fn:
+            cli_mod.docker_image()
+    assert mock_fn.call_count == 2
+    mock_fn.assert_any_call(is_service=False, is_push=False)
+    mock_fn.assert_any_call(is_service=True, is_push=False)
+
+
 # ── no action ─────────────────────────────────────────────────────────────────
 
 
