@@ -3,7 +3,7 @@ from unittest.mock import patch, MagicMock
 
 
 def test_update_flag_calls_infra_update():
-    with patch("sys.argv", ["aigear-gcp-infra", "--update"]):
+    with patch("sys.argv", ["aigear-infra", "--update"]):
         from aigear.cli import gcp_cli
         importlib.reload(gcp_cli)
 
@@ -19,7 +19,7 @@ def test_update_flag_calls_infra_update():
 
 
 def test_create_flag_does_not_call_update():
-    with patch("sys.argv", ["aigear-gcp-infra", "--create"]):
+    with patch("sys.argv", ["aigear-infra", "--create"]):
         from aigear.cli import gcp_cli
         importlib.reload(gcp_cli)
 
@@ -35,7 +35,7 @@ def test_create_flag_does_not_call_update():
 
 
 def test_delete_flag_calls_infra_delete():
-    with patch("sys.argv", ["aigear-gcp-infra", "--delete"]):
+    with patch("sys.argv", ["aigear-infra", "--delete"]):
         from aigear.cli import gcp_cli
         importlib.reload(gcp_cli)
 
@@ -51,7 +51,7 @@ def test_delete_flag_calls_infra_delete():
 
 
 def test_status_flag_calls_infra_status():
-    with patch("sys.argv", ["aigear-gcp-infra", "--status"]):
+    with patch("sys.argv", ["aigear-infra", "--status"]):
         from aigear.cli import gcp_cli
         importlib.reload(gcp_cli)
 
