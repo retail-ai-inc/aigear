@@ -36,6 +36,11 @@ def get_argument() -> argparse.Namespace:
         action="store_true",
         help="Target the model service image (default: pipeline image).",
     )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Operate on both pipeline and service images.",
+    )
     parser.add_argument("--src_tag", default=None, help="Source tag for --retag.")
     parser.add_argument(
         "--target_tag", default=None, help="Destination tag for --retag."
@@ -77,28 +82,18 @@ def _run_operation(
 def docker_image():
     args = get_argument()
 
-    if args.create and args.dockerfile_path is None:
-        print("No '--dockerfile_path' provided, operating on all default images.")
-        for dockerfile, is_service in [
-            (DOCKERFILE_PIPELINE, False),
-            (DOCKERFILE_SERVICE, True),
-        ]:
-            print(f"Processing image: '{dockerfile}'...")
-            success = _run_operation(
-                args, dockerfile_path=dockerfile, is_service=is_service
-            )
-            if success:
-                print(f"The image({dockerfile}) operation completed.")
-            else:
-                print(
-                    f"The image({dockerfile}) operation failed, please check the errors above."
-                )
-            print("-----------------------------------")
+    if args.all:
+        targets = [(DOCKERFILE_PIPELINE, False), (DOCKERFILE_SERVICE, True)]
+    elif args.dockerfile_path:
+        targets = [(args.dockerfile_path, args.is_service)]
     else:
-        label = args.dockerfile_path or ("service" if args.is_service else "pipeline")
+        targets = [(None, args.is_service)]
+
+    for dockerfile_path, is_service in targets:
+        label = dockerfile_path or ("service" if is_service else "pipeline")
         print(f"Processing image: '{label}'...")
         success = _run_operation(
-            args, dockerfile_path=args.dockerfile_path, is_service=args.is_service
+            args, dockerfile_path=dockerfile_path, is_service=is_service
         )
         if success:
             print(f"The image({label}) operation completed.")
