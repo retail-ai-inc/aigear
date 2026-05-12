@@ -9,8 +9,7 @@ All CLI entry points are installed as standalone commands by `pip install aigear
 | `aigear-task` | Run a pipeline step or start a gRPC model service |
 | `aigear-scheduler` | Create a Cloud Scheduler job for pipeline steps |
 | `aigear-image` | Build and optionally push Docker images to Artifact Registry |
-| `aigear-model-yaml` | Generate Kubernetes deployment YAML files for model services |
-| `aigear-deploy-model` | Deploy or delete a gRPC model service (local or GCP) |
+| `aigear-model` | Generate YAML and manage the lifecycle of a gRPC model service (deploy, update, delete, status) |
 | `aigear-env-schema` | Auto-generate a Pydantic schema from `env.json` |
 | `aigear-kms-env` | Encrypt or decrypt `env.json` using Cloud KMS |
 
@@ -98,21 +97,47 @@ aigear-task grpc --version VERSION
 
 ### `aigear-scheduler`
 
-Create a Cloud Scheduler job that triggers the given pipeline steps.
+Manage Cloud Scheduler jobs that trigger pipeline steps via Pub/Sub.
 
 ```
-aigear-scheduler --version VERSION --step_names STEPS [--create]
+aigear-scheduler <command> --version VERSION [--step_names STEPS] [--env ENV]
 ```
+
+| Command | `--step_names` required | Description |
+|---|---|---|
+| `--create` | yes | Create a new scheduler job (skips if already exists) |
+| `--update` | yes | Update schedule and message body of an existing job |
+| `--delete` | — | Delete the scheduler job |
+| `--status` | — | Print the current status of the scheduler job |
+| `--list` | — | List scheduler jobs filtered by name |
+| `--run` | — | Manually trigger the scheduler job immediately |
+| `--pause` | — | Pause the scheduler job (stops automatic execution) |
+| `--resume` | — | Resume a paused scheduler job |
 
 | Argument | Default | Description |
 |---|---|---|
-| `--create` | — | Create GCP scheduler job. Runs by default if omitted. |
-| `--version` | — | Pipeline version (required) |
-| `--step_names` | — | Comma-separated step names, e.g. `fetch_data,training` (required) |
+| `--version` | — | Pipeline version (required for all commands) |
+| `--step_names` | — | Comma-separated step names, e.g. `fetch_data,training` (required for `--create` / `--update`) |
+| `--env` | `staging` | Deployment environment for model service: `staging` or `production` |
 
-> `--version` and `--step_names` are required; the command will print a reminder and exit if either is missing.
->
-> Future commands: `--delete`, `--update`, `--run`...
+**Examples**
+
+```bash
+# Create a scheduler job for two pipeline steps
+aigear-scheduler --create --version logistic_regression --step_names fetch_data,training
+
+# Update the schedule or message body
+aigear-scheduler --update --version logistic_regression --step_names fetch_data,training --env production
+
+# Trigger an immediate run without waiting for the cron schedule
+aigear-scheduler --run --version logistic_regression
+
+# Pause / resume
+aigear-scheduler --pause  --version logistic_regression
+aigear-scheduler --resume --version logistic_regression
+```
+
+> The scheduler job name, cron schedule, and Pub/Sub topic are read from the `scheduler` block in `env.json` for the given `--version`.
 
 ---
 
@@ -141,43 +166,63 @@ At least one of `--create` or `--push` is required. They can be combined to buil
 
 ---
 
-### `aigear-model-yaml`
+### `aigear-model`
 
-Generate Kubernetes Helm deployment YAML files for model services. The model class path is resolved from `env.json`.
+Manage the full lifecycle of a gRPC model service: generate the Kubernetes deployment YAML, deploy, update, delete, or check status. Works with local Kubernetes (Docker Desktop) and GCP (staging / production). The model class path is resolved automatically from `env.json`.
 
 ```
-aigear-model-yaml --create [--version VERSION] [--env ENV] [--force]
+aigear-model --version VERSION {--local | --staging | --production}
+             {--yaml | --deploy | --update | --delete | --status}
+             [--service_ports PORTS] [--replicas N] [--port PORT]
 ```
+
+**Environment (required, mutually exclusive)**
+
+| Argument | Description |
+|---|---|
+| `--local` | Target local Kubernetes (Docker Desktop) |
+| `--staging` | Target GCP staging environment |
+| `--production` | Target GCP production environment |
+
+**Operation (required, mutually exclusive)**
+
+| Argument | Description |
+|---|---|
+| `--yaml` | Generate (or overwrite) the deployment YAML file and exit |
+| `--deploy` | Create the YAML if it does not yet exist, then deploy the service |
+| `--update` | Create the YAML if it does not yet exist, then re-apply with any new parameters |
+| `--delete` | Switch to the target context and delete the service deployment |
+| `--status` | Switch to the target context and show the current deployment status |
+
+**Optional parameters**
 
 | Argument | Default | Description |
 |---|---|---|
-| `--create` | — | Generate the YAML file(s). Required. |
-| `--version` | `None` | Pipeline version to generate YAML for. Omit to generate for all pipeline versions. |
-| `--env` | `None` | Target environment (`local`, `staging`, or `production`). Omit to generate for all three environments. |
-| `--force` | `false` | Overwrite existing YAML files |
-
----
-
-### `aigear-deploy-model`
-
-Deploy or delete a gRPC model service, either to local Kubernetes (Docker Desktop) or to GCP. The model class path is resolved automatically from `env.json`.
-
-```
-aigear-deploy-model --version VERSION {--local | --staging | --production}
-                    [--service_ports PORTS] [--replicas N] [--port PORT]
-                    [--delete]
-```
-
-| Argument | Default | Description |
-|---|---|---|
-| `--version` | — | Pipeline version |
-| `--local` | — | Deploy to local Kubernetes (Docker Desktop). Mutually exclusive with `--staging` and `--production`. |
-| `--staging` | — | Deploy to GCP staging environment. Mutually exclusive with `--local` and `--production`. |
-| `--production` | — | Deploy to GCP production environment. Mutually exclusive with `--local` and `--staging`. |
+| `--version` | — | Pipeline version (required for all operations) |
 | `--service_ports` | `50051` | Internal container port(s) |
 | `--replicas` | `1` | Number of service replicas |
 | `--port` | `50051` | External service port |
-| `--delete` | `false` | Delete the deployment instead of creating it |
+
+> **Auto-force:** Passing any of `--service_ports`, `--replicas`, or `--port` automatically overwrites the existing YAML, so the new parameters take effect immediately. `--yaml` always overwrites.
+
+**Examples**
+
+```bash
+# Generate YAML for local environment
+aigear-model --version logistic_regression --local --yaml
+
+# Deploy to local Kubernetes (creates YAML if absent)
+aigear-model --version logistic_regression --local --deploy
+
+# Update with a new replica count (overwrites YAML automatically)
+aigear-model --version logistic_regression --staging --update --replicas 3
+
+# Check deployment status on GCP production
+aigear-model --version logistic_regression --production --status
+
+# Delete the local deployment
+aigear-model --version logistic_regression --local --delete
+```
 
 ---
 

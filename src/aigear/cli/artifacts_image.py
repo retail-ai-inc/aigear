@@ -1,12 +1,13 @@
 import argparse
 
+from aigear.common.constant import DOCKERFILE_PIPELINE, DOCKERFILE_SERVICE
 from aigear.deploy.gcp.artifacts_image import create_artifacts_image
 
 
 def get_argument() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description=__doc__,
-        formatter_class=argparse.RawDescriptionHelpFormatter)
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     group = parser.add_mutually_exclusive_group(required=False)
     group.add_argument(
         "--create",
@@ -21,12 +22,19 @@ def get_argument() -> argparse.Namespace:
         action="store_true",
         help="Push Docker image(s). Can be used alone (push only) or with --create (build then push).",
     )
-    parser.add_argument("--dockerfile_path", default=None,
-                        help="Path of Dockerfile. If omitted, operates on all default images.")
-    parser.add_argument("--build_context", default=".",
-                        help="Docker build context path.")
-    parser.add_argument("--is_service", action="store_true",
-                        help="Determine whether it is a model service image.")
+    parser.add_argument(
+        "--dockerfile_path",
+        default=None,
+        help="Path of Dockerfile. If omitted, operates on all default images.",
+    )
+    parser.add_argument(
+        "--build_context", default=".", help="Docker build context path."
+    )
+    parser.add_argument(
+        "--is_service",
+        action="store_true",
+        help="Determine whether it is a model service image.",
+    )
     args = parser.parse_args()
     if not args.create and not args.push:
         parser.error("At least one of --create or --push is required.")
@@ -36,7 +44,10 @@ def get_argument() -> argparse.Namespace:
 def _run_images(args: argparse.Namespace) -> None:
     if args.dockerfile_path is None:
         print("No '--dockerfile_path' provided, operating on all default images.")
-        for dockerfile, is_service in [("Dockerfile.pl", False), ("Dockerfile.ms", True)]:
+        for dockerfile, is_service in [
+            (DOCKERFILE_PIPELINE, False),
+            (DOCKERFILE_SERVICE, True),
+        ]:
             print(f"Processing image: '{dockerfile}'...")
             success = create_artifacts_image(
                 dockerfile_path=dockerfile,
@@ -48,7 +59,9 @@ def _run_images(args: argparse.Namespace) -> None:
             if success:
                 print(f"The image({dockerfile}) operation completed.")
             else:
-                print(f"The image({dockerfile}) operation failed, please check the errors above.")
+                print(
+                    f"The image({dockerfile}) operation failed, please check the errors above."
+                )
             print("-----------------------------------")
     else:
         print(f"Processing image: '{args.dockerfile_path}'...")
@@ -62,7 +75,9 @@ def _run_images(args: argparse.Namespace) -> None:
         if success:
             print(f"The image({args.dockerfile_path}) operation completed.")
         else:
-            print(f"The image({args.dockerfile_path}) operation failed, please check the errors above.")
+            print(
+                f"The image({args.dockerfile_path}) operation failed, please check the errors above."
+            )
         print("-----------------------------------")
 
 

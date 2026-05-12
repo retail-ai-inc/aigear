@@ -26,16 +26,14 @@ def fetch_data(pipeline_version: str) -> None:
         bucket_name=env_config.aigear.gcp.bucket.bucket_name,
         bucket_on=gcs_switch,
     )
-    data_file_name = env_config.pipelines.logistic_regression.fetch_data.parameters.data_file_name
-    save_path = asset_management.get_local_path(
-        local_file_name=data_file_name
+    data_file_name = (
+        env_config.pipelines.logistic_regression.fetch_data.parameters.data_file_name
     )
+    save_path = asset_management.get_local_path(local_file_name=data_file_name)
     get_data(save_path)
     asset_management.upload(data_file_name)
     logger.info("-----fetch data completed-----")
 
 
 if __name__ == "__main__":
-    fetch_data(
-        pipeline_version="logistic_regression"
-    )
+    fetch_data(pipeline_version="logistic_regression")

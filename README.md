@@ -2,7 +2,7 @@
 
 # Cloud-Native ML Deployment & Automation Framework
 
-[**Installation**](#installation) · [**Quick Start**](#quick-start) · [**Tutorial**](docs/tutorial.md) · [**CLI Reference**](docs/cli-reference.md) · [**Configuration Guide**](docs/route-guide.md)
+[**Installation**](#installation) · [**Quick Start**](#quick-start) · [**Tutorial**](docs/tutorial.md) · [**CLI Reference**](docs/cli-reference.md) · [**Configuration Guide**](docs/route-guide.md) · [**Cost Estimation**](docs/cost-estimation.md)
 
 </div>
 
@@ -123,7 +123,16 @@ Creates a Cloud Scheduler job on GCP that triggers the specified pipeline steps 
 aigear-scheduler --create --version v1 --step_names fetch_data,preprocessing,training
 ```
 
-> **Tip:** Once created, you can go to [Cloud Scheduler](https://console.cloud.google.com/cloudscheduler) in the GCP Console to manually trigger an immediate run. A `--run` flag for triggering directly from the CLI is planned but not yet available (`aigear-scheduler --version v1 --run`).
+To trigger a run immediately, pause, or manage the job lifecycle:
+
+```bash
+aigear-scheduler --run    --version v1
+aigear-scheduler --pause  --version v1
+aigear-scheduler --resume --version v1
+aigear-scheduler --status --version v1
+```
+
+> See `aigear-scheduler --help` or the [CLI Reference](docs/cli-reference.md#aigear-scheduler) for all available commands.
 
 ---
 
@@ -179,7 +188,7 @@ See the full [CLI Reference](docs/cli-reference.md) for all commands and argumen
 | `aigear-init` | Initialize a new project scaffold |
 | `aigear-gcp-infra` | Create GCP infrastructure (buckets, IAM, Pub/Sub, schedulers) |
 | `aigear-task` | Run a pipeline step (`workflow`) or start a gRPC model server (`grpc`) |
-| `aigear-scheduler` | Create a Cloud Scheduler job for pipeline steps |
+| `aigear-scheduler` | Manage Cloud Scheduler jobs (create / update / delete / run / pause / resume) |
 | `aigear-image` | Build and/or push Docker images to Artifact Registry |
 | `aigear-model-yaml` | Generate Kubernetes deployment YAML files for model services |
 | `aigear-deploy-model` | Deploy or delete a gRPC model service (local Kubernetes or GCP) |
