@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import patch, call
+from unittest.mock import patch
 
 from aigear.common.constant import VENV_BASE_DIR
 from aigear.deploy.gcp.artifacts_image import LocalImage, _validate_dockerfile_venvs

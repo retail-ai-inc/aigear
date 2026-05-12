@@ -118,6 +118,7 @@ def create_artifacts_image(
     if is_push:
         location = aigear_config.gcp.location
         run_sh(["gcloud", "auth", "configure-docker", f"{location}-docker.pkg.dev", "--quiet"])
-        run_sh_stream(["docker", "push", image_path])
+        if run_sh_stream(["docker", "push", image_path]) != 0:
+            return False
         logger.info(f"The {log_tag} image has been pushed.")
     return True
