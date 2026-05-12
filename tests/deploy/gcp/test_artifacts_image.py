@@ -159,3 +159,59 @@ def test_validate_passes_when_no_venv_configured(tmp_path):
     pipelines = {"v1": {"schedule": "0 9 * * *"}}
     with patch("aigear.deploy.gcp.artifacts_image.AppConfig.pipelines", return_value=pipelines):
         _validate_dockerfile_venvs(str(dockerfile), is_service=False)  # must not raise
+
+
+# ── LocalImage.prune ──────────────────────────────────────────────────────────
+
+DOCKER_IMAGES_OUTPUT = (
+    "v3\t2024-03-01 10:00:00 +0000 UTC\n"
+    "v2\t2024-02-01 10:00:00 +0000 UTC\n"
+    "v1\t2024-01-01 10:00:00 +0000 UTC\n"
+)
+
+
+@patch("aigear.deploy.gcp.artifacts_image.run_sh_stream")
+@patch("aigear.deploy.gcp.artifacts_image.run_sh")
+def test_local_prune_deletes_oldest_beyond_keep(mock_run_sh, mock_stream):
+    mock_run_sh.return_value = DOCKER_IMAGES_OUTPUT
+    mock_stream.return_value = 0
+    deleted = _make_local().prune(keep=2)
+    assert deleted == ["v1"]
+    mock_stream.assert_called_once_with(["docker", "rmi", f"{IMAGE_NAME}:v1"])
+
+
+@patch("aigear.deploy.gcp.artifacts_image.run_sh_stream")
+@patch("aigear.deploy.gcp.artifacts_image.run_sh")
+def test_local_prune_keeps_all_when_keep_exceeds_count(mock_run_sh, mock_stream):
+    mock_run_sh.return_value = DOCKER_IMAGES_OUTPUT
+    deleted = _make_local().prune(keep=10)
+    assert deleted == []
+    mock_stream.assert_not_called()
+
+
+@patch("aigear.deploy.gcp.artifacts_image.run_sh_stream")
+@patch("aigear.deploy.gcp.artifacts_image.run_sh")
+def test_local_prune_keep_1_deletes_all_but_newest(mock_run_sh, mock_stream):
+    mock_run_sh.return_value = DOCKER_IMAGES_OUTPUT
+    mock_stream.return_value = 0
+    deleted = _make_local().prune(keep=1)
+    assert deleted == ["v2", "v1"]
+
+
+@patch("aigear.deploy.gcp.artifacts_image.run_sh_stream")
+@patch("aigear.deploy.gcp.artifacts_image.run_sh")
+def test_local_prune_skips_failed_deletes(mock_run_sh, mock_stream):
+    mock_run_sh.return_value = DOCKER_IMAGES_OUTPUT
+    mock_stream.return_value = 1  # simulate rmi failure
+    deleted = _make_local().prune(keep=1)
+    assert deleted == []
+
+
+@patch("aigear.deploy.gcp.artifacts_image.run_sh")
+def test_local_prune_list_command(mock_run_sh):
+    mock_run_sh.return_value = ""
+    _make_local().prune(keep=1)
+    list_cmd = mock_run_sh.call_args[0][0]
+    assert list_cmd == [
+        "docker", "images", "--format", "{{.Tag}}\t{{.CreatedAt}}", IMAGE_NAME
+    ]

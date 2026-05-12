@@ -35,6 +35,25 @@ class LocalImage:
     def remove(self) -> bool:
         return run_sh_stream(["docker", "rmi", self.image_path]) == 0
 
+    def prune(self, keep: int) -> list[str]:
+        output = run_sh([
+            "docker", "images", "--format", "{{.Tag}}\t{{.CreatedAt}}", self._image_name
+        ])
+        entries = []
+        for line in output.strip().splitlines():
+            parts = line.strip().split("\t", 1)
+            if len(parts) == 2:
+                entries.append((parts[0], parts[1]))
+        entries.sort(key=lambda x: x[1], reverse=True)  # newest first
+        to_delete = entries[keep:]
+        deleted = []
+        for tag, _ in to_delete:
+            if run_sh_stream(["docker", "rmi", f"{self._image_name}:{tag}"]) == 0:
+                deleted.append(tag)
+            else:
+                logger.warning(f"Failed to remove local image tag: {tag}")
+        return deleted
+
 
 def _validate_dockerfile_venvs(dockerfile_path: str, is_service: bool) -> None:
     """
