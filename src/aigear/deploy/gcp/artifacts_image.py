@@ -21,12 +21,21 @@ class LocalImage:
                 "Please specify Dockerfile (Dockerfile.pl or Dockerfile.ms) to build the image."
             )
             return False
-        command = ["docker", "build", "-f", dockerfile_path, "-t", self.image_path, build_context]
+        command = [
+            "docker",
+            "build",
+            "-f",
+            dockerfile_path,
+            "-t",
+            self.image_path,
+            build_context,
+        ]
         return run_sh_stream(command) == 0
 
     def tag(self, src_tag: str, target_tag: str) -> bool:
         command = [
-            "docker", "tag",
+            "docker",
+            "tag",
             f"{self._image_name}:{src_tag}",
             f"{self._image_name}:{target_tag}",
         ]
@@ -36,13 +45,19 @@ class LocalImage:
         return run_sh_stream(["docker", "rmi", self.image_path]) == 0
 
     def prune(self, keep: int) -> list[str]:
-        output = run_sh([
-            "docker", "images", "--format", "{{.Tag}}\t{{.CreatedAt}}", self._image_name
-        ])
+        output = run_sh(
+            [
+                "docker",
+                "images",
+                "--format",
+                "{{.Tag}}\t{{.CreatedAt}}",
+                self._image_name,
+            ]
+        )
         entries = []
         for line in output.strip().splitlines():
             parts = line.strip().split("\t", 1)
-            if len(parts) == 2:
+            if len(parts) == 2 and parts[0] != "latest":
                 entries.append((parts[0], parts[1]))
         entries.sort(key=lambda x: x[1], reverse=True)  # newest first
         to_delete = entries[keep:]
@@ -61,55 +76,93 @@ class RegistryImage:
         self._image_name = image_path.rsplit(":", 1)[0]
 
     def configure_auth(self, location: str) -> None:
-        event = run_sh([
-            "gcloud", "auth", "configure-docker",
-            f"{location}-docker.pkg.dev", "--quiet",
-        ])
+        event = run_sh(
+            [
+                "gcloud",
+                "auth",
+                "configure-docker",
+                f"{location}-docker.pkg.dev",
+                "--quiet",
+            ]
+        )
         logger.info(event)
 
     def push(self) -> bool:
         return run_sh_stream(["docker", "push", self.image_path]) == 0
 
     def exists(self) -> bool:
-        event = run_sh([
-            "gcloud", "artifacts", "docker", "images", "describe", self.image_path
-        ])
+        event = run_sh(
+            ["gcloud", "artifacts", "docker", "images", "describe", self.image_path]
+        )
         logger.info(event)
-        return not (("Image not found" in event or "NOT_FOUND" in event) and "ERROR" in event)
+        return not (
+            ("Image not found" in event or "NOT_FOUND" in event) and "ERROR" in event
+        )
 
     def delete(self) -> bool:
-        result = run_sh([
-            "gcloud", "artifacts", "docker", "images", "delete",
-            self.image_path, "--delete-tags", "--quiet",
-        ])
+        result = run_sh(
+            [
+                "gcloud",
+                "artifacts",
+                "docker",
+                "images",
+                "delete",
+                self.image_path,
+                "--delete-tags",
+                "--quiet",
+            ]
+        )
         logger.info(result)
         return "ERROR" not in result
 
     def retag(self, src_tag: str, target_tag: str) -> bool:
-        result = run_sh([
-            "gcloud", "artifacts", "docker", "tags", "add",
-            f"{self._image_name}:{src_tag}",
-            f"{self._image_name}:{target_tag}",
-        ])
+        result = run_sh(
+            [
+                "gcloud",
+                "artifacts",
+                "docker",
+                "tags",
+                "add",
+                f"{self._image_name}:{src_tag}",
+                f"{self._image_name}:{target_tag}",
+            ]
+        )
         logger.info(result)
         return "ERROR" not in result
 
     def prune(self, keep: int) -> list[str]:
-        output = run_sh([
-            "gcloud", "artifacts", "docker", "images", "list",
-            self._image_name,
-            "--include-tags",
-            "--sort-by=~createTime",
-            "--format=value(tags)",
-        ])
-        tags = [line.strip() for line in output.strip().splitlines() if line.strip()]
+        output = run_sh(
+            [
+                "gcloud",
+                "artifacts",
+                "docker",
+                "images",
+                "list",
+                self._image_name,
+                "--include-tags",
+                "--sort-by=~createTime",
+                "--format=value(tags)",
+            ]
+        )
+        tags = [
+            line.strip()
+            for line in output.strip().splitlines()
+            if line.strip() and line.strip() != "latest"
+        ]
         to_delete = tags[keep:]
         deleted = []
         for tag in to_delete:
-            result = run_sh([
-                "gcloud", "artifacts", "docker", "images", "delete",
-                f"{self._image_name}:{tag}", "--quiet",
-            ])
+            result = run_sh(
+                [
+                    "gcloud",
+                    "artifacts",
+                    "docker",
+                    "images",
+                    "delete",
+                    f"{self._image_name}:{tag}",
+                    "--quiet",
+                ]
+            )
             if "ERROR" not in result:
                 deleted.append(tag)
             else:
@@ -193,7 +246,9 @@ def create_artifacts_image(
     if is_build:
         if dockerfile_path:
             _validate_dockerfile_venvs(dockerfile_path, is_service)
-        if not local.build(dockerfile_path=dockerfile_path, build_context=build_context):
+        if not local.build(
+            dockerfile_path=dockerfile_path, build_context=build_context
+        ):
             return False
         logger.info(f"The {log_tag} image has been created.")
 
@@ -237,13 +292,17 @@ def retag_artifacts_image(
 
     if not local.tag(src_tag=src_tag, target_tag=target_tag):
         return False
-    logger.info(f"The {log_tag} local image has been retagged {src_tag} -> {target_tag}.")
+    logger.info(
+        f"The {log_tag} local image has been retagged {src_tag} -> {target_tag}."
+    )
 
     if is_push:
         registry.configure_auth(aigear_config.gcp.location)
         if not registry.retag(src_tag=src_tag, target_tag=target_tag):
             return False
-        logger.info(f"The {log_tag} registry image has been retagged {src_tag} -> {target_tag}.")
+        logger.info(
+            f"The {log_tag} registry image has been retagged {src_tag} -> {target_tag}."
+        )
     return True
 
 
@@ -261,5 +320,7 @@ def prune_artifacts_image(keep: int, is_service=False, is_push=False) -> bool:
     if is_push:
         registry.configure_auth(aigear_config.gcp.location)
         deleted_registry = registry.prune(keep=keep)
-        logger.info(f"Pruned {len(deleted_registry)} registry {log_tag} tags: {deleted_registry}")
+        logger.info(
+            f"Pruned {len(deleted_registry)} registry {log_tag} tags: {deleted_registry}"
+        )
     return True

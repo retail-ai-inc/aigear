@@ -225,6 +225,21 @@ def test_local_prune_list_command(mock_run_sh):
     ]
 
 
+@patch("aigear.deploy.gcp.artifacts_image.run_sh_stream")
+@patch("aigear.deploy.gcp.artifacts_image.run_sh")
+def test_local_prune_never_deletes_latest(mock_run_sh, mock_stream):
+    mock_run_sh.return_value = (
+        "latest\t2024-04-01 10:00:00 +0000 UTC\n"
+        "v3\t2024-03-01 10:00:00 +0000 UTC\n"
+        "v2\t2024-02-01 10:00:00 +0000 UTC\n"
+        "v1\t2024-01-01 10:00:00 +0000 UTC\n"
+    )
+    mock_stream.return_value = 0
+    deleted = _make_local().prune(keep=1)
+    assert "latest" not in deleted
+    assert deleted == ["v2", "v1"]
+
+
 def _make_registry() -> RegistryImage:
     return RegistryImage(image_path=IMAGE_PATH)
 
@@ -397,6 +412,18 @@ def test_registry_prune_list_command(mock_run_sh):
         "--sort-by=~createTime",
         "--format=value(tags)",
     ]
+
+
+@patch("aigear.deploy.gcp.artifacts_image.run_sh")
+def test_registry_prune_never_deletes_latest(mock_run_sh):
+    mock_run_sh.side_effect = [
+        "latest\nv3\nv2\nv1\n",  # list call — latest appears first
+        "Deleted.",               # delete v2
+        "Deleted.",               # delete v1
+    ]
+    deleted = _make_registry().prune(keep=1)
+    assert "latest" not in deleted
+    assert deleted == ["v2", "v1"]
 
 
 # ── top-level function helpers ────────────────────────────────────────────────
