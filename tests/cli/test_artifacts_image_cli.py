@@ -56,6 +56,24 @@ def test_create_no_dockerfile_defaults_to_pipeline():
     )
 
 
+def test_create_dockerfile_ms_infers_is_service():
+    with patch("sys.argv", ["cmd", "--create", "--dockerfile_path", "Dockerfile.ms"]):
+        import aigear.cli.artifacts_image as cli_mod
+
+        importlib.reload(cli_mod)
+        with patch(
+            "aigear.cli.artifacts_image.create_artifacts_image", return_value=True
+        ) as mock_fn:
+            cli_mod.docker_image()
+    mock_fn.assert_called_once_with(
+        dockerfile_path="Dockerfile.ms",
+        build_context=".",
+        is_service=True,
+        is_build=True,
+        is_push=False,
+    )
+
+
 # ── --delete ──────────────────────────────────────────────────────────────────
 
 

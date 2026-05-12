@@ -85,7 +85,13 @@ def docker_image():
     if args.all:
         targets = [(DOCKERFILE_PIPELINE, False), (DOCKERFILE_SERVICE, True)]
     elif args.dockerfile_path:
-        targets = [(args.dockerfile_path, args.is_service)]
+        if args.dockerfile_path == DOCKERFILE_SERVICE:
+            is_service = True
+        elif args.dockerfile_path == DOCKERFILE_PIPELINE:
+            is_service = False
+        else:
+            is_service = args.is_service
+        targets = [(args.dockerfile_path, is_service)]
     else:
         targets = [(None, args.is_service)]
 
