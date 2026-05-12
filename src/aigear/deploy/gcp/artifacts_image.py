@@ -188,6 +188,7 @@ def create_artifacts_image(
     aigear_config = AigearConfig.get_config()
     image_path = get_image_path(is_service=is_service)
     local = LocalImage(image_path)
+    registry = RegistryImage(image_path)
 
     if is_build:
         if dockerfile_path:
@@ -197,9 +198,68 @@ def create_artifacts_image(
         logger.info(f"The {log_tag} image has been created.")
 
     if is_push:
-        location = aigear_config.gcp.location
-        run_sh(["gcloud", "auth", "configure-docker", f"{location}-docker.pkg.dev", "--quiet"])
-        if run_sh_stream(["docker", "push", image_path]) != 0:
+        registry.configure_auth(aigear_config.gcp.location)
+        if not registry.push():
             return False
         logger.info(f"The {log_tag} image has been pushed.")
+    return True
+
+
+def delete_artifacts_image(is_service=False, is_push=False) -> bool:
+    """Returns True if the requested operations succeeded, False otherwise."""
+    log_tag = "model service" if is_service else "pipeline"
+    aigear_config = AigearConfig.get_config()
+    image_path = get_image_path(is_service=is_service)
+    local = LocalImage(image_path)
+    registry = RegistryImage(image_path)
+
+    if not local.remove():
+        return False
+    logger.info(f"The {log_tag} local image has been deleted.")
+
+    if is_push:
+        registry.configure_auth(aigear_config.gcp.location)
+        if not registry.delete():
+            return False
+        logger.info(f"The {log_tag} registry image has been deleted.")
+    return True
+
+
+def retag_artifacts_image(
+    src_tag: str, target_tag: str, is_service=False, is_push=False
+) -> bool:
+    """Returns True if the requested operations succeeded, False otherwise."""
+    log_tag = "model service" if is_service else "pipeline"
+    aigear_config = AigearConfig.get_config()
+    image_path = get_image_path(is_service=is_service)
+    local = LocalImage(image_path)
+    registry = RegistryImage(image_path)
+
+    if not local.tag(src_tag=src_tag, target_tag=target_tag):
+        return False
+    logger.info(f"The {log_tag} local image has been retagged {src_tag} -> {target_tag}.")
+
+    if is_push:
+        registry.configure_auth(aigear_config.gcp.location)
+        if not registry.retag(src_tag=src_tag, target_tag=target_tag):
+            return False
+        logger.info(f"The {log_tag} registry image has been retagged {src_tag} -> {target_tag}.")
+    return True
+
+
+def prune_artifacts_image(keep: int, is_service=False, is_push=False) -> bool:
+    """Returns True always (prune continues on individual failures)."""
+    log_tag = "model service" if is_service else "pipeline"
+    aigear_config = AigearConfig.get_config()
+    image_path = get_image_path(is_service=is_service)
+    local = LocalImage(image_path)
+    registry = RegistryImage(image_path)
+
+    deleted_local = local.prune(keep=keep)
+    logger.info(f"Pruned {len(deleted_local)} local {log_tag} tags: {deleted_local}")
+
+    if is_push:
+        registry.configure_auth(aigear_config.gcp.location)
+        deleted_registry = registry.prune(keep=keep)
+        logger.info(f"Pruned {len(deleted_registry)} registry {log_tag} tags: {deleted_registry}")
     return True

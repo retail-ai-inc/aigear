@@ -1,8 +1,16 @@
 import pytest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from aigear.common.constant import VENV_BASE_DIR
-from aigear.deploy.gcp.artifacts_image import LocalImage, RegistryImage, _validate_dockerfile_venvs
+from aigear.deploy.gcp.artifacts_image import (
+    LocalImage,
+    RegistryImage,
+    create_artifacts_image,
+    delete_artifacts_image,
+    retag_artifacts_image,
+    prune_artifacts_image,
+    _validate_dockerfile_venvs,
+)
 
 IMAGE_PATH = "asia-northeast1-docker.pkg.dev/proj/repo/my-image:latest"
 IMAGE_NAME = "asia-northeast1-docker.pkg.dev/proj/repo/my-image"
@@ -389,3 +397,136 @@ def test_registry_prune_list_command(mock_run_sh):
         "--sort-by=~createTime",
         "--format=value(tags)",
     ]
+
+
+# ── top-level function helpers ────────────────────────────────────────────────
+
+def _patch_image_path(is_service=False):
+    return patch(
+        "aigear.deploy.gcp.artifacts_image.get_image_path",
+        return_value=IMAGE_PATH,
+    )
+
+
+def _patch_config():
+    cfg = MagicMock()
+    cfg.gcp.location = "asia-northeast1"
+    return patch("aigear.deploy.gcp.artifacts_image.AigearConfig.get_config", return_value=cfg)
+
+
+# ── create_artifacts_image ────────────────────────────────────────────────────
+
+def _patch_validate():
+    return patch("aigear.deploy.gcp.artifacts_image._validate_dockerfile_venvs")
+
+
+def test_create_local_only_does_not_call_registry_push():
+    with _patch_config(), _patch_image_path(), _patch_validate():
+        with patch.object(LocalImage, "build", return_value=True) as mock_build, \
+             patch.object(RegistryImage, "push") as mock_push:
+            result = create_artifacts_image(dockerfile_path="Dockerfile.pl", is_build=True, is_push=False)
+    assert result is True
+    mock_build.assert_called_once()
+    mock_push.assert_not_called()
+
+
+def test_create_fails_fast_when_local_build_fails():
+    with _patch_config(), _patch_image_path(), _patch_validate():
+        with patch.object(LocalImage, "build", return_value=False), \
+             patch.object(RegistryImage, "push") as mock_push:
+            result = create_artifacts_image(dockerfile_path="Dockerfile.pl", is_build=True, is_push=True)
+    assert result is False
+    mock_push.assert_not_called()
+
+
+def test_create_and_push_calls_both():
+    with _patch_config(), _patch_image_path(), _patch_validate():
+        with patch.object(LocalImage, "build", return_value=True), \
+             patch.object(RegistryImage, "configure_auth"), \
+             patch.object(RegistryImage, "push", return_value=True) as mock_push:
+            result = create_artifacts_image(dockerfile_path="Dockerfile.pl", is_build=True, is_push=True)
+    assert result is True
+    mock_push.assert_called_once()
+
+
+# ── delete_artifacts_image ────────────────────────────────────────────────────
+
+def test_delete_local_only_does_not_call_registry_delete():
+    with _patch_config(), _patch_image_path():
+        with patch.object(LocalImage, "remove", return_value=True), \
+             patch.object(RegistryImage, "delete") as mock_del:
+            result = delete_artifacts_image(is_push=False)
+    assert result is True
+    mock_del.assert_not_called()
+
+
+def test_delete_fails_fast_when_local_fails():
+    with _patch_config(), _patch_image_path():
+        with patch.object(LocalImage, "remove", return_value=False), \
+             patch.object(RegistryImage, "delete") as mock_del:
+            result = delete_artifacts_image(is_push=True)
+    assert result is False
+    mock_del.assert_not_called()
+
+
+def test_delete_and_push_calls_both():
+    with _patch_config(), _patch_image_path():
+        with patch.object(LocalImage, "remove", return_value=True), \
+             patch.object(RegistryImage, "configure_auth"), \
+             patch.object(RegistryImage, "delete", return_value=True) as mock_del:
+            result = delete_artifacts_image(is_push=True)
+    assert result is True
+    mock_del.assert_called_once()
+
+
+# ── retag_artifacts_image ─────────────────────────────────────────────────────
+
+def test_retag_local_only():
+    with _patch_config(), _patch_image_path():
+        with patch.object(LocalImage, "tag", return_value=True) as mock_tag, \
+             patch.object(RegistryImage, "retag") as mock_retag:
+            result = retag_artifacts_image(src_tag="v1.0", target_tag="latest", is_push=False)
+    assert result is True
+    mock_tag.assert_called_once_with(src_tag="v1.0", target_tag="latest")
+    mock_retag.assert_not_called()
+
+
+def test_retag_fails_fast_when_local_fails():
+    with _patch_config(), _patch_image_path():
+        with patch.object(LocalImage, "tag", return_value=False), \
+             patch.object(RegistryImage, "retag") as mock_retag:
+            result = retag_artifacts_image(src_tag="v1.0", target_tag="latest", is_push=True)
+    assert result is False
+    mock_retag.assert_not_called()
+
+
+def test_retag_and_push_calls_both():
+    with _patch_config(), _patch_image_path():
+        with patch.object(LocalImage, "tag", return_value=True), \
+             patch.object(RegistryImage, "configure_auth"), \
+             patch.object(RegistryImage, "retag", return_value=True) as mock_retag:
+            result = retag_artifacts_image(src_tag="v1.0", target_tag="latest", is_push=True)
+    assert result is True
+    mock_retag.assert_called_once_with(src_tag="v1.0", target_tag="latest")
+
+
+# ── prune_artifacts_image ─────────────────────────────────────────────────────
+
+def test_prune_local_only():
+    with _patch_config(), _patch_image_path():
+        with patch.object(LocalImage, "prune", return_value=["v1"]) as mock_prune, \
+             patch.object(RegistryImage, "prune") as mock_reg_prune:
+            result = prune_artifacts_image(keep=2, is_push=False)
+    assert result is True
+    mock_prune.assert_called_once_with(keep=2)
+    mock_reg_prune.assert_not_called()
+
+
+def test_prune_and_push_calls_both():
+    with _patch_config(), _patch_image_path():
+        with patch.object(LocalImage, "prune", return_value=[]), \
+             patch.object(RegistryImage, "configure_auth"), \
+             patch.object(RegistryImage, "prune", return_value=["v1"]) as mock_reg_prune:
+            result = prune_artifacts_image(keep=2, is_push=True)
+    assert result is True
+    mock_reg_prune.assert_called_once_with(keep=2)
