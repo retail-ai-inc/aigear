@@ -5,7 +5,7 @@ All CLI entry points are installed as standalone commands by `pip install aigear
 | Command | Description |
 |---|---|
 | `aigear-init` | Initialize a new project scaffold |
-| `aigear-gcp-infra` | Create GCP infrastructure (buckets, IAM, Pub/Sub, schedulers) |
+| `aigear-infra` | Create infrastructure (buckets, IAM, Pub/Sub, schedulers) |
 | `aigear-task` | Run a pipeline step or start a gRPC model service |
 | `aigear-scheduler` | Create a Cloud Scheduler job for pipeline steps |
 | `aigear-image` | Build and optionally push Docker images to Artifact Registry |
@@ -261,18 +261,18 @@ aigear-model --version logistic_regression --local --delete
 
 ### `aigear-env-schema`
 
-Auto-generate a Pydantic schema file from the current `env.json`.
+Manage the lifecycle of the Pydantic schema file generated from `env.json`.
 
 ```
-aigear-env-schema [--generate] [--force]
+aigear-env-schema {--generate | --delete | --show} [--force]
 ```
 
 | Argument | Description |
 |---|---|
-| `--generate` | Generate environment schema file. Runs by default if omitted. |
-| `--force` | Regenerate the schema even if one already exists |
-
-> Future commands: `--delete`, `--update`
+| `--generate` | Generate environment schema file from `env.json` |
+| `--delete` | Delete the generated schema file |
+| `--show` | Print the current schema file content |
+| `--force` | Force regenerate even if the schema already exists (used with `--generate`) |
 
 ---
 
