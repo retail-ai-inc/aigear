@@ -4,6 +4,7 @@ from aigear.common.logger import Logging
 
 logger = Logging(log_name=__name__).console_logging()
 
+
 class PubSub:
     def __init__(
         self,
@@ -15,34 +16,38 @@ class PubSub:
 
     def create(self):
         command = [
-            "gcloud", "pubsub", "topics", "create",
+            "gcloud",
+            "pubsub",
+            "topics",
+            "create",
             self.topic_name,
             f"--project={self.project_id}",
         ]
-        event = run_sh(command)
-        if "ERROR" in event:
-            logger.error(f"Failed to create Pub/Sub topic ({self.topic_name}): {event}")
+        run_sh(command, check=True)
 
     def add_permissions_to_pubsub(self, sa_email):
         topic = f"projects/{self.project_id}/topics/{self.topic_name}"
         for role in ["roles/pubsub.publisher", "roles/pubsub.subscriber"]:
             command = [
-                "gcloud", "pubsub", "topics", "add-iam-policy-binding",
+                "gcloud",
+                "pubsub",
+                "topics",
+                "add-iam-policy-binding",
                 topic,
                 f"--member=serviceAccount:{sa_email}",
                 f"--role={role}",
                 f"--project={self.project_id}",
             ]
-            event = run_sh(command)
-            if "Updated IAM policy for topic" in event:
-                logger.info(f"✅ Successfully granted: {role}")
-            elif "ERROR" in event:
-                logger.error(f"❌ Failed to grant {role}: {event}")
+            run_sh(command, check=True)
+            logger.info(f"✅ Successfully granted: {role}")
 
     def describe(self):
         is_exist = False
         command = [
-            "gcloud", "pubsub", "topics", "describe",
+            "gcloud",
+            "pubsub",
+            "topics",
+            "describe",
             self.topic_name,
             f"--project={self.project_id}",
         ]
@@ -50,12 +55,17 @@ class PubSub:
         if "name: projects" in event:
             is_exist = True
         elif "ERROR" in event and "NOT_FOUND" not in event:
-            logger.error(f"Unexpected error describing topic ({self.topic_name}): {event}")
+            logger.error(
+                f"Unexpected error describing topic ({self.topic_name}): {event}"
+            )
         return is_exist
 
     def delete(self):
         command = [
-            "gcloud", "pubsub", "topics", "delete",
+            "gcloud",
+            "pubsub",
+            "topics",
+            "delete",
             self.topic_name,
             f"--project={self.project_id}",
         ]
@@ -64,7 +74,10 @@ class PubSub:
 
     def list(self):
         command = [
-            "gcloud", "pubsub", "topics", "list",
+            "gcloud",
+            "pubsub",
+            "topics",
+            "list",
             f"--filter=name.scope(topic):{self.topic_name}",
             f"--project={self.project_id}",
         ]
@@ -73,22 +86,13 @@ class PubSub:
 
     def publish(self, message):
         command = [
-            "gcloud", "pubsub", "topics", "publish", self.topic_name,
+            "gcloud",
+            "pubsub",
+            "topics",
+            "publish",
+            self.topic_name,
             f"--message={message}",
             f"--project={self.project_id}",
         ]
         event = run_sh(command)
         logger.info(event)
-
-
-if __name__ == "__main__":
-    project_id = ""
-    topic_name = "ml-test-pubsub"
-    pubsub = PubSub(
-        topic_name=topic_name,
-        project_id=project_id,
-    )
-    topic_exist = pubsub.describe()
-    print("topic_name: ", topic_exist)
-    if not topic_exist:
-        pubsub.create()

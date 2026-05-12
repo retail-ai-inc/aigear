@@ -21,7 +21,7 @@ class CloudBuild(BaseModel):
     description: str
     repo_owner: str
     repo_name: str
-    event: str = "push" # push | tag | pull
+    event: str = "push"  # push | tag | pull
     branch_pattern: Optional[str] = None
     tag_pattern: Optional[str] = None
 

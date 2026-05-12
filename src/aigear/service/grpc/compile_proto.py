@@ -5,6 +5,7 @@ from aigear.common.logger import Logging
 
 logger = Logging(log_name=__name__).console_logging()
 
+
 def compile_proto():
     base_path = Path(__file__).resolve().parent
     print(str(base_path / "grpc.protos"))
@@ -31,6 +32,7 @@ def compile_proto():
         logger.error(f"gRPC protos compilation failed with code {result}")
     else:
         logger.info("Compiled gRPC protos successfully!")
+
 
 if __name__ == "__main__":
     compile_proto()

@@ -32,7 +32,9 @@ def get_image_name(image_name: str = None, is_service: bool = False) -> str:
     return repo + "-service" if is_service else repo
 
 
-def get_image_path(image_name: str = None, image_tag: str = None, is_service: bool = False) -> str:
+def get_image_path(
+    image_name: str = None, image_tag: str = None, is_service: bool = False
+) -> str:
     """
     Build the full Artifact Registry image path.
 

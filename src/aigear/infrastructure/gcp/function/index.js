@@ -4,9 +4,9 @@ import functions from '@google-cloud/functions-framework';
 // ─── Config ───────────────────────────────────────────────────────────────────
 
 const CONFIG = {
-  projectId: 'PROJECTID',
-  region:    'REGION',
-  topicName: 'TOPICSNAME',
+  projectId: '{{PROJECTID}}',
+  region:    '{{REGION}}',
+  topicName: '{{TOPICSNAME}}',
   // serviceAccount is not hardcoded — fetched at runtime from the metadata server
 
   vm: {
@@ -107,7 +107,7 @@ function validateTask(current) {
  * The venv name comes from env.json → pipelines.<name>.venv_pl,
  * and must match the venv directory created in Dockerfile.pl by uv.
  *
- * Base path is fixed to VENVBASEDIR/ — must stay in sync with:
+ * Base path is fixed to {{VENVBASEDIR}}/ — must stay in sync with:
  *   aigear/common/constant.py  VENV_BASE_DIR = "/opt/venv"
  *
  * The venv name is user-supplied (per pipeline, per Dockerfile), so it is
@@ -130,7 +130,7 @@ function buildPipelineCommand(current) {
     throw new Error(`Invalid venv name "${current.venv}": only alphanumerics, hyphens, and underscores are allowed`);
   }
 
-  return `VENVBASEDIR/${current.venv}/bin/aigear-task workflow ${baseArgs}`;
+  return `{{VENVBASEDIR}}/${current.venv}/bin/aigear-task workflow ${baseArgs}`;
 }
 
 // ─── Startup Script ───────────────────────────────────────────────────────────
