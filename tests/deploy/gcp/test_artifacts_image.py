@@ -307,3 +307,85 @@ def test_registry_delete_correct_command(mock_run_sh):
         "gcloud", "artifacts", "docker", "images", "delete",
         IMAGE_PATH, "--delete-tags", "--quiet",
     ]
+
+
+# ── RegistryImage.retag ───────────────────────────────────────────────────────
+
+@patch("aigear.deploy.gcp.artifacts_image.run_sh")
+def test_registry_retag_returns_true_on_success(mock_run_sh):
+    mock_run_sh.return_value = "Created tag."
+    assert _make_registry().retag(src_tag="v1.0", target_tag="latest") is True
+
+
+@patch("aigear.deploy.gcp.artifacts_image.run_sh")
+def test_registry_retag_returns_false_on_error(mock_run_sh):
+    mock_run_sh.return_value = "ERROR: tag not found"
+    assert _make_registry().retag(src_tag="v1.0", target_tag="latest") is False
+
+
+@patch("aigear.deploy.gcp.artifacts_image.run_sh")
+def test_registry_retag_correct_command(mock_run_sh):
+    mock_run_sh.return_value = "Created tag."
+    _make_registry().retag(src_tag="v1.0", target_tag="latest")
+    cmd = mock_run_sh.call_args[0][0]
+    assert cmd == [
+        "gcloud", "artifacts", "docker", "tags", "add",
+        f"{IMAGE_NAME}:v1.0",
+        f"{IMAGE_NAME}:latest",
+    ]
+
+
+# ── RegistryImage.prune ───────────────────────────────────────────────────────
+
+GCLOUD_TAGS_OUTPUT = "v3\nv2\nv1\n"  # sorted newest-first by gcloud --sort-by=~createTime
+
+
+@patch("aigear.deploy.gcp.artifacts_image.run_sh")
+def test_registry_prune_deletes_oldest_beyond_keep(mock_run_sh):
+    mock_run_sh.side_effect = [
+        GCLOUD_TAGS_OUTPUT,  # list call
+        "Deleted.",           # delete v1
+    ]
+    deleted = _make_registry().prune(keep=2)
+    assert deleted == ["v1"]
+
+
+@patch("aigear.deploy.gcp.artifacts_image.run_sh")
+def test_registry_prune_keeps_all_when_keep_exceeds_count(mock_run_sh):
+    mock_run_sh.return_value = GCLOUD_TAGS_OUTPUT
+    deleted = _make_registry().prune(keep=10)
+    assert deleted == []
+    mock_run_sh.assert_called_once()  # only the list call
+
+
+@patch("aigear.deploy.gcp.artifacts_image.run_sh")
+def test_registry_prune_keep_1_deletes_two(mock_run_sh):
+    mock_run_sh.side_effect = [
+        GCLOUD_TAGS_OUTPUT,
+        "Deleted.",
+        "Deleted.",
+    ]
+    deleted = _make_registry().prune(keep=1)
+    assert deleted == ["v2", "v1"]
+
+
+@patch("aigear.deploy.gcp.artifacts_image.run_sh")
+def test_registry_prune_skips_failed_deletes(mock_run_sh):
+    mock_run_sh.side_effect = [GCLOUD_TAGS_OUTPUT, "ERROR: not found"]
+    deleted = _make_registry().prune(keep=1)
+    assert "v3" not in deleted  # v3 is kept
+    assert deleted == []  # failed delete not included
+
+
+@patch("aigear.deploy.gcp.artifacts_image.run_sh")
+def test_registry_prune_list_command(mock_run_sh):
+    mock_run_sh.return_value = ""
+    _make_registry().prune(keep=1)
+    list_cmd = mock_run_sh.call_args_list[0][0][0]
+    assert list_cmd == [
+        "gcloud", "artifacts", "docker", "images", "list",
+        IMAGE_NAME,
+        "--include-tags",
+        "--sort-by=~createTime",
+        "--format=value(tags)",
+    ]

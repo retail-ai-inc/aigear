@@ -85,6 +85,38 @@ class RegistryImage:
         logger.info(result)
         return "ERROR" not in result
 
+    def retag(self, src_tag: str, target_tag: str) -> bool:
+        result = run_sh([
+            "gcloud", "artifacts", "docker", "tags", "add",
+            f"{self._image_name}:{src_tag}",
+            f"{self._image_name}:{target_tag}",
+        ])
+        logger.info(result)
+        return "ERROR" not in result
+
+    def prune(self, keep: int) -> list[str]:
+        output = run_sh([
+            "gcloud", "artifacts", "docker", "images", "list",
+            self._image_name,
+            "--include-tags",
+            "--sort-by=~createTime",
+            "--format=value(tags)",
+        ])
+        tags = [line.strip() for line in output.strip().splitlines() if line.strip()]
+        to_delete = tags[keep:]
+        deleted = []
+        for tag in to_delete:
+            result = run_sh([
+                "gcloud", "artifacts", "docker", "images", "delete",
+                f"{self._image_name}:{tag}", "--quiet",
+            ])
+            if "ERROR" not in result:
+                deleted.append(tag)
+            else:
+                logger.warning(f"Failed to delete registry tag {tag}: {result}")
+                break
+        return deleted
+
 
 def _validate_dockerfile_venvs(dockerfile_path: str, is_service: bool) -> None:
     """
