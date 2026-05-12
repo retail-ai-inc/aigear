@@ -35,10 +35,7 @@ def train_model(pipeline_version: str) -> None:
         features = pickle.load(f)
     x_train, x_test, y_train, y_test = features
 
-    model = LogisticRegression(
-        max_iter=1000,
-        random_state=42
-    )
+    model = LogisticRegression(max_iter=1000, random_state=42)
     model.fit(x_train, y_train)
     y_pred = model.predict(x_test)
     print("Accuracy:", accuracy_score(y_test, y_pred))
@@ -52,7 +49,9 @@ def train_model(pipeline_version: str) -> None:
         bucket_name=env_config.aigear.gcp.bucket.bucket_name,
         bucket_on=gcs_switch,
     )
-    model_name = env_config.pipelines.logistic_regression.training.parameters.logistic_model
+    model_name = (
+        env_config.pipelines.logistic_regression.training.parameters.logistic_model
+    )
     model_path = training_management.get_local_path(model_name)
     save_model(model, model_path)
     training_management.upload(model_name)

@@ -3,13 +3,14 @@ import stat
 from pathlib import Path
 from typing import List, Optional
 
+from aigear.common.constant import DOCKERFILE_PIPELINE, DOCKERFILE_SERVICE
 
 
 class Project:
     def __init__(
         self,
         name: str = "template_project",
-        pipeline_versions: Optional[List[str]] = None
+        pipeline_versions: Optional[List[str]] = None,
     ):
         """
         Used to manage project related functions and information
@@ -35,28 +36,34 @@ class Project:
 
         (project_path / ".gitignore").touch(exist_ok=True)
         (project_path / "docker-compose-ms.yml").touch(exist_ok=True)
-        (project_path / "Dockerfile.ms").touch(exist_ok=True)
-        (project_path / "Dockerfile.ms.dockerignore").touch(exist_ok=True)
+        (project_path / DOCKERFILE_SERVICE).touch(exist_ok=True)
+        (project_path / f"{DOCKERFILE_SERVICE}.dockerignore").touch(exist_ok=True)
         (project_path / "requirements_ms.txt").touch(exist_ok=True)
 
         (project_path / "docker-compose-pl.yml").touch(exist_ok=True)
-        (project_path / "Dockerfile.pl").touch(exist_ok=True)
-        (project_path / "Dockerfile.pl.dockerignore").touch(exist_ok=True)
+        (project_path / DOCKERFILE_PIPELINE).touch(exist_ok=True)
+        (project_path / f"{DOCKERFILE_PIPELINE}.dockerignore").touch(exist_ok=True)
         (project_path / "requirements_pl.txt").touch(exist_ok=True)
 
         (project_path / "env.sample.json").touch(exist_ok=True)
         (project_path / "README.md").touch(exist_ok=True)
 
-        self._copy_file(self._template_path, project_path / "cloudbuild" / "cloudbuild.yaml")
+        self._copy_file(
+            self._template_path, project_path / "cloudbuild" / "cloudbuild.yaml"
+        )
 
         self._copy_file(self._template_path, project_path / "docker-compose-ms.yml")
-        self._copy_file(self._template_path, project_path / "Dockerfile.ms")
-        self._copy_file(self._template_path, project_path / "Dockerfile.ms.dockerignore")
+        self._copy_file(self._template_path, project_path / DOCKERFILE_SERVICE)
+        self._copy_file(
+            self._template_path, project_path / f"{DOCKERFILE_SERVICE}.dockerignore"
+        )
         self._copy_file(self._template_path, project_path / "requirements_ms.txt")
 
         self._copy_file(self._template_path, project_path / "docker-compose-pl.yml")
-        self._copy_file(self._template_path, project_path / "Dockerfile.pl")
-        self._copy_file(self._template_path, project_path / "Dockerfile.pl.dockerignore")
+        self._copy_file(self._template_path, project_path / DOCKERFILE_PIPELINE)
+        self._copy_file(
+            self._template_path, project_path / f"{DOCKERFILE_PIPELINE}.dockerignore"
+        )
         self._copy_file(self._template_path, project_path / "requirements_pl.txt")
 
         self._copy_file(self._template_path, project_path / "env.sample.json")
@@ -74,7 +81,7 @@ class Project:
             training_dir.mkdir(parents=True, exist_ok=True)
             model_service = pipeline_dir / "model_service"
             model_service.mkdir(parents=True, exist_ok=True)
-        
+
         self._install_git_hooks(project_path)
         self._print_tree(project_path)
 
@@ -95,9 +102,13 @@ class Project:
         hook_dst = git_hooks_dir / "pre-commit"
         if hook_dst.exists():
             return
-        content = (self._template_path / "pre-commit").read_bytes().replace(b"\r\n", b"\n")
+        content = (
+            (self._template_path / "pre-commit").read_bytes().replace(b"\r\n", b"\n")
+        )
         hook_dst.write_bytes(content)
-        hook_dst.chmod(hook_dst.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+        hook_dst.chmod(
+            hook_dst.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH
+        )
         print(f"Installed git hook: {hook_dst}")
 
     @staticmethod
@@ -106,5 +117,6 @@ class Project:
             shutil.copy(template_path / file_path.name, file_path)
             print(f"Copied {file_path.name} to ({file_path})")
 
+
 if __name__ == "__main__":
-    Project('test').init()
+    Project("test").init()

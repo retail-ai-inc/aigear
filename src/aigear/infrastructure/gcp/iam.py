@@ -1,9 +1,11 @@
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 from aigear.common import run_sh
 from aigear.common.logger import Logging
 
 logger = Logging(log_name=__name__).console_logging()
+
 
 class ServiceAccounts:
     def __init__(
@@ -22,7 +24,10 @@ class ServiceAccounts:
     def create(self):
         if self.account_name and self.project_id:
             command = [
-                "gcloud", "iam", "service-accounts", "create",
+                "gcloud",
+                "iam",
+                "service-accounts",
+                "create",
                 self.account_name,
                 f"--project={self.project_id}",
             ]
@@ -30,34 +35,37 @@ class ServiceAccounts:
                 command.append(f"--description={self.description}")
             if self.display_name:
                 command.append(f"--display-name={self.display_name}")
-            event = run_sh(command)
-            if "ERROR" in event:
-                logger.error(f"Failed to create service account ({self.account_name}): {event}")
-            elif not event.strip():
-                logger.info("The currently logged in GCP account does not have owner privileges.")
+            run_sh(command, check=True)
 
     def delete(self):
         command = [
-            "gcloud", "iam", "service-accounts", "delete",
+            "gcloud",
+            "iam",
+            "service-accounts",
+            "delete",
             self.sa_email,
             f"--project={self.project_id}",
             "--quiet",
         ]
         event = run_sh(command)
-        if event == "":
-            logger.info("The currently logged in GCP account does not have owner privileges.")
-        else:
+        if event.strip():
             logger.info(event)
 
     def _wait_for_sa_ready(self, retries: int = 10, interval: int = 6):
         """Wait until the service account is visible to GCP IAM (propagation delay)."""
         for i in range(retries):
-            event = run_sh(["gcloud", "iam", "service-accounts", "describe", self.sa_email])
+            event = run_sh(
+                ["gcloud", "iam", "service-accounts", "describe", self.sa_email]
+            )
             if "name: projects" in event:
                 return
-            logger.info(f"Waiting for service account propagation... ({i + 1}/{retries})")
+            logger.info(
+                f"Waiting for service account propagation... ({i + 1}/{retries})"
+            )
             time.sleep(interval)
-        raise RuntimeError(f"Service account {self.sa_email} did not become available after {retries * interval}s.")
+        raise RuntimeError(
+            f"Service account {self.sa_email} did not become available after {retries * interval}s."
+        )
 
     def add_iam_policy_binding(self):
         self._wait_for_sa_ready()
@@ -67,50 +75,70 @@ class ServiceAccounts:
             "roles/container.developer",
         ]
 
-        for role in roles:
-            command = [
-                "gcloud", "projects", "add-iam-policy-binding", self.project_id,
-                f"--member=serviceAccount:{self.sa_email}",
-                f"--role={role}",
-                "--condition=None"
-            ]
-            event = run_sh(command)
-            if "Updated IAM policy" in event:
+        # Project-level bindings share the same IAM policy ETag, so they must
+        # run sequentially to avoid optimistic-concurrency conflicts.
+        def _bind_project_roles():
+            for role in roles:
+                command = [
+                    "gcloud",
+                    "projects",
+                    "add-iam-policy-binding",
+                    self.project_id,
+                    f"--member=serviceAccount:{self.sa_email}",
+                    f"--role={role}",
+                    "--condition=None",
+                ]
+                run_sh(command, check=True)
                 logger.info(f"✅ Successfully granted: {role}")
-            elif "ERROR" in event:
-                logger.error(f"❌ Failed: {event}")
 
-        # SA level self binding, precise authorization
-        command = [
-            "gcloud", "iam", "service-accounts", "add-iam-policy-binding",
-            self.sa_email,
-            f"--member=serviceAccount:{self.sa_email}",
-            "--role=roles/iam.serviceAccountUser",
-            f"--project={self.project_id}",
-        ]
-        event = run_sh(command)
-        if "Updated IAM policy" in event:
-            logger.info("✅ Successfully granted: roles/iam.serviceAccountUser (self-binding)")
-        elif "ERROR" in event:
-            logger.error(f"❌ Failed self-binding: {event}")
+        # SA self-binding operates on a different resource (SA IAM policy, not
+        # project IAM policy), so it can safely run in parallel.
+        def _bind_sa_self():
+            command = [
+                "gcloud",
+                "iam",
+                "service-accounts",
+                "add-iam-policy-binding",
+                self.sa_email,
+                f"--member=serviceAccount:{self.sa_email}",
+                "--role=roles/iam.serviceAccountUser",
+                f"--project={self.project_id}",
+            ]
+            run_sh(command, check=True)
+            logger.info(
+                "✅ Successfully granted: roles/iam.serviceAccountUser (self-binding)"
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            f_project = executor.submit(_bind_project_roles)
+            f_sa = executor.submit(_bind_sa_self)
+            f_project.result()
+            f_sa.result()
 
     def describe(self):
         is_exist = False
-        command = [
-            "gcloud", "iam", "service-accounts", "describe", self.sa_email
-        ]
+        command = ["gcloud", "iam", "service-accounts", "describe", self.sa_email]
         event = run_sh(command)
         if "name: projects" in event:
             is_exist = True
-        elif "ERROR" in event and "NOT_FOUND" not in event and "PERMISSION_DENIED" not in event:
-            logger.error(f"Unexpected error describing service account ({self.sa_email}): {event}")
+        elif (
+            "ERROR" in event
+            and "NOT_FOUND" not in event
+            and "PERMISSION_DENIED" not in event
+        ):
+            logger.error(
+                f"Unexpected error describing service account ({self.sa_email}): {event}"
+            )
         return is_exist
 
     def check_iam(self):
         is_owner = False
         account_cmd = run_sh(["gcloud", "config", "get-value", "account"]).strip()
         command = [
-            "gcloud", "projects", "get-iam-policy", self.project_id,
+            "gcloud",
+            "projects",
+            "get-iam-policy",
+            self.project_id,
             "--flatten=bindings[].members",
             "--format=table(bindings.role)",
             f"--filter=bindings.members:{account_cmd}",
@@ -121,10 +149,3 @@ class ServiceAccounts:
         else:
             logger.info(event or "No owner role found.")
         return is_owner
-
-if __name__ == "__main__":
-    service_accounts = ServiceAccounts(
-        project_id="",
-        account_name="test-pipelines",
-    )
-    service_accounts.add_iam_policy_binding()

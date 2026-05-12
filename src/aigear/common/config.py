@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Type, TypeVar
 
@@ -13,10 +14,12 @@ from aigear.common.schema.config_schema import Config
 T = TypeVar("T", bound=BaseModel)
 logger = Logging(log_name=__name__).console_logging()
 
-ENV_PATH = Path.cwd() / "env.json"
+_env_override = os.environ.get("AIGEAR_ENV_PATH")
+ENV_PATH = Path(_env_override) if _env_override else Path.cwd() / "env.json"
 
 
 # ─── Raw config loader ───────────────────────────────────────────────────────
+
 
 def _load_raw(env_path: Path = ENV_PATH) -> dict:
     """
@@ -30,6 +33,7 @@ def _load_raw(env_path: Path = ENV_PATH) -> dict:
 
 
 # ─── Unified config ──────────────────────────────────────────────────────────
+
 
 class AppConfig:
     """
@@ -50,6 +54,7 @@ class AppConfig:
     """
 
     _raw: dict | None = None
+    _aigear: "Config | None" = None
 
     @classmethod
     def _ensure_loaded(cls) -> dict:
@@ -72,7 +77,9 @@ class AppConfig:
     @classmethod
     def aigear(cls) -> Config:
         """Return the validated aigear config as a typed Pydantic model."""
-        return Config.model_validate(cls._ensure_loaded().get("aigear", {}))
+        if cls._aigear is None:
+            cls._aigear = Config.model_validate(cls._ensure_loaded().get("aigear", {}))
+        return cls._aigear
 
     # ── pipelines section ────────────────────────────────────────────────────
 
@@ -135,6 +142,7 @@ class AppConfig:
 # These allow existing code that imports AigearConfig / PipelinesConfig / EnvConfig
 # to keep working without modification.
 
+
 class AigearConfig:
     @classmethod
     def get_config(cls) -> Config:
@@ -171,6 +179,7 @@ class EnvConfig:
 
 
 # ─── Module-level helpers (backwards compatible) ─────────────────────────────
+
 
 def get_project_name() -> str | None:
     return AppConfig.project_name()

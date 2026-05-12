@@ -4,8 +4,6 @@ import json
 import threading
 from typing import Any, Dict, Optional
 
-from google.cloud import logging as gcp_logging
-
 # Thread-local log buffer — set to a list to enable buffering for the current thread
 _thread_local = threading.local()
 
@@ -15,7 +13,7 @@ _thread_local = threading.local()
 # ----------------------------
 class _ThreadAwareStreamHandler(logging.StreamHandler):
     def emit(self, record):
-        buf = getattr(_thread_local, 'log_buffer', None)
+        buf = getattr(_thread_local, "log_buffer", None)
         if buf is not None:
             buf.append(self.format(record))
         else:
@@ -51,7 +49,7 @@ class Logging:
     ):
         self.log_name = log_name
         self.project_id = project_id
-        self._client: Optional[gcp_logging.Client] = None
+        self._client = None
         self._cloud_logger = None
 
     # ----------------------------
@@ -77,6 +75,8 @@ class Logging:
             return logger
 
         if self._client is None:
+            from google.cloud import logging as gcp_logging
+
             self._client = gcp_logging.Client(project=self.project_id)
             self._cloud_logger = self._client.logger(self.log_name)
 

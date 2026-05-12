@@ -39,7 +39,9 @@ def get_argument() -> argparse.Namespace:
     )
     # KMS config overrides — required when env.json is not yet available (e.g. --decrypt)
     parser.add_argument("--project-id", default=None, help="GCP project ID.")
-    parser.add_argument("--location", default=None, help="KMS location (e.g. asia-northeast1).")
+    parser.add_argument(
+        "--location", default=None, help="KMS location (e.g. asia-northeast1)."
+    )
     parser.add_argument("--keyring", default=None, help="KMS keyring name.")
     parser.add_argument("--key", default=None, help="KMS key name.")
     return parser.parse_args()

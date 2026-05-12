@@ -11,7 +11,7 @@ class AssetManagement:
         data_type: Literal["dataset", "feature", "training"],
         project_id: str | None = None,
         bucket_name: str | None = None,
-        bucket_on: bool = True
+        bucket_on: bool = True,
     ):
         self.pipeline_version = pipeline_version
         self.project_dir = Path.cwd()

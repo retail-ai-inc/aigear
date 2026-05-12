@@ -12,6 +12,7 @@ from sentry_sdk import init as sentry_init
 from sentry_sdk.integrations.grpc.server import ServerInterceptor
 
 from aigear.common.config import PipelinesConfig, get_environment
+from aigear.service.grpc.constant import DEFAULT_GRPC_HOST, DEFAULT_GRPC_PORT
 from aigear.common.loading_module import LoadModule
 from aigear.common.logger import Logging
 from aigear.service.grpc.grpc_package import grpc_features, thread_config
@@ -26,7 +27,7 @@ class MLServicer(grpc_pb2_grpc.MLServicer):
 
     def Predict(self, request, context):
         logger.info("Predict function called:")
-        request = MessageToDict(request).get('request', {})
+        request = MessageToDict(request).get("request", {})
         logger.info(f"Model input: {request}.")
         model_out = self.model_service.predict(request)
         logger.info(f"Model output: {model_out}.")
@@ -52,10 +53,15 @@ def _run_server(bind_address: str, model_instance: Any, grpc_options: dict) -> N
                 # send keepalive ping every x second, default is 2 hours
                 ("grpc.keepalive_timeout_ms", keepalive_timeout * 1000),
                 # keepalive ping time out after x seconds, default is 20 seconds
-                ("grpc.keepalive_permit_without_calls", True),  # allow keepalive pings when there are no gRPC calls
+                (
+                    "grpc.keepalive_permit_without_calls",
+                    True,
+                ),  # allow keepalive pings when there are no gRPC calls
             ]
         )
-        logger.info(f"gRPC has added Keepalive. interval time: {keepalive_time}s, timeout: {keepalive_timeout}s.")
+        logger.info(
+            f"gRPC has added Keepalive. interval time: {keepalive_time}s, timeout: {keepalive_timeout}s."
+        )
 
     max_workers = grpc_options.get("multi_processing", {}).get("thread_count", 5)
     logger.info(f"Enable thread count: {max_workers}.")
@@ -79,7 +85,9 @@ def grpc_service(pipeline_version: str, model_class_path: str) -> None:
     # Get environment variables
     pipeline_version_config = PipelinesConfig.get_version_config(pipeline_version)
     if pipeline_version_config is None:
-        logger.error(f"No pipeline_version({pipeline_version}) config found in `env.json`.")
+        logger.error(
+            f"No pipeline_version({pipeline_version}) config found in `env.json`."
+        )
         return
 
     ms_config = pipeline_version_config.get("model_service", {})
@@ -111,12 +119,12 @@ def grpc_service(pipeline_version: str, model_class_path: str) -> None:
     # grpc
     is_windows = platform.system().lower() == "windows"
     process_switch = multi_processing.get("on", False)
-    port = int(grpc_config.get("port", "50051"))
-    service_host = grpc_config.get("service_host", "0.0.0.0")
+    port = int(grpc_config.get("port", DEFAULT_GRPC_PORT))
+    service_host = grpc_config.get("service_host", DEFAULT_GRPC_HOST)
     if process_switch and not is_windows:
         # Move PyTorch model weights to shared memory to avoid COW on C++ refcount updates
-        inner_model = getattr(model_instance, 'model', None)
-        if callable(getattr(inner_model, 'share_memory', None)):
+        inner_model = getattr(model_instance, "model", None)
+        if callable(getattr(inner_model, "share_memory", None)):
             inner_model.share_memory()
         # Freeze GC before fork to prevent GC scanning from dirtying shared pages (COW)
         gc.freeze()
@@ -129,7 +137,11 @@ def grpc_service(pipeline_version: str, model_class_path: str) -> None:
             for _ in range(process_count):
                 worker = multiprocessing.Process(
                     target=_run_server,
-                    args=(bind_address, model_instance, grpc_config,)
+                    args=(
+                        bind_address,
+                        model_instance,
+                        grpc_config,
+                    ),
                 )
                 worker.start()
                 workers.append(worker)
@@ -140,5 +152,5 @@ def grpc_service(pipeline_version: str, model_class_path: str) -> None:
         _run_server(bind_address, model_instance, grpc_config)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     grpc_service(pipeline_version="", model_class_path="")
