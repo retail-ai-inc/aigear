@@ -80,33 +80,6 @@ def test_retag_without_target_tag_exits():
             cli_mod.docker_image()
 
 
-# ── --prune ───────────────────────────────────────────────────────────────────
-
-def test_prune_dispatches_with_keep():
-    with patch("sys.argv", ["cmd", "--prune", "--keep", "5"]):
-        import aigear.cli.artifacts_image as cli_mod
-        importlib.reload(cli_mod)
-        with patch("aigear.cli.artifacts_image.prune_artifacts_image", return_value=True) as mock_fn:
-            cli_mod.docker_image()
-    mock_fn.assert_called_once_with(keep=5, is_service=False, is_push=False)
-
-
-def test_prune_without_keep_exits():
-    with patch("sys.argv", ["cmd", "--prune"]):
-        import aigear.cli.artifacts_image as cli_mod
-        importlib.reload(cli_mod)
-        with pytest.raises(SystemExit):
-            cli_mod.docker_image()
-
-
-def test_prune_keep_zero_exits():
-    with patch("sys.argv", ["cmd", "--prune", "--keep", "0"]):
-        import aigear.cli.artifacts_image as cli_mod
-        importlib.reload(cli_mod)
-        with pytest.raises(SystemExit):
-            cli_mod.docker_image()
-
-
 # ── no action ─────────────────────────────────────────────────────────────────
 
 def test_no_action_exits():

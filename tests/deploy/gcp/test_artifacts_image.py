@@ -8,7 +8,6 @@ from aigear.deploy.gcp.artifacts_image import (
     create_artifacts_image,
     delete_artifacts_image,
     retag_artifacts_image,
-    prune_artifacts_image,
     _validate_dockerfile_venvs,
 )
 
@@ -169,77 +168,6 @@ def test_validate_passes_when_no_venv_configured(tmp_path):
         _validate_dockerfile_venvs(str(dockerfile), is_service=False)  # must not raise
 
 
-# ── LocalImage.prune ──────────────────────────────────────────────────────────
-
-DOCKER_IMAGES_OUTPUT = (
-    "v3\t2024-03-01 10:00:00 +0000 UTC\n"
-    "v2\t2024-02-01 10:00:00 +0000 UTC\n"
-    "v1\t2024-01-01 10:00:00 +0000 UTC\n"
-)
-
-
-@patch("aigear.deploy.gcp.artifacts_image.run_sh_stream")
-@patch("aigear.deploy.gcp.artifacts_image.run_sh")
-def test_local_prune_deletes_oldest_beyond_keep(mock_run_sh, mock_stream):
-    mock_run_sh.return_value = DOCKER_IMAGES_OUTPUT
-    mock_stream.return_value = 0
-    deleted = _make_local().prune(keep=2)
-    assert deleted == ["v1"]
-    mock_stream.assert_called_once_with(["docker", "rmi", f"{IMAGE_NAME}:v1"])
-
-
-@patch("aigear.deploy.gcp.artifacts_image.run_sh_stream")
-@patch("aigear.deploy.gcp.artifacts_image.run_sh")
-def test_local_prune_keeps_all_when_keep_exceeds_count(mock_run_sh, mock_stream):
-    mock_run_sh.return_value = DOCKER_IMAGES_OUTPUT
-    deleted = _make_local().prune(keep=10)
-    assert deleted == []
-    mock_stream.assert_not_called()
-
-
-@patch("aigear.deploy.gcp.artifacts_image.run_sh_stream")
-@patch("aigear.deploy.gcp.artifacts_image.run_sh")
-def test_local_prune_keep_1_deletes_all_but_newest(mock_run_sh, mock_stream):
-    mock_run_sh.return_value = DOCKER_IMAGES_OUTPUT
-    mock_stream.return_value = 0
-    deleted = _make_local().prune(keep=1)
-    assert deleted == ["v2", "v1"]
-
-
-@patch("aigear.deploy.gcp.artifacts_image.run_sh_stream")
-@patch("aigear.deploy.gcp.artifacts_image.run_sh")
-def test_local_prune_skips_failed_deletes(mock_run_sh, mock_stream):
-    mock_run_sh.return_value = DOCKER_IMAGES_OUTPUT
-    mock_stream.return_value = 1  # simulate rmi failure
-    deleted = _make_local().prune(keep=1)
-    assert deleted == []
-
-
-@patch("aigear.deploy.gcp.artifacts_image.run_sh")
-def test_local_prune_list_command(mock_run_sh):
-    mock_run_sh.return_value = ""
-    _make_local().prune(keep=1)
-    list_cmd = mock_run_sh.call_args[0][0]
-    assert list_cmd == [
-        "docker", "images", "--format", "{{.Tag}}\t{{.CreatedAt}}", IMAGE_NAME
-    ]
-
-
-@patch("aigear.deploy.gcp.artifacts_image.run_sh_stream")
-@patch("aigear.deploy.gcp.artifacts_image.run_sh")
-def test_local_prune_never_deletes_latest(mock_run_sh, mock_stream):
-    mock_run_sh.return_value = (
-        "latest\t2024-04-01 10:00:00 +0000 UTC\n"
-        "v3\t2024-03-01 10:00:00 +0000 UTC\n"
-        "v2\t2024-02-01 10:00:00 +0000 UTC\n"
-        "v1\t2024-01-01 10:00:00 +0000 UTC\n"
-    )
-    mock_stream.return_value = 0
-    deleted = _make_local().prune(keep=1)
-    assert "latest" not in deleted
-    assert deleted == ["v2", "v1"]
-
-
 def _make_registry() -> RegistryImage:
     return RegistryImage(image_path=IMAGE_PATH)
 
@@ -358,74 +286,6 @@ def test_registry_retag_correct_command(mock_run_sh):
     ]
 
 
-# ── RegistryImage.prune ───────────────────────────────────────────────────────
-
-GCLOUD_TAGS_OUTPUT = "v3\nv2\nv1\n"  # sorted newest-first by gcloud --sort-by=~createTime
-
-
-@patch("aigear.deploy.gcp.artifacts_image.run_sh")
-def test_registry_prune_deletes_oldest_beyond_keep(mock_run_sh):
-    mock_run_sh.side_effect = [
-        GCLOUD_TAGS_OUTPUT,  # list call
-        "Deleted.",           # delete v1
-    ]
-    deleted = _make_registry().prune(keep=2)
-    assert deleted == ["v1"]
-
-
-@patch("aigear.deploy.gcp.artifacts_image.run_sh")
-def test_registry_prune_keeps_all_when_keep_exceeds_count(mock_run_sh):
-    mock_run_sh.return_value = GCLOUD_TAGS_OUTPUT
-    deleted = _make_registry().prune(keep=10)
-    assert deleted == []
-    mock_run_sh.assert_called_once()  # only the list call
-
-
-@patch("aigear.deploy.gcp.artifacts_image.run_sh")
-def test_registry_prune_keep_1_deletes_two(mock_run_sh):
-    mock_run_sh.side_effect = [
-        GCLOUD_TAGS_OUTPUT,
-        "Deleted.",
-        "Deleted.",
-    ]
-    deleted = _make_registry().prune(keep=1)
-    assert deleted == ["v2", "v1"]
-
-
-@patch("aigear.deploy.gcp.artifacts_image.run_sh")
-def test_registry_prune_skips_failed_deletes(mock_run_sh):
-    # keep=1, 3 tags (v3,v2,v1) → delete v2 (fails) and v1 (succeeds)
-    mock_run_sh.side_effect = [GCLOUD_TAGS_OUTPUT, "ERROR: not found", "Deleted."]
-    deleted = _make_registry().prune(keep=1)
-    assert deleted == ["v1"]  # v2 failed but v1 still deleted
-
-
-@patch("aigear.deploy.gcp.artifacts_image.run_sh")
-def test_registry_prune_list_command(mock_run_sh):
-    mock_run_sh.return_value = ""
-    _make_registry().prune(keep=1)
-    list_cmd = mock_run_sh.call_args_list[0][0][0]
-    assert list_cmd == [
-        "gcloud", "artifacts", "docker", "images", "list",
-        IMAGE_NAME,
-        "--include-tags",
-        "--sort-by=~createTime",
-        "--format=value(tags)",
-    ]
-
-
-@patch("aigear.deploy.gcp.artifacts_image.run_sh")
-def test_registry_prune_never_deletes_latest(mock_run_sh):
-    mock_run_sh.side_effect = [
-        "latest\nv3\nv2\nv1\n",  # list call — latest appears first
-        "Deleted.",               # delete v2
-        "Deleted.",               # delete v1
-    ]
-    deleted = _make_registry().prune(keep=1)
-    assert "latest" not in deleted
-    assert deleted == ["v2", "v1"]
-
-
 # ── top-level function helpers ────────────────────────────────────────────────
 
 def _patch_image_path(is_service=False):
@@ -537,23 +397,3 @@ def test_retag_and_push_calls_both():
     mock_retag.assert_called_once_with(src_tag="v1.0", target_tag="latest")
 
 
-# ── prune_artifacts_image ─────────────────────────────────────────────────────
-
-def test_prune_local_only():
-    with _patch_config(), _patch_image_path():
-        with patch.object(LocalImage, "prune", return_value=["v1"]) as mock_prune, \
-             patch.object(RegistryImage, "prune") as mock_reg_prune:
-            result = prune_artifacts_image(keep=2, is_push=False)
-    assert result is True
-    mock_prune.assert_called_once_with(keep=2)
-    mock_reg_prune.assert_not_called()
-
-
-def test_prune_and_push_calls_both():
-    with _patch_config(), _patch_image_path():
-        with patch.object(LocalImage, "prune", return_value=[]), \
-             patch.object(RegistryImage, "configure_auth"), \
-             patch.object(RegistryImage, "prune", return_value=["v1"]) as mock_reg_prune:
-            result = prune_artifacts_image(keep=2, is_push=True)
-    assert result is True
-    mock_reg_prune.assert_called_once_with(keep=2)

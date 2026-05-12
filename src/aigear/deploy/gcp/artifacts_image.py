@@ -44,31 +44,6 @@ class LocalImage:
     def remove(self) -> bool:
         return run_sh_stream(["docker", "rmi", self.image_path]) == 0
 
-    def prune(self, keep: int) -> list[str]:
-        output = run_sh(
-            [
-                "docker",
-                "images",
-                "--format",
-                "{{.Tag}}\t{{.CreatedAt}}",
-                self._image_name,
-            ]
-        )
-        entries = []
-        for line in output.strip().splitlines():
-            parts = line.strip().split("\t", 1)
-            if len(parts) == 2 and parts[0] != "latest":
-                entries.append((parts[0], parts[1]))
-        entries.sort(key=lambda x: x[1], reverse=True)  # newest first
-        to_delete = entries[keep:]
-        deleted = []
-        for tag, _ in to_delete:
-            if run_sh_stream(["docker", "rmi", f"{self._image_name}:{tag}"]) == 0:
-                deleted.append(tag)
-            else:
-                logger.warning(f"Failed to remove local image tag: {tag}")
-        return deleted
-
 
 class RegistryImage:
     def __init__(self, image_path: str):
@@ -130,44 +105,6 @@ class RegistryImage:
         logger.info(result)
         return "ERROR" not in result
 
-    def prune(self, keep: int) -> list[str]:
-        output = run_sh(
-            [
-                "gcloud",
-                "artifacts",
-                "docker",
-                "images",
-                "list",
-                self._image_name,
-                "--include-tags",
-                "--sort-by=~createTime",
-                "--format=value(tags)",
-            ]
-        )
-        tags = [
-            line.strip()
-            for line in output.strip().splitlines()
-            if line.strip() and line.strip() != "latest"
-        ]
-        to_delete = tags[keep:]
-        deleted = []
-        for tag in to_delete:
-            result = run_sh(
-                [
-                    "gcloud",
-                    "artifacts",
-                    "docker",
-                    "images",
-                    "delete",
-                    f"{self._image_name}:{tag}",
-                    "--quiet",
-                ]
-            )
-            if "ERROR" not in result:
-                deleted.append(tag)
-            else:
-                logger.warning(f"Failed to delete registry tag {tag}: {result}")
-        return deleted
 
 
 def _validate_dockerfile_venvs(dockerfile_path: str, is_service: bool) -> None:
@@ -306,21 +243,3 @@ def retag_artifacts_image(
     return True
 
 
-def prune_artifacts_image(keep: int, is_service=False, is_push=False) -> bool:
-    """Returns True always (prune continues on individual failures)."""
-    log_tag = "model service" if is_service else "pipeline"
-    aigear_config = AigearConfig.get_config()
-    image_path = get_image_path(is_service=is_service)
-    local = LocalImage(image_path)
-    registry = RegistryImage(image_path)
-
-    deleted_local = local.prune(keep=keep)
-    logger.info(f"Pruned {len(deleted_local)} local {log_tag} tags: {deleted_local}")
-
-    if is_push:
-        registry.configure_auth(aigear_config.gcp.location)
-        deleted_registry = registry.prune(keep=keep)
-        logger.info(
-            f"Pruned {len(deleted_registry)} registry {log_tag} tags: {deleted_registry}"
-        )
-    return True

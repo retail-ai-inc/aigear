@@ -5,7 +5,6 @@ from aigear.deploy.gcp.artifacts_image import (
     create_artifacts_image,
     delete_artifacts_image,
     retag_artifacts_image,
-    prune_artifacts_image,
 )
 
 
@@ -14,10 +13,11 @@ def get_argument() -> argparse.Namespace:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--create", action="store_true", help="Build Docker image(s) locally.")
+    group.add_argument(
+        "--create", action="store_true", help="Build Docker image(s) locally."
+    )
     group.add_argument("--delete", action="store_true", help="Delete Docker image(s).")
     group.add_argument("--retag", action="store_true", help="Re-tag a Docker image.")
-    group.add_argument("--prune", action="store_true", help="Remove old tags, keeping the latest N.")
     parser.add_argument(
         "--push",
         action="store_true",
@@ -28,15 +28,18 @@ def get_argument() -> argparse.Namespace:
         default=None,
         help="Path of Dockerfile. If omitted with --create, operates on all default images.",
     )
-    parser.add_argument("--build_context", default=".", help="Docker build context path.")
+    parser.add_argument(
+        "--build_context", default=".", help="Docker build context path."
+    )
     parser.add_argument(
         "--is_service",
         action="store_true",
         help="Target the model service image (default: pipeline image).",
     )
     parser.add_argument("--src_tag", default=None, help="Source tag for --retag.")
-    parser.add_argument("--target_tag", default=None, help="Destination tag for --retag.")
-    parser.add_argument("--keep", type=int, default=None, help="Tags to retain for --prune (>= 1).")
+    parser.add_argument(
+        "--target_tag", default=None, help="Destination tag for --retag."
+    )
 
     args = parser.parse_args()
 
@@ -44,15 +47,13 @@ def get_argument() -> argparse.Namespace:
         parser.error("--retag requires --src_tag.")
     if args.retag and args.target_tag is None:
         parser.error("--retag requires --target_tag.")
-    if args.prune and args.keep is None:
-        parser.error("--prune requires --keep N.")
-    if args.prune and args.keep < 1:
-        parser.error("--keep must be >= 1.")
 
     return args
 
 
-def _run_operation(args: argparse.Namespace, dockerfile_path=None, is_service=False) -> bool:
+def _run_operation(
+    args: argparse.Namespace, dockerfile_path=None, is_service=False
+) -> bool:
     if args.create:
         return create_artifacts_image(
             dockerfile_path=dockerfile_path,
@@ -70,8 +71,6 @@ def _run_operation(args: argparse.Namespace, dockerfile_path=None, is_service=Fa
             is_service=is_service,
             is_push=args.push,
         )
-    if args.prune:
-        return prune_artifacts_image(keep=args.keep, is_service=is_service, is_push=args.push)
     return False
 
 
@@ -85,18 +84,26 @@ def docker_image():
             (DOCKERFILE_SERVICE, True),
         ]:
             print(f"Processing image: '{dockerfile}'...")
-            success = _run_operation(args, dockerfile_path=dockerfile, is_service=is_service)
+            success = _run_operation(
+                args, dockerfile_path=dockerfile, is_service=is_service
+            )
             if success:
                 print(f"The image({dockerfile}) operation completed.")
             else:
-                print(f"The image({dockerfile}) operation failed, please check the errors above.")
+                print(
+                    f"The image({dockerfile}) operation failed, please check the errors above."
+                )
             print("-----------------------------------")
     else:
         label = args.dockerfile_path or ("service" if args.is_service else "pipeline")
         print(f"Processing image: '{label}'...")
-        success = _run_operation(args, dockerfile_path=args.dockerfile_path, is_service=args.is_service)
+        success = _run_operation(
+            args, dockerfile_path=args.dockerfile_path, is_service=args.is_service
+        )
         if success:
             print(f"The image({label}) operation completed.")
         else:
-            print(f"The image({label}) operation failed, please check the errors above.")
+            print(
+                f"The image({label}) operation failed, please check the errors above."
+            )
         print("-----------------------------------")
