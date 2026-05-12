@@ -1,47 +1,89 @@
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, call
 
 from aigear.common.constant import VENV_BASE_DIR
-from aigear.deploy.gcp.artifacts_image import ArtifactsImage, _validate_dockerfile_venvs
+from aigear.deploy.gcp.artifacts_image import LocalImage, _validate_dockerfile_venvs
+
+IMAGE_PATH = "asia-northeast1-docker.pkg.dev/proj/repo/my-image:latest"
+IMAGE_NAME = "asia-northeast1-docker.pkg.dev/proj/repo/my-image"
 
 
-def _make_artifacts_image(image_name="asia-northeast1-docker.pkg.dev/proj/repo/my-image:latest"):
-    return ArtifactsImage(artifacts_image=image_name)
+def _make_local() -> LocalImage:
+    return LocalImage(image_path=IMAGE_PATH)
 
 
-# ── ArtifactsImage.create_image ──────────────────────────────────────────────
+# ── LocalImage.build ─────────────────────────────────────────────────────────
 
 @patch("aigear.deploy.gcp.artifacts_image.run_sh_stream")
-def test_create_image_returns_true_on_success(mock_stream):
+def test_local_build_returns_true_on_success(mock_stream):
     mock_stream.return_value = 0
-    ai = _make_artifacts_image()
-    assert ai.create_image(dockerfile_path="Dockerfile.pl") is True
+    assert _make_local().build(dockerfile_path="Dockerfile.pl") is True
 
 
 @patch("aigear.deploy.gcp.artifacts_image.run_sh_stream")
-def test_create_image_returns_false_on_failure(mock_stream):
+def test_local_build_returns_false_on_failure(mock_stream):
     mock_stream.return_value = 1
-    ai = _make_artifacts_image()
-    assert ai.create_image(dockerfile_path="Dockerfile.pl") is False
+    assert _make_local().build(dockerfile_path="Dockerfile.pl") is False
 
 
-def test_create_image_returns_false_when_no_dockerfile():
-    ai = _make_artifacts_image()
-    assert ai.create_image(dockerfile_path=None) is False
+def test_local_build_returns_false_when_no_dockerfile():
+    assert _make_local().build(dockerfile_path=None) is False
 
 
 @patch("aigear.deploy.gcp.artifacts_image.run_sh_stream")
-def test_create_image_builds_correct_docker_command(mock_stream):
+def test_local_build_correct_command(mock_stream):
     mock_stream.return_value = 0
-    ai = _make_artifacts_image(image_name="my-image:v1")
-    ai.create_image(dockerfile_path="Dockerfile.pl", build_context=".")
+    _make_local().build(dockerfile_path="Dockerfile.pl", build_context=".")
     cmd = mock_stream.call_args[0][0]
-    assert "docker" in cmd
-    assert "build" in cmd
-    assert "-f" in cmd
-    assert "Dockerfile.pl" in cmd
-    assert "-t" in cmd
-    assert "my-image:v1" in cmd
+    assert cmd == ["docker", "build", "-f", "Dockerfile.pl", "-t", IMAGE_PATH, "."]
+
+
+# ── LocalImage.tag ────────────────────────────────────────────────────────────
+
+@patch("aigear.deploy.gcp.artifacts_image.run_sh_stream")
+def test_local_tag_returns_true_on_success(mock_stream):
+    mock_stream.return_value = 0
+    assert _make_local().tag(src_tag="v1.0", target_tag="latest") is True
+
+
+@patch("aigear.deploy.gcp.artifacts_image.run_sh_stream")
+def test_local_tag_returns_false_on_failure(mock_stream):
+    mock_stream.return_value = 1
+    assert _make_local().tag(src_tag="v1.0", target_tag="latest") is False
+
+
+@patch("aigear.deploy.gcp.artifacts_image.run_sh_stream")
+def test_local_tag_correct_command(mock_stream):
+    mock_stream.return_value = 0
+    _make_local().tag(src_tag="v1.0", target_tag="latest")
+    cmd = mock_stream.call_args[0][0]
+    assert cmd == [
+        "docker", "tag",
+        f"{IMAGE_NAME}:v1.0",
+        f"{IMAGE_NAME}:latest",
+    ]
+
+
+# ── LocalImage.remove ─────────────────────────────────────────────────────────
+
+@patch("aigear.deploy.gcp.artifacts_image.run_sh_stream")
+def test_local_remove_returns_true_on_success(mock_stream):
+    mock_stream.return_value = 0
+    assert _make_local().remove() is True
+
+
+@patch("aigear.deploy.gcp.artifacts_image.run_sh_stream")
+def test_local_remove_returns_false_on_failure(mock_stream):
+    mock_stream.return_value = 1
+    assert _make_local().remove() is False
+
+
+@patch("aigear.deploy.gcp.artifacts_image.run_sh_stream")
+def test_local_remove_correct_command(mock_stream):
+    mock_stream.return_value = 0
+    _make_local().remove()
+    cmd = mock_stream.call_args[0][0]
+    assert cmd == ["docker", "rmi", IMAGE_PATH]
 
 
 # ── ArtifactsImage.image_exist_in_artifacts ──────────────────────────────────

@@ -10,61 +10,30 @@ from aigear.common.logger import Logging
 logger = Logging(log_name=__name__).console_logging()
 
 
-class ArtifactsImage:
-    def __init__(self, artifacts_image):
-        self.artifacts_image = artifacts_image
+class LocalImage:
+    def __init__(self, image_path: str):
+        self.image_path = image_path
+        self._image_name = image_path.rsplit(":", 1)[0]
 
-    def create_image(self, dockerfile_path=None, build_context=".") -> bool:
-        """Returns True if the build succeeded, False otherwise."""
+    def build(self, dockerfile_path=None, build_context=".") -> bool:
         if dockerfile_path is None:
             logger.info(
-                "Please specify Dockerfile(Dockerfile.pl or Dockerfile.ms) to build the image."
+                "Please specify Dockerfile (Dockerfile.pl or Dockerfile.ms) to build the image."
             )
             return False
-        command = [
-            "docker",
-            "build",
-            "-f",
-            dockerfile_path,
-            "-t",
-            self.artifacts_image,
-            build_context,
-        ]
-        returncode = run_sh_stream(command)
-        return returncode == 0
+        command = ["docker", "build", "-f", dockerfile_path, "-t", self.image_path, build_context]
+        return run_sh_stream(command) == 0
 
-    @staticmethod
-    def obtain_permissions(location):
+    def tag(self, src_tag: str, target_tag: str) -> bool:
         command = [
-            "gcloud",
-            "auth",
-            "configure-docker",
-            f"{location}-docker.pkg.dev",
-            "--quiet",
+            "docker", "tag",
+            f"{self._image_name}:{src_tag}",
+            f"{self._image_name}:{target_tag}",
         ]
-        event = run_sh(command)
-        logger.info(event)
+        return run_sh_stream(command) == 0
 
-    def push_image(self):
-        command = ["docker", "push", self.artifacts_image]
-        event = run_sh_stream(command)
-        logger.info(event)
-
-    def image_exist_in_artifacts(self):
-        is_exist = True
-        command = [
-            "gcloud",
-            "artifacts",
-            "docker",
-            "images",
-            "describe",
-            self.artifacts_image,
-        ]
-        event = run_sh(command)
-        if ("Image not found" in event or "NOT_FOUND" in event) and "ERROR" in event:
-            is_exist = False
-        logger.info(event)
-        return is_exist
+    def remove(self) -> bool:
+        return run_sh_stream(["docker", "rmi", self.image_path]) == 0
 
 
 def _validate_dockerfile_venvs(dockerfile_path: str, is_service: bool) -> None:
@@ -135,23 +104,20 @@ def create_artifacts_image(
 ) -> bool:
     """Returns True if the requested operations succeeded, False otherwise."""
     log_tag = "model service" if is_service else "pipeline"
-
     aigear_config = AigearConfig.get_config()
-    artifacts_image = get_image_path(is_service=is_service)
-    artifacts_image_instance = ArtifactsImage(artifacts_image=artifacts_image)
+    image_path = get_image_path(is_service=is_service)
+    local = LocalImage(image_path)
 
     if is_build:
         if dockerfile_path:
             _validate_dockerfile_venvs(dockerfile_path, is_service)
-        success = artifacts_image_instance.create_image(
-            dockerfile_path=dockerfile_path, build_context=build_context
-        )
-        if not success:
+        if not local.build(dockerfile_path=dockerfile_path, build_context=build_context):
             return False
         logger.info(f"The {log_tag} image has been created.")
 
     if is_push:
-        artifacts_image_instance.obtain_permissions(aigear_config.gcp.location)
-        artifacts_image_instance.push_image()
+        location = aigear_config.gcp.location
+        run_sh(["gcloud", "auth", "configure-docker", f"{location}-docker.pkg.dev", "--quiet"])
+        run_sh_stream(["docker", "push", image_path])
         logger.info(f"The {log_tag} image has been pushed.")
     return True
