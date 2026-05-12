@@ -137,6 +137,25 @@ class AppConfig:
             forced_generate=forced_generate,
         )
 
+    @classmethod
+    def delete_env_schema(cls) -> None:
+        """Delete the generated env schema file."""
+        output_path = Path.cwd() / "config_schema/env_schema.py"
+        if not output_path.exists():
+            logger.info(f"The 'env_schema' does not exist: {output_path}.")
+            return
+        output_path.unlink()
+        logger.info(f"Deleted 'env_schema': {output_path}.")
+
+    @classmethod
+    def show_env_schema(cls) -> None:
+        """Print the content of the generated env schema file."""
+        output_path = Path.cwd() / "config_schema/env_schema.py"
+        if not output_path.exists():
+            logger.warning(f"The 'env_schema' does not exist: {output_path}.")
+            return
+        print(output_path.read_text(encoding="utf-8"))
+
 
 # ─── Backwards-compatible aliases ────────────────────────────────────────────
 # These allow existing code that imports AigearConfig / PipelinesConfig / EnvConfig
@@ -176,6 +195,15 @@ class EnvConfig:
         logger.info("Generating env schema...")
         AppConfig.generate_env_schema(forced_generate)
         logger.info("Env schema generation complete.")
+
+    @classmethod
+    def delete_env_schema(cls) -> None:
+        logger.info("Deleting env schema...")
+        AppConfig.delete_env_schema()
+
+    @classmethod
+    def show_env_schema(cls) -> None:
+        AppConfig.show_env_schema()
 
 
 # ─── Module-level helpers (backwards compatible) ─────────────────────────────

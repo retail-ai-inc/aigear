@@ -11,6 +11,11 @@ def get_argument() -> argparse.Namespace:
         "--create", action="store_true", help="Initialize GCP infrastructure resources."
     )
     group.add_argument(
+        "--update",
+        action="store_true",
+        help="Update GCP infrastructure resources that support update (Cloud Build trigger, Kubernetes cluster).",
+    )
+    group.add_argument(
         "--delete",
         action="store_true",
         help="Delete GCP infrastructure resources. Note: Artifact Registry, Cloud KMS, and Pre-VM Images require manual deletion.",
@@ -27,6 +32,8 @@ def gcp_infra() -> None:
     args = get_argument()
     if args.create:
         Infra().create()
+    elif args.update:
+        Infra().update()
     elif args.delete:
         Infra().delete()
     elif args.status:
