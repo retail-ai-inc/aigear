@@ -17,10 +17,18 @@ class ArtifactsImage:
     def create_image(self, dockerfile_path=None, build_context=".") -> bool:
         """Returns True if the build succeeded, False otherwise."""
         if dockerfile_path is None:
-            logger.info("Please specify Dockerfile(Dockerfile.pl or Dockerfile.ms) to build the image.")
+            logger.info(
+                "Please specify Dockerfile(Dockerfile.pl or Dockerfile.ms) to build the image."
+            )
             return False
         command = [
-            "docker", "build", "-f", dockerfile_path, "-t", self.artifacts_image, build_context
+            "docker",
+            "build",
+            "-f",
+            dockerfile_path,
+            "-t",
+            self.artifacts_image,
+            build_context,
         ]
         returncode = run_sh_stream(command)
         return returncode == 0
@@ -28,22 +36,29 @@ class ArtifactsImage:
     @staticmethod
     def obtain_permissions(location):
         command = [
-            "gcloud", "auth", "configure-docker", f"{location}-docker.pkg.dev", "--quiet"
+            "gcloud",
+            "auth",
+            "configure-docker",
+            f"{location}-docker.pkg.dev",
+            "--quiet",
         ]
         event = run_sh(command)
         logger.info(event)
 
     def push_image(self):
-        command = [
-            "docker", "push", self.artifacts_image
-        ]
+        command = ["docker", "push", self.artifacts_image]
         event = run_sh_stream(command)
         logger.info(event)
 
     def image_exist_in_artifacts(self):
         is_exist = True
         command = [
-            "gcloud", "artifacts", "docker", "images", "describe", self.artifacts_image
+            "gcloud",
+            "artifacts",
+            "docker",
+            "images",
+            "describe",
+            self.artifacts_image,
         ]
         event = run_sh(command)
         if ("Image not found" in event or "NOT_FOUND" in event) and "ERROR" in event:
@@ -75,8 +90,7 @@ def _validate_dockerfile_venvs(dockerfile_path: str, is_service: bool) -> None:
     expected_base_line = f"VENV_BASE={VENV_BASE_DIR}"
     if expected_base_line not in content:
         raise ValueError(
-            f"{dockerfile_path}: VENV_BASE mismatch.\n"
-            f"  Expected: {expected_base_line}"
+            f"{dockerfile_path}: VENV_BASE mismatch.\n  Expected: {expected_base_line}"
         )
 
     # Stage 2: each configured venv name must exist in the Dockerfile
@@ -88,12 +102,22 @@ def _validate_dockerfile_venvs(dockerfile_path: str, is_service: bool) -> None:
             continue
         if not is_service:
             venv_pl = pipeline_config.get("venv_pl")
-            if venv_pl and not re.search(r'\$\{VENV_BASE\}/' + re.escape(venv_pl) + r'(?=[^a-zA-Z0-9_-]|$)', content):
-                missing.append(f"pipeline '{version}' venv_pl '{venv_pl}' → ${{VENV_BASE}}/{venv_pl}")
+            if venv_pl and not re.search(
+                r"\$\{VENV_BASE\}/" + re.escape(venv_pl) + r"(?=[^a-zA-Z0-9_-]|$)",
+                content,
+            ):
+                missing.append(
+                    f"pipeline '{version}' venv_pl '{venv_pl}' → ${{VENV_BASE}}/{venv_pl}"
+                )
         else:
             venv_ms = pipeline_config.get("model_service", {}).get("venv_ms")
-            if venv_ms and not re.search(r'\$\{VENV_BASE\}/' + re.escape(venv_ms) + r'(?=[^a-zA-Z0-9_-]|$)', content):
-                missing.append(f"pipeline '{version}' venv_ms '{venv_ms}' → ${{VENV_BASE}}/{venv_ms}")
+            if venv_ms and not re.search(
+                r"\$\{VENV_BASE\}/" + re.escape(venv_ms) + r"(?=[^a-zA-Z0-9_-]|$)",
+                content,
+            ):
+                missing.append(
+                    f"pipeline '{version}' venv_ms '{venv_ms}' → ${{VENV_BASE}}/{venv_ms}"
+                )
 
     if missing:
         raise ValueError(
@@ -107,7 +131,7 @@ def create_artifacts_image(
     build_context=".",
     is_service=False,
     is_build=True,
-    is_push=False
+    is_push=False,
 ) -> bool:
     """Returns True if the requested operations succeeded, False otherwise."""
     log_tag = "model service" if is_service else "pipeline"
@@ -120,8 +144,7 @@ def create_artifacts_image(
         if dockerfile_path:
             _validate_dockerfile_venvs(dockerfile_path, is_service)
         success = artifacts_image_instance.create_image(
-            dockerfile_path=dockerfile_path,
-            build_context=build_context
+            dockerfile_path=dockerfile_path, build_context=build_context
         )
         if not success:
             return False

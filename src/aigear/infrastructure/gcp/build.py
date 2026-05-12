@@ -10,6 +10,7 @@ def _escape_pattern(pattern: str) -> str:
         return pattern.replace("^", "^^")
     return pattern
 
+
 logger = Logging(log_name=__name__).console_logging()
 
 
@@ -20,12 +21,12 @@ _GITHUB_EVENTS = ("push", "tag", "pull_request")
 _CLOUD_BUILD_CONFIG = "/cloudbuild/cloudbuild.yaml"
 
 _EVENT_SUBCOMMAND = {
-    "push":         "github",
-    "tag":          "github",
+    "push": "github",
+    "tag": "github",
     "pull_request": "github",
-    "manual":       "manual",
-    "pubsub":       "pubsub",
-    "webhook":      "webhook",
+    "manual": "manual",
+    "pubsub": "pubsub",
+    "webhook": "webhook",
 }
 
 
@@ -61,7 +62,9 @@ class CloudBuild:
         if self.event == "tag":
             return [f"--tag-pattern={_escape_pattern(self.tag_pattern or '.*')}"]
         if self.event == "pull_request":
-            return [f"--pull-request-pattern={_escape_pattern(self.branch_pattern or '.*')}"]
+            return [
+                f"--pull-request-pattern={_escape_pattern(self.branch_pattern or '.*')}"
+            ]
         # manual / pubsub / webhook have no extra event args here
         return []
 
@@ -72,7 +75,11 @@ class CloudBuild:
     def create(self):
         subcommand = _EVENT_SUBCOMMAND.get(self.event, "github")
         command = [
-            "gcloud", "builds", "triggers", "create", subcommand,
+            "gcloud",
+            "builds",
+            "triggers",
+            "create",
+            subcommand,
             f"--name={self.trigger_name}",
             f"--build-config={_CLOUD_BUILD_CONFIG}",
             f"--region={self.region}",
@@ -96,7 +103,11 @@ class CloudBuild:
     def update(self):
         subcommand = _EVENT_SUBCOMMAND.get(self.event, "github")
         command = [
-            "gcloud", "builds", "triggers", "update", subcommand,
+            "gcloud",
+            "builds",
+            "triggers",
+            "update",
+            subcommand,
             self.trigger_name,
             f"--region={self.region}",
             f"--project={self.project_id}",
@@ -120,7 +131,10 @@ class CloudBuild:
     def describe(self) -> bool:
         is_exist = False
         command = [
-            "gcloud", "builds", "triggers", "describe",
+            "gcloud",
+            "builds",
+            "triggers",
+            "describe",
             self.trigger_name,
             f"--region={self.region}",
             f"--project={self.project_id}",
@@ -129,12 +143,17 @@ class CloudBuild:
         if self.trigger_name in event and "ERROR" not in event:
             is_exist = True
         elif "ERROR" in event and "NOT_FOUND" not in event:
-            logger.error(f"Unexpected error describing trigger ({self.trigger_name}): {event}")
+            logger.error(
+                f"Unexpected error describing trigger ({self.trigger_name}): {event}"
+            )
         return is_exist
 
     def delete(self):
         command = [
-            "gcloud", "builds", "triggers", "delete",
+            "gcloud",
+            "builds",
+            "triggers",
+            "delete",
             self.trigger_name,
             f"--region={self.region}",
             f"--project={self.project_id}",
@@ -144,7 +163,10 @@ class CloudBuild:
 
     def run(self, branch: str = None):
         command = [
-            "gcloud", "builds", "triggers", "run",
+            "gcloud",
+            "builds",
+            "triggers",
+            "run",
             self.trigger_name,
             f"--region={self.region}",
             f"--project={self.project_id}",
@@ -162,7 +184,9 @@ class CloudBuild:
 
     def submit(self, source: str = ".", config: str = None):
         command = [
-            "gcloud", "builds", "submit",
+            "gcloud",
+            "builds",
+            "submit",
             source,
             f"--region={self.region}",
             f"--project={self.project_id}",
@@ -178,7 +202,9 @@ class CloudBuild:
 
     def list_builds(self, limit: int = 10):
         command = [
-            "gcloud", "builds", "list",
+            "gcloud",
+            "builds",
+            "list",
             f"--limit={limit}",
             f"--region={self.region}",
             f"--project={self.project_id}",
@@ -186,4 +212,3 @@ class CloudBuild:
         event = run_sh(command)
         logger.info(event)
         return event
-

@@ -10,7 +10,7 @@ def generate_schema(
     output: str | Path = None,
     output_model_type: DataModelType = DataModelType.PydanticBaseModel,
     class_name: str = None,
-    forced_generate: bool = False
+    forced_generate: bool = False,
 ):
     if input_path is None:
         logging.warning("No input path set.")
@@ -34,7 +34,7 @@ def generate_schema(
         output=output,
         output_model_type=output_model_type,
         class_name=class_name,
-        formatters = []
+        formatters=[],
     )
     return None
 
@@ -45,7 +45,7 @@ def generate_schema_for_json(
     output: str | Path = None,
     output_model_type: DataModelType = DataModelType.PydanticBaseModel,
     class_name: str = None,
-    forced_generate: bool = False
+    forced_generate: bool = False,
 ):
     if output is None:
         logging.warning("No output path set.")
@@ -65,7 +65,7 @@ def generate_schema_for_json(
         output=output,
         output_model_type=output_model_type,
         class_name=class_name,
-        formatters = []
+        formatters=[],
     )
     return None
 
@@ -83,7 +83,7 @@ def auto_aigear_schema():
         output=output_path,
         output_model_type=DataModelType.PydanticBaseModel,
         class_name="Config",
-        forced_generate=True
+        forced_generate=True,
     )
 
 
@@ -98,7 +98,7 @@ if __name__ == "__main__":
         output=output_path,
         output_model_type=DataModelType.PydanticBaseModel,
         class_name="Config",
-        forced_generate=True
+        forced_generate=True,
     )
 
     from aigear.common.schema.config_schema import Config

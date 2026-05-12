@@ -28,7 +28,7 @@ class RealGCS(BucketABC):
 
     def upload(self, local_blob_name, bucket_blob_name):
         blob = self.bucket.blob(bucket_blob_name)
-        blob.cache_control = 'no-cache'
+        blob.cache_control = "no-cache"
         blob.upload_from_filename(local_blob_name)
 
     def copy_blob(self, source_blob_name, destination_blob_name):
@@ -40,7 +40,9 @@ class RealGCS(BucketABC):
                 source_blob, destination_bucket, destination_blob_name
             )
         else:
-            print(f"The source file {source_blob_name} does not exist and cannot be copied.")
+            print(
+                f"The source file {source_blob_name} does not exist and cannot be copied."
+            )
 
 
 class LocalGCSMock(BucketABC):
@@ -76,7 +78,7 @@ class LocalGCSMock(BucketABC):
 def bucket_client(
     project_id: str | None = None,
     bucket_name: str | None = None,
-    bucket_on: bool = True
+    bucket_on: bool = True,
 ):
     if bucket_on:
         return RealGCS(project_id, bucket_name)
