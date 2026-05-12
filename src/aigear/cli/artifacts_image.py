@@ -2,6 +2,7 @@ import argparse
 
 from aigear.common.constant import DOCKERFILE_PIPELINE, DOCKERFILE_SERVICE
 from aigear.deploy.gcp.artifacts_image import (
+    clear_artifacts_image,
     create_artifacts_image,
     delete_artifacts_image,
     retag_artifacts_image,
@@ -16,7 +17,10 @@ def get_argument() -> argparse.Namespace:
     group.add_argument(
         "--create", action="store_true", help="Build Docker image(s) locally."
     )
-    group.add_argument("--delete", action="store_true", help="Delete Docker image(s).")
+    group.add_argument("--delete", action="store_true", help="Delete Docker image(s) by tag.")
+    group.add_argument(
+        "--clear", action="store_true", help="Remove all Docker images regardless of tag."
+    )
     group.add_argument("--retag", action="store_true", help="Re-tag a Docker image.")
     parser.add_argument(
         "--push",
@@ -69,6 +73,8 @@ def _run_operation(
         )
     if args.delete:
         return delete_artifacts_image(is_service=is_service, is_push=args.push)
+    if args.clear:
+        return clear_artifacts_image(is_service=is_service, is_push=args.push)
     if args.retag:
         return retag_artifacts_image(
             src_tag=args.src_tag,
