@@ -55,6 +55,37 @@ class LocalImage:
         return deleted
 
 
+class RegistryImage:
+    def __init__(self, image_path: str):
+        self.image_path = image_path
+        self._image_name = image_path.rsplit(":", 1)[0]
+
+    def configure_auth(self, location: str) -> None:
+        event = run_sh([
+            "gcloud", "auth", "configure-docker",
+            f"{location}-docker.pkg.dev", "--quiet",
+        ])
+        logger.info(event)
+
+    def push(self) -> bool:
+        return run_sh_stream(["docker", "push", self.image_path]) == 0
+
+    def exists(self) -> bool:
+        event = run_sh([
+            "gcloud", "artifacts", "docker", "images", "describe", self.image_path
+        ])
+        logger.info(event)
+        return not (("Image not found" in event or "NOT_FOUND" in event) and "ERROR" in event)
+
+    def delete(self) -> bool:
+        result = run_sh([
+            "gcloud", "artifacts", "docker", "images", "delete",
+            self.image_path, "--delete-tags", "--quiet",
+        ])
+        logger.info(result)
+        return "ERROR" not in result
+
+
 def _validate_dockerfile_venvs(dockerfile_path: str, is_service: bool) -> None:
     """
     Two-stage validation before building a Docker image.

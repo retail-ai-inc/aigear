@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import patch
 
 from aigear.common.constant import VENV_BASE_DIR
-from aigear.deploy.gcp.artifacts_image import LocalImage, _validate_dockerfile_venvs
+from aigear.deploy.gcp.artifacts_image import LocalImage, RegistryImage, _validate_dockerfile_venvs
 
 IMAGE_PATH = "asia-northeast1-docker.pkg.dev/proj/repo/my-image:latest"
 IMAGE_NAME = "asia-northeast1-docker.pkg.dev/proj/repo/my-image"
@@ -214,4 +214,86 @@ def test_local_prune_list_command(mock_run_sh):
     list_cmd = mock_run_sh.call_args[0][0]
     assert list_cmd == [
         "docker", "images", "--format", "{{.Tag}}\t{{.CreatedAt}}", IMAGE_NAME
+    ]
+
+
+def _make_registry() -> RegistryImage:
+    return RegistryImage(image_path=IMAGE_PATH)
+
+
+# ── RegistryImage.configure_auth ─────────────────────────────────────────────
+
+@patch("aigear.deploy.gcp.artifacts_image.run_sh")
+def test_registry_configure_auth_command(mock_run_sh):
+    _make_registry().configure_auth("asia-northeast1")
+    cmd = mock_run_sh.call_args[0][0]
+    assert cmd == [
+        "gcloud", "auth", "configure-docker",
+        "asia-northeast1-docker.pkg.dev", "--quiet",
+    ]
+
+
+# ── RegistryImage.push ────────────────────────────────────────────────────────
+
+@patch("aigear.deploy.gcp.artifacts_image.run_sh_stream")
+def test_registry_push_returns_true_on_success(mock_stream):
+    mock_stream.return_value = 0
+    assert _make_registry().push() is True
+
+
+@patch("aigear.deploy.gcp.artifacts_image.run_sh_stream")
+def test_registry_push_returns_false_on_failure(mock_stream):
+    mock_stream.return_value = 1
+    assert _make_registry().push() is False
+
+
+@patch("aigear.deploy.gcp.artifacts_image.run_sh_stream")
+def test_registry_push_correct_command(mock_stream):
+    mock_stream.return_value = 0
+    _make_registry().push()
+    assert mock_stream.call_args[0][0] == ["docker", "push", IMAGE_PATH]
+
+
+# ── RegistryImage.exists ──────────────────────────────────────────────────────
+
+@patch("aigear.deploy.gcp.artifacts_image.run_sh")
+def test_registry_exists_true_when_found(mock_run_sh):
+    mock_run_sh.return_value = "digest: sha256:abc"
+    assert _make_registry().exists() is True
+
+
+@patch("aigear.deploy.gcp.artifacts_image.run_sh")
+def test_registry_exists_false_when_not_found(mock_run_sh):
+    mock_run_sh.return_value = "ERROR: Image not found"
+    assert _make_registry().exists() is False
+
+
+@patch("aigear.deploy.gcp.artifacts_image.run_sh")
+def test_registry_exists_false_on_not_found_variant(mock_run_sh):
+    mock_run_sh.return_value = "ERROR: NOT_FOUND: some resource"
+    assert _make_registry().exists() is False
+
+
+# ── RegistryImage.delete ──────────────────────────────────────────────────────
+
+@patch("aigear.deploy.gcp.artifacts_image.run_sh")
+def test_registry_delete_returns_true_on_success(mock_run_sh):
+    mock_run_sh.return_value = "Deleted."
+    assert _make_registry().delete() is True
+
+
+@patch("aigear.deploy.gcp.artifacts_image.run_sh")
+def test_registry_delete_returns_false_on_error(mock_run_sh):
+    mock_run_sh.return_value = "ERROR: Image not found"
+    assert _make_registry().delete() is False
+
+
+@patch("aigear.deploy.gcp.artifacts_image.run_sh")
+def test_registry_delete_correct_command(mock_run_sh):
+    mock_run_sh.return_value = "Deleted."
+    _make_registry().delete()
+    cmd = mock_run_sh.call_args[0][0]
+    assert cmd == [
+        "gcloud", "artifacts", "docker", "images", "delete",
+        IMAGE_PATH, "--delete-tags", "--quiet",
     ]
