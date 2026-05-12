@@ -5,7 +5,7 @@ All CLI entry points are installed as standalone commands by `pip install aigear
 | Command | Description |
 |---|---|
 | `aigear-init` | Initialize a new project scaffold |
-| `aigear-gcp-infra` | Create GCP infrastructure (buckets, IAM, Pub/Sub, schedulers) |
+| `aigear-infra` | Create infrastructure (buckets, IAM, Pub/Sub, schedulers) |
 | `aigear-task` | Run a pipeline step or start a gRPC model service |
 | `aigear-scheduler` | Create a Cloud Scheduler job for pipeline steps |
 | `aigear-image` | Build and optionally push Docker images to Artifact Registry |
@@ -34,15 +34,18 @@ aigear-init [--name NAME] [--pipeline_versions VERSIONS]
 
 ### `aigear-gcp-infra`
 
-Read `env.json` and create all defined GCP resources (buckets, Pub/Sub topics, Cloud Function, Artifact Registry, KMS, GKE cluster, service accounts, etc.).
+Read `env.json` and manage all defined GCP resources (buckets, Pub/Sub topics, Cloud Function, Artifact Registry, KMS, Cloud Build trigger, GKE cluster, service accounts, etc.).
 
 ```
-aigear-gcp-infra [--create]
+aigear-gcp-infra {--create | --update | --delete | --status}
 ```
 
 | Argument | Description |
 |---|---|
-| `--create` | Initialize GCP infrastructure resources. Runs by default if omitted. |
+| `--create` | Initialize GCP infrastructure resources. |
+| `--update` | Update resources that support update: Cloud Build trigger (config) and Kubernetes cluster (node count, autoscaling). Resources that do not support update are skipped with a log message. |
+| `--delete` | Delete GCP infrastructure resources. Note: Artifact Registry, Cloud KMS, and Pre-VM Images require manual deletion. |
+| `--status` | Query and display the live state of all GCP infrastructure resources. |
 
 Resource creation runs in three ordered phases:
 
@@ -55,8 +58,6 @@ Resource creation runs in three ordered phases:
 - Each step is idempotent — existing resources are detected and skipped.
 - If the GCP default subnet is not yet ready (common in new projects), Pre-VM Image creation retries automatically up to 5 times with a 30-second wait between attempts.
 - Requires owner-level GCP permissions. Recommended to run from Cloud Shell.
-
-> Future commands: `--delete`, `--update`
 
 ---
 
@@ -143,26 +144,58 @@ aigear-scheduler --resume --version logistic_regression
 
 ### `aigear-image`
 
-Build Docker images for the pipeline (`Dockerfile.pl`) and/or model service (`Dockerfile.ms`), and optionally push to Artifact Registry.
+Manage the full lifecycle of Docker images for the pipeline (`Dockerfile.pl`) and model service (`Dockerfile.ms`): build, delete, or re-tag locally and optionally sync to Artifact Registry.
 
 ```
-aigear-image [--create]
+aigear-image {--create | --delete | --retag}
+             [--push]
              [--dockerfile_path PATH] [--build_context DIR]
-             [--image_name NAME] [--image_version TAG]
-             [--is_service] [--force] [--push]
+             [--is_service] [--all]
+             [--src_tag TAG] [--target_tag TAG]
 ```
 
-At least one of `--create` or `--push` is required. They can be combined to build then push in a single command.
+One action (`--create`, `--delete`, `--retag`) is required. `--push` syncs the operation to Artifact Registry after the local step succeeds.
+
+**Actions (mutually exclusive)**
+
+| Argument | Description |
+|---|---|
+| `--create` | Build the Docker image locally |
+| `--delete` | Remove the Docker image locally |
+| `--retag` | Tag an existing local image with a new tag (requires `--src_tag` and `--target_tag`) |
+
+**Scope modifiers**
 
 | Argument | Default | Description |
 |---|---|---|
-| `--create` | — | Build the Docker image(s) |
-| `--push` | — | Push the Docker image(s) to Artifact Registry. Can be used alone (push-only) or together with `--create` (build then push). |
-| `--dockerfile_path` | `None` | Path to a specific Dockerfile. If omitted, operates on both `Dockerfile.pl` and `Dockerfile.ms` |
-| `--build_context` | `.` | Docker build context directory |
-| `--is_service` | `false` | Mark image as a model service image (auto-set when building `Dockerfile.ms`) |
+| `--all` | `false` | Operate on both `Dockerfile.pl` (pipeline) and `Dockerfile.ms` (service) in one command |
+| `--dockerfile_path` | `None` | Path to a specific Dockerfile. `Dockerfile.ms` automatically implies `--is_service`; `Dockerfile.pl` implies pipeline |
+| `--is_service` | `false` | Target the model service image. Ignored when `--dockerfile_path` is `Dockerfile.pl` or `Dockerfile.ms` (inferred automatically) |
+| `--build_context` | `.` | Docker build context directory (used with `--create`) |
 
-> Future commands: `--delete`, `--update`
+**Remote sync**
+
+| Argument | Description |
+|---|---|
+| `--push` | After the local operation succeeds, sync to Artifact Registry (push image, delete remote tag, or add remote tag) |
+
+**Re-tag arguments**
+
+| Argument | Description |
+|---|---|
+| `--src_tag` | Source tag (required with `--retag`) |
+| `--target_tag` | Destination tag (required with `--retag`) |
+
+**Scope resolution (without `--all`)**
+
+| `--dockerfile_path` | `--is_service` | Target |
+|---|---|---|
+| `Dockerfile.ms` | any | service image |
+| `Dockerfile.pl` | any | pipeline image |
+| custom path | `false` (default) | pipeline image |
+| custom path | `true` | service image |
+| omitted | `false` (default) | pipeline image |
+| omitted | `true` | service image |
 
 ---
 
@@ -228,18 +261,18 @@ aigear-model --version logistic_regression --local --delete
 
 ### `aigear-env-schema`
 
-Auto-generate a Pydantic schema file from the current `env.json`.
+Manage the lifecycle of the Pydantic schema file generated from `env.json`.
 
 ```
-aigear-env-schema [--generate] [--force]
+aigear-env-schema {--generate | --delete | --show} [--force]
 ```
 
 | Argument | Description |
 |---|---|
-| `--generate` | Generate environment schema file. Runs by default if omitted. |
-| `--force` | Regenerate the schema even if one already exists |
-
-> Future commands: `--delete`, `--update`
+| `--generate` | Generate environment schema file from `env.json` |
+| `--delete` | Delete the generated schema file |
+| `--show` | Print the current schema file content |
+| `--force` | Force regenerate even if the schema already exists (used with `--generate`) |
 
 ---
 

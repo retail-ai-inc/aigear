@@ -18,3 +18,7 @@ env.json
 .DS_Store
 */.DS_Store
 **/.DS_Store
+
+# cache
+.pytest_cache
+.ruff_cache

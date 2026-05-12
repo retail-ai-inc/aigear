@@ -73,3 +73,35 @@ class KubernetesCluster:
             logger.info(
                 f"GKE cluster '{self.cluster_name}' deletion initiated (async)."
             )
+
+    def update(self):
+        command_autoscaling = [
+            "gcloud",
+            "container",
+            "clusters",
+            "update",
+            self.cluster_name,
+            "--enable-autoscaling",
+            f"--min-nodes={self.min_nodes}",
+            f"--max-nodes={self.max_nodes}",
+            f"--region={self.zone}",
+            "--node-pool=default-pool",
+            f"--project={self.project_id}",
+            "--quiet",
+        ]
+        run_sh(command_autoscaling, check=True, timeout=600)
+
+        command_resize = [
+            "gcloud",
+            "container",
+            "clusters",
+            "resize",
+            self.cluster_name,
+            f"--num-nodes={self.num_nodes}",
+            f"--region={self.zone}",
+            "--node-pool=default-pool",
+            f"--project={self.project_id}",
+            "--async",
+            "--quiet",
+        ]
+        run_sh(command_resize, check=True)
