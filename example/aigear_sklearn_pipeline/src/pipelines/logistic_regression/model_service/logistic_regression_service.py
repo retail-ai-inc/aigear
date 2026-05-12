@@ -47,7 +47,9 @@ class ModelService:
             bucket_name=env_config.aigear.gcp.bucket.bucket_name,
             bucket_on=gcs_switch,
         )
-        model_name = env_config.pipelines.logistic_regression.training.parameters.logistic_model
+        model_name = (
+            env_config.pipelines.logistic_regression.training.parameters.logistic_model
+        )
         model_path = training_management.download(model_name)
         logistic_model = self._load_model(model_path)
         return scaler_model, logistic_model

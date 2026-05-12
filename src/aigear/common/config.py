@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Type, TypeVar
 
@@ -13,10 +14,12 @@ from aigear.common.schema.config_schema import Config
 T = TypeVar("T", bound=BaseModel)
 logger = Logging(log_name=__name__).console_logging()
 
-ENV_PATH = Path.cwd() / "env.json"
+_env_override = os.environ.get("AIGEAR_ENV_PATH")
+ENV_PATH = Path(_env_override) if _env_override else Path.cwd() / "env.json"
 
 
 # ─── Raw config loader ───────────────────────────────────────────────────────
+
 
 def _load_raw(env_path: Path = ENV_PATH) -> dict:
     """
@@ -30,6 +33,7 @@ def _load_raw(env_path: Path = ENV_PATH) -> dict:
 
 
 # ─── Unified config ──────────────────────────────────────────────────────────
+
 
 class AppConfig:
     """
@@ -50,6 +54,7 @@ class AppConfig:
     """
 
     _raw: dict | None = None
+    _aigear: "Config | None" = None
 
     @classmethod
     def _ensure_loaded(cls) -> dict:
@@ -72,7 +77,9 @@ class AppConfig:
     @classmethod
     def aigear(cls) -> Config:
         """Return the validated aigear config as a typed Pydantic model."""
-        return Config.model_validate(cls._ensure_loaded().get("aigear", {}))
+        if cls._aigear is None:
+            cls._aigear = Config.model_validate(cls._ensure_loaded().get("aigear", {}))
+        return cls._aigear
 
     # ── pipelines section ────────────────────────────────────────────────────
 
@@ -130,10 +137,30 @@ class AppConfig:
             forced_generate=forced_generate,
         )
 
+    @classmethod
+    def delete_env_schema(cls) -> None:
+        """Delete the generated env schema file."""
+        output_path = Path.cwd() / "config_schema/env_schema.py"
+        if not output_path.exists():
+            logger.info(f"The 'env_schema' does not exist: {output_path}.")
+            return
+        output_path.unlink()
+        logger.info(f"Deleted 'env_schema': {output_path}.")
+
+    @classmethod
+    def show_env_schema(cls) -> None:
+        """Print the content of the generated env schema file."""
+        output_path = Path.cwd() / "config_schema/env_schema.py"
+        if not output_path.exists():
+            logger.warning(f"The 'env_schema' does not exist: {output_path}.")
+            return
+        print(output_path.read_text(encoding="utf-8"))
+
 
 # ─── Backwards-compatible aliases ────────────────────────────────────────────
 # These allow existing code that imports AigearConfig / PipelinesConfig / EnvConfig
 # to keep working without modification.
+
 
 class AigearConfig:
     @classmethod
@@ -169,8 +196,18 @@ class EnvConfig:
         AppConfig.generate_env_schema(forced_generate)
         logger.info("Env schema generation complete.")
 
+    @classmethod
+    def delete_env_schema(cls) -> None:
+        logger.info("Deleting env schema...")
+        AppConfig.delete_env_schema()
+
+    @classmethod
+    def show_env_schema(cls) -> None:
+        AppConfig.show_env_schema()
+
 
 # ─── Module-level helpers (backwards compatible) ─────────────────────────────
+
 
 def get_project_name() -> str | None:
     return AppConfig.project_name()

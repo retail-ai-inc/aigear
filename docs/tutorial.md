@@ -187,6 +187,10 @@ Auto-generate a typed Pydantic schema from your `env.json` so all pipeline code 
 aigear-env-schema --generate
 # Force regenerate after env.json changes
 aigear-env-schema --generate --force
+# Show current schema content
+aigear-env-schema --show
+# Delete schema
+aigear-env-schema --delete
 ```
 
 This writes a schema to `config_schema/env_schema.py`. Every pipeline step imports it:
@@ -494,8 +498,8 @@ scikit_learn==1.8.0
 Build both images:
 
 ```bash
-# Build locally (no push)
-aigear-image --create
+# Build both images locally (no push)
+aigear-image --create --all
 ```
 
 > **Local build:** Make sure `gcs_switch = False` in `src/pipelines/common/constant.py`. When running locally, files are stored under `asset/` instead of GCS.
@@ -583,7 +587,7 @@ Before deploying to GKE, validate the Kubernetes deployment locally using **Dock
 **Deploy**
 
 ```bash
-aigear-deploy-model --version logistic_regression --local
+aigear-model --version logistic_regression --local --deploy
 ```
 
 This command generates `grpc_deployment_local.yaml` (if it does not yet exist), switches kubectl context to `docker-desktop`, and applies the manifest. The local `asset/` directory is automatically mounted into the pod at `/ms/asset`, so no GCS connection is required.
@@ -607,7 +611,7 @@ The gRPC server is reachable at `localhost:50051` once `EXTERNAL-IP` shows `loca
 **Delete**
 
 ```bash
-aigear-deploy-model --version logistic_regression --local --delete
+aigear-model --version logistic_regression --local --delete
 ```
 
 ---
@@ -617,10 +621,13 @@ aigear-deploy-model --version logistic_regression --local --delete
 If you plan to deploy the model service to GKE (staging or production), generate the Kubernetes deployment YAML files **before** building and pushing the images. The YAML files are copied into the Docker image during the build, so the deployment manifest is always co-versioned with the model code.
 
 ```bash
-aigear-model-yaml --create --version logistic_regression
+# Generate for each target environment
+aigear-model --version logistic_regression --local --yaml
+aigear-model --version logistic_regression --staging --yaml
+aigear-model --version logistic_regression --production --yaml
 ```
 
-This generates YAML files for all environments under the model service directory:
+This generates YAML files under the model service directory:
 
 ```text
 src/pipelines/logistic_regression/model_service/
@@ -629,13 +636,9 @@ src/pipelines/logistic_regression/model_service/
 └── grpc_deployment_production.yaml
 ```
 
-To overwrite existing files:
+`--yaml` always overwrites the existing file. To regenerate with different ports or replicas, pass `--service_ports` / `--replicas` / `--port` — these trigger an overwrite automatically.
 
-```bash
-aigear-model-yaml --create --version logistic_regression --force
-```
-
-> **Why bake it into the image?** When the scheduler triggers the model service step on GCP, the VM pulls this image and runs `aigear-task grpc`. The deployment step (`aigear-deploy-model`) reads the YAML from within the running container to apply the Kubernetes manifest. If the YAML is absent from the image, the deployment will fail.
+> **Why bake it into the image?** When the scheduler triggers the model service step on GCP, the VM pulls this image and runs `aigear-task grpc`. The deployment step (`aigear-model`) reads the YAML from within the running container to apply the Kubernetes manifest. If the YAML is absent from the image, the deployment will fail.
 
 ---
 
@@ -644,7 +647,7 @@ aigear-model-yaml --create --version logistic_regression --force
 Once the pipeline has been validated locally and the YAML files have been generated (Step 9), push the images to GCP Artifact Registry:
 
 ```bash
-aigear-image --create --push
+aigear-image --create --push --all
 ```
 
 > **Before pushing to GCP:** Make sure `gcs_switch = True` in `src/pipelines/common/constant.py`. Pipeline steps running on GCP need to read and write files via GCS.
@@ -675,15 +678,15 @@ cp env.sample.json env.json
 # ── Step 3: Generate typed config schema ──────────────────────────────────────
 aigear-env-schema --generate
 
-# ── Step 4: Provision GCP infrastructure (owner-level access required) ────────
-aigear-gcp-infra --create
+# ── Step 4: Provision infrastructure (owner-level access required) ────────────
+aigear-infra --create
 
 # ── Step 5: Implement pipeline code ───────────────────────────────────────────
 # Fill in src/pipelines/logistic_regression/{fetch_data,preprocessing,training,model_service}/
 
 # ── Step 6: Build Docker images locally ───────────────────────────────────────
 # Requires: gcs_switch = False in src/pipelines/common/constant.py
-aigear-image --create
+aigear-image --create --all
 
 # ── Step 7: Run pipeline and model service locally (Docker Compose) ───────────
 # Option A (default): build fresh image from Dockerfile on every run
@@ -700,23 +703,23 @@ docker compose -f docker-compose-ms.yml down
 
 # ── Step 8: Deploy gRPC model service to local Kubernetes (Docker Desktop) ────
 # Requires: image from Step 6, gcs_switch = False (model files in asset/)
-aigear-deploy-model --version logistic_regression --local
+aigear-model --version logistic_regression --local --deploy
 
 # Verify
 kubectl get service aigear-sklearn-pipeline-logistic-regression-service
 kubectl logs aigear-sklearn-pipeline-logistic-regression-service-<pod-suffix>
 
 # Delete
-aigear-deploy-model --version logistic_regression --local --delete
+aigear-model --version logistic_regression --local --delete
 
 # ── Step 9: Generate GKE deployment YAML (required before pushing) ────────────
-aigear-model-yaml --create --version logistic_regression
-# Force overwrite if YAML already exists
-# aigear-model-yaml --create --version logistic_regression --force
+aigear-model --version logistic_regression --local --yaml
+aigear-model --version logistic_regression --staging --yaml
+aigear-model --version logistic_regression --production --yaml
 
 # ── Step 10: Push images to Artifact Registry (YAML baked in) ─────────────────
 # Requires: gcs_switch = True in src/pipelines/common/constant.py
-aigear-image --create --push
+aigear-image --create --push --all
 
 # ── Step 11: Schedule recurring pipeline runs on GCP ──────────────────────────
 aigear-scheduler --create \

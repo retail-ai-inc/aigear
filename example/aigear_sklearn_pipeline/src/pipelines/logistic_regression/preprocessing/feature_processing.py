@@ -30,7 +30,9 @@ def feature_processing(pipeline_version: str) -> None:
         bucket_name=env_config.aigear.gcp.bucket.bucket_name,
         bucket_on=gcs_switch,
     )
-    data_file_name = env_config.pipelines.logistic_regression.fetch_data.parameters.data_file_name
+    data_file_name = (
+        env_config.pipelines.logistic_regression.fetch_data.parameters.data_file_name
+    )
     data_local_path = dataset_management.download(
         file_name=data_file_name,
     )
@@ -41,11 +43,7 @@ def feature_processing(pipeline_version: str) -> None:
     y_dataset = dataset.target
 
     x_train, x_test, y_train, y_test = train_test_split(
-        x_dataset,
-        y_dataset,
-        test_size=0.2,
-        random_state=42,
-        stratify=y_dataset
+        x_dataset, y_dataset, test_size=0.2, random_state=42, stratify=y_dataset
     )
     scaler = StandardScaler()
     scaler.fit(x_train)
@@ -62,16 +60,16 @@ def feature_processing(pipeline_version: str) -> None:
         bucket_on=gcs_switch,
     )
     feature_file_name = env_config.pipelines.logistic_regression.preprocessing.parameters.feature_file_name
-    feature_path = feature_management.get_local_path(
-        local_file_name=feature_file_name
-    )
+    feature_path = feature_management.get_local_path(local_file_name=feature_file_name)
     save_data(
         dataset=dataset,
         save_path=feature_path,
     )
     feature_management.upload(feature_file_name)
 
-    scaler_file_name = env_config.pipelines.logistic_regression.preprocessing.parameters.scaler_model
+    scaler_file_name = (
+        env_config.pipelines.logistic_regression.preprocessing.parameters.scaler_model
+    )
     scaler_file_path = feature_management.get_local_path(
         local_file_name=scaler_file_name
     )
