@@ -214,7 +214,7 @@ data_file    = env_config.pipelines.logistic_regression.fetch_data.parameters.da
 This single command provisions all GCP resources declared in `env.json`:
 
 ```bash
-aigear-gcp-infra --create
+aigear-infra --create
 ```
 
 Resources are created in three phases:
