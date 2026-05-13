@@ -44,6 +44,14 @@ class LocalImage:
     def remove(self) -> bool:
         return run_sh_stream(["docker", "rmi", self.image_path]) == 0
 
+    def clear_all(self) -> bool:
+        result = run_sh(["docker", "images", self._image_name, "-q"])
+        image_ids = result.strip().splitlines()
+        if not image_ids:
+            logger.info(f"No local images found for '{self._image_name}'.")
+            return True
+        return run_sh_stream(["docker", "rmi"] + image_ids) == 0
+
 
 class RegistryImage:
     def __init__(self, image_path: str):
@@ -83,6 +91,22 @@ class RegistryImage:
                 "images",
                 "delete",
                 self.image_path,
+                "--delete-tags",
+                "--quiet",
+            ]
+        )
+        logger.info(result)
+        return "ERROR" not in result
+
+    def clear_all(self) -> bool:
+        result = run_sh(
+            [
+                "gcloud",
+                "artifacts",
+                "docker",
+                "images",
+                "delete",
+                self._image_name,
                 "--delete-tags",
                 "--quiet",
             ]
@@ -214,6 +238,26 @@ def delete_artifacts_image(is_service=False, is_push=False) -> bool:
         if not registry.delete():
             return False
         logger.info(f"The {log_tag} registry image has been deleted.")
+    return True
+
+
+def clear_artifacts_image(is_service=False, is_push=False) -> bool:
+    """Remove all local (and optionally registry) images regardless of tag."""
+    log_tag = "model service" if is_service else "pipeline"
+    aigear_config = AigearConfig.get_config()
+    image_path = get_image_path(is_service=is_service)
+    local = LocalImage(image_path)
+    registry = RegistryImage(image_path)
+
+    if not local.clear_all():
+        return False
+    logger.info(f"All {log_tag} local images have been cleared.")
+
+    if is_push:
+        registry.configure_auth(aigear_config.gcp.location)
+        if not registry.clear_all():
+            return False
+        logger.info(f"All {log_tag} registry images have been cleared.")
     return True
 
 

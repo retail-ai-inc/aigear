@@ -560,7 +560,11 @@ class PreVMImage:
     def _delete_image(self, image_name: str):
         client = compute_v1.ImagesClient()
         logger.info(f"Deleting image {image_name} ...")
-        op = client.delete(project=self.project_id, image=image_name)
+        try:
+            op = client.delete(project=self.project_id, image=image_name)
+        except NotFound:
+            logger.warning(f"Image {image_name} not found, skipping delete.")
+            return
         self._wait_op(op, f"delete image {image_name}")
 
     def delete_gpu_image(self):

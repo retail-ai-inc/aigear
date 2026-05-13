@@ -109,9 +109,8 @@ class Scheduler:
         else:
             logger.info(f"Scheduler job '{self.name}' deleted.")
 
-    def describe(self) -> bool:
-        """Describe the job status. Returns True if the job exists and is ENABLED."""
-        is_exist = False
+    def describe(self) -> tuple[bool, str]:
+        """Return (exists, state). exists=False when job is not found or an error occurs."""
         command = [
             "gcloud",
             "scheduler",
@@ -124,34 +123,17 @@ class Scheduler:
             self.project_id,
         ]
         event = run_sh(command)
-        if "ENABLED" in event:
-            is_exist = True
-            schedule = next(
-                (
-                    line.split(": ", 1)[1]
-                    for line in event.splitlines()
-                    if line.startswith("schedule:")
-                ),
-                "?",
-            )
-            timezone = next(
-                (
-                    line.split(": ", 1)[1]
-                    for line in event.splitlines()
-                    if line.startswith("timeZone:")
-                ),
-                "?",
-            )
-            logger.info(
-                f"Scheduler job '{self.name}' exists. (schedule: {schedule}, timezone: {timezone})"
-            )
-        elif "NOT_FOUND" in event:
+        if "NOT_FOUND" in event:
             logger.info(f"Scheduler job '{self.name}' not found.")
-        else:
-            logger.error(
-                f"Unexpected response describing scheduler job '{self.name}': {event}"
-            )
-        return is_exist
+            return False, ""
+        if "ERROR" in event:
+            logger.error(f"Unexpected response describing scheduler job '{self.name}': {event}")
+            return False, ""
+        state = next((line.split(": ", 1)[1] for line in event.splitlines() if line.startswith("state:")), "")
+        schedule = next((line.split(": ", 1)[1] for line in event.splitlines() if line.startswith("schedule:")), "?")
+        timezone = next((line.split(": ", 1)[1] for line in event.splitlines() if line.startswith("timeZone:")), "?")
+        logger.info(f"Scheduler job '{self.name}' exists. (state: {state}, schedule: {schedule}, timezone: {timezone})")
+        return True, state
 
     def list(self):
         """List Cloud Scheduler jobs filtered by this job's name."""
@@ -311,9 +293,17 @@ def _build_messages(
     venv_ms = pipeline_config.get("model_service", {}).get("venv_ms")
     ms_config = pipeline_config.get("model_service", {})
 
+    invalid = [s for s in step_names if s not in pipeline_config]
+    if invalid:
+        valid = [k for k in pipeline_config if not k.startswith("venv_") and k != "scheduler"]
+        raise ValueError(
+            f"Unknown step name(s) for '{pipeline_version}': {invalid}. "
+            f"Valid steps: {','.join(valid)}"
+        )
+
     messages = []
     for step_name in step_names:
-        step_config = pipeline_config.get(step_name, {})
+        step_config      = pipeline_config.get(step_name, {})
         is_model_service = step_name == "model_service"
 
         if is_model_service and not ms_config.get("release", False):
@@ -350,8 +340,11 @@ def create_scheduler(
     """Create a Cloud Scheduler job; skips if a job with the same name already exists."""
     messages = _build_messages(pipeline_version, step_names, env)
     scheduler = _make_scheduler(pipeline_version, messages)
-    if not scheduler.describe():
-        scheduler.create()
+    exists, state = scheduler.describe()
+    if exists:
+        logger.info(f"Scheduler job '{scheduler.name}' already exists (state: {state}), skipping create.")
+        return
+    scheduler.create()
 
 
 def update_scheduler(
@@ -374,7 +367,15 @@ def delete_scheduler(pipeline_version: str):
 def status_scheduler(pipeline_version: str):
     """Print the status of the Cloud Scheduler job for the given pipeline version."""
     scheduler = _make_scheduler(pipeline_version)
-    scheduler.describe()
+    exists, state = scheduler.describe()
+    if not exists:
+        logger.info(f"Scheduler job '{scheduler.name}' does not exist.")
+    elif state == "ENABLED":
+        logger.info(f"Scheduler job '{scheduler.name}' is ENABLED (running on schedule).")
+    elif state == "PAUSED":
+        logger.info(f"Scheduler job '{scheduler.name}' is PAUSED (not running).")
+    else:
+        logger.info(f"Scheduler job '{scheduler.name}' state: {state}.")
 
 
 def run_scheduler(pipeline_version: str):

@@ -22,7 +22,7 @@ Aigear provisions GCP resources and manages Kubernetes deployments. The followin
   ```bash
   gcloud auth login
   ```
-- **[kubectl](https://kubernetes.io/docs/tasks/tools/)** — required only if deploying the gRPC model service to GCP Kubernetes (`aigear-deploy-model`)
+- **[kubectl](https://kubernetes.io/docs/tasks/tools/)** — required only if deploying the gRPC model service to GCP Kubernetes (`aigear-model`)
 
 ### Install Aigear
 
@@ -176,7 +176,7 @@ aigear-scheduler --status --version v1
 | Scenario | Without Aigear | With Aigear |
 |---|---|---|
 | **Security & permissions** | No clear permission boundaries — access control becomes unmanageable as the team grows | Clear separation of two roles: **owner** (full GCP access for infrastructure provisioning, recommended to run in Cloud Shell) and **developer** (limited permissions for day-to-day pipeline work) |
-| **Deploy a model** | Wait days/weeks for DevOps to provision buckets, IAM, and schedulers | Run `aigear-gcp-infra --create` — infrastructure ready in approximately 2 hours |
+| **Deploy a model** | Wait days/weeks for DevOps to provision buckets, IAM, and schedulers | Run `aigear-infra --create` — infrastructure ready in approximately 2 hours |
 | **Multi-team consistency** | Each team requests resources manually; mismatched names and roles cause repeated delays | One `env.json` config shared across teams; Aigear creates what's missing and validates the rest |
 | **Reproducibility** | "Works on my laptop" — Python version mismatches, scattered secrets, failed re-runs | Every pipeline runs in a versioned Docker container with validated config and automatic result logging |
 | **Cost control** | Forgotten VMs run all week; surprise cloud bills | All VMs are ephemeral — spin up for the job, delete on completion; pay only for what runs |
