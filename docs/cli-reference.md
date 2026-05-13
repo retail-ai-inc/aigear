@@ -32,19 +32,19 @@ aigear-init [--name NAME] [--pipeline_versions VERSIONS]
 
 ---
 
-### `aigear-gcp-infra`
+### `aigear-infra`
 
 Read `env.json` and manage all defined GCP resources (buckets, Pub/Sub topics, Cloud Function, Artifact Registry, KMS, Cloud Build trigger, GKE cluster, service accounts, etc.).
 
 ```
-aigear-gcp-infra {--create | --update | --delete | --status}
+aigear-infra {--create | --update | --delete | --status}
 ```
 
 | Argument | Description |
 |---|---|
 | `--create` | Initialize GCP infrastructure resources. |
 | `--update` | Update resources that support update: Cloud Build trigger (config) and Kubernetes cluster (node count, autoscaling). Resources that do not support update are skipped with a log message. |
-| `--delete` | Delete GCP infrastructure resources. Note: Artifact Registry, Cloud KMS, and Pre-VM Images require manual deletion. |
+| `--delete` | Delete GCP infrastructure resources. Note: Cloud KMS keyrings cannot be deleted (a GCP platform limitation); key versions are scheduled for destruction but the keyring itself persists. |
 | `--status` | Query and display the live state of all GCP infrastructure resources. |
 
 Resource creation runs in three ordered phases:
@@ -147,21 +147,22 @@ aigear-scheduler --resume --version logistic_regression
 Manage the full lifecycle of Docker images for the pipeline (`Dockerfile.pl`) and model service (`Dockerfile.ms`): build, delete, or re-tag locally and optionally sync to Artifact Registry.
 
 ```
-aigear-image {--create | --delete | --retag}
+aigear-image {--create | --delete | --clear | --retag}
              [--push]
              [--dockerfile_path PATH] [--build_context DIR]
              [--is_service] [--all]
              [--src_tag TAG] [--target_tag TAG]
 ```
 
-One action (`--create`, `--delete`, `--retag`) is required. `--push` syncs the operation to Artifact Registry after the local step succeeds.
+One action (`--create`, `--delete`, `--clear`, `--retag`) is required. `--push` syncs the operation to Artifact Registry after the local step succeeds.
 
 **Actions (mutually exclusive)**
 
 | Argument | Description |
 |---|---|
 | `--create` | Build the Docker image locally |
-| `--delete` | Remove the Docker image locally |
+| `--delete` | Remove the Docker image with the current tag locally |
+| `--clear` | Remove **all** local images for this image name regardless of tag (use to wipe all versions at once) |
 | `--retag` | Tag an existing local image with a new tag (requires `--src_tag` and `--target_tag`) |
 
 **Scope modifiers**

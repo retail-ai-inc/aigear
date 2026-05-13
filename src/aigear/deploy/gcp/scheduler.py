@@ -123,16 +123,17 @@ class Scheduler:
             self.project_id,
         ]
         event = run_sh(command)
-        if "ENABLED" in event:
-            is_exist = True
-            schedule = next((line.split(": ", 1)[1] for line in event.splitlines() if line.startswith("schedule:")), "?")
-            timezone = next((line.split(": ", 1)[1] for line in event.splitlines() if line.startswith("timeZone:")), "?")
-            logger.info(f"Scheduler job '{self.name}' exists. (schedule: {schedule}, timezone: {timezone})")
-        elif "NOT_FOUND" in event:
+        if "NOT_FOUND" in event:
             logger.info(f"Scheduler job '{self.name}' not found.")
-        else:
+            return False, ""
+        if "ERROR" in event:
             logger.error(f"Unexpected response describing scheduler job '{self.name}': {event}")
-        return is_exist
+            return False, ""
+        state = next((line.split(": ", 1)[1] for line in event.splitlines() if line.startswith("state:")), "")
+        schedule = next((line.split(": ", 1)[1] for line in event.splitlines() if line.startswith("schedule:")), "?")
+        timezone = next((line.split(": ", 1)[1] for line in event.splitlines() if line.startswith("timeZone:")), "?")
+        logger.info(f"Scheduler job '{self.name}' exists. (state: {state}, schedule: {schedule}, timezone: {timezone})")
+        return True, state
 
     def list(self):
         """List Cloud Scheduler jobs filtered by this job's name."""

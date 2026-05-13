@@ -60,7 +60,29 @@ class PubSub:
             )
         return is_exist
 
+    def _delete_subscriptions(self):
+        event = run_sh(
+            [
+                "gcloud",
+                "pubsub",
+                "topics",
+                "list-subscriptions",
+                self.topic_name,
+                f"--project={self.project_id}",
+            ]
+        )
+        subscriptions = [line.strip() for line in event.splitlines() if line.strip().startswith("projects/")]
+        for sub in subscriptions:
+            result = run_sh(
+                ["gcloud", "pubsub", "subscriptions", "delete", sub, f"--project={self.project_id}"]
+            )
+            if "ERROR" in result:
+                logger.error(f"Failed to delete subscription '{sub}': {result}")
+            else:
+                logger.info(f"Subscription '{sub}' deleted.")
+
     def delete(self):
+        self._delete_subscriptions()
         command = [
             "gcloud",
             "pubsub",
