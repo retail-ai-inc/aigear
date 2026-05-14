@@ -46,11 +46,20 @@ class LocalImage:
 
     def clear_all(self) -> bool:
         result = run_sh(["docker", "images", self._image_name, "-q"])
-        image_ids = result.strip().splitlines()
-        if not image_ids:
+        raw_ids = [line.strip() for line in result.strip().splitlines() if line.strip()]
+        # One digest can appear on multiple lines (several tags); same ID may also be
+        # tagged under another repository — plain `rmi` errors without `-f`.
+        image_ids = list(dict.fromkeys(raw_ids))
+        if image_ids:
+            if run_sh_stream(["docker", "rmi", "-f"] + image_ids) != 0:
+                return False
+        else:
             logger.info(f"No local images found for '{self._image_name}'.")
-            return True
-        return run_sh_stream(["docker", "rmi"] + image_ids) == 0
+
+        if run_sh_stream(["docker", "image", "prune", "-f"]) != 0:
+            return False
+        logger.info("Pruned dangling local Docker images.")
+        return True
 
 
 class RegistryImage:
