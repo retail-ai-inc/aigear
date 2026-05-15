@@ -93,6 +93,66 @@ def test_local_remove_correct_command(mock_stream):
     assert cmd == ["docker", "rmi", IMAGE_PATH]
 
 
+# ── LocalImage.clear_all ───────────────────────────────────────────────────────
+
+@patch("aigear.deploy.gcp.artifacts_image.run_sh_stream")
+@patch("aigear.deploy.gcp.artifacts_image.run_sh")
+def test_local_clear_all_lists_then_rmis_then_prunes(mock_run_sh, mock_stream):
+    mock_run_sh.return_value = "sha1\nsha2\n"
+    mock_stream.return_value = 0
+    assert _make_local().clear_all() is True
+    mock_run_sh.assert_called_once_with(["docker", "images", IMAGE_NAME, "-q"])
+    assert mock_stream.call_count == 2
+    assert mock_stream.call_args_list[0][0][0] == ["docker", "rmi", "-f", "sha1", "sha2"]
+    assert mock_stream.call_args_list[1][0][0] == ["docker", "image", "prune", "-f"]
+
+
+@patch("aigear.deploy.gcp.artifacts_image.run_sh_stream")
+@patch("aigear.deploy.gcp.artifacts_image.run_sh")
+def test_local_clear_all_dedupes_repeated_image_ids(mock_run_sh, mock_stream):
+    mock_run_sh.return_value = "sha1\nsha1\nsha2\n"
+    mock_stream.return_value = 0
+    assert _make_local().clear_all() is True
+    assert mock_stream.call_args_list[0][0][0] == ["docker", "rmi", "-f", "sha1", "sha2"]
+
+
+@patch("aigear.deploy.gcp.artifacts_image.run_sh_stream")
+@patch("aigear.deploy.gcp.artifacts_image.run_sh")
+def test_local_clear_all_prunes_when_no_local_images(mock_run_sh, mock_stream):
+    mock_run_sh.return_value = ""
+    mock_stream.return_value = 0
+    assert _make_local().clear_all() is True
+    mock_run_sh.assert_called_once_with(["docker", "images", IMAGE_NAME, "-q"])
+    mock_stream.assert_called_once_with(["docker", "image", "prune", "-f"])
+
+
+@patch("aigear.deploy.gcp.artifacts_image.run_sh_stream")
+@patch("aigear.deploy.gcp.artifacts_image.run_sh")
+def test_local_clear_all_returns_false_when_rmi_fails(mock_run_sh, mock_stream):
+    mock_run_sh.return_value = "sha1\n"
+    mock_stream.return_value = 1
+    assert _make_local().clear_all() is False
+    mock_stream.assert_called_once_with(["docker", "rmi", "-f", "sha1"])
+
+
+@patch("aigear.deploy.gcp.artifacts_image.run_sh_stream")
+@patch("aigear.deploy.gcp.artifacts_image.run_sh")
+def test_local_clear_all_returns_false_when_prune_fails(mock_run_sh, mock_stream):
+    mock_run_sh.return_value = ""
+    mock_stream.return_value = 1
+    assert _make_local().clear_all() is False
+    mock_stream.assert_called_once_with(["docker", "image", "prune", "-f"])
+
+
+@patch("aigear.deploy.gcp.artifacts_image.run_sh_stream")
+@patch("aigear.deploy.gcp.artifacts_image.run_sh")
+def test_local_clear_all_returns_false_when_prune_fails_after_rmi(mock_run_sh, mock_stream):
+    mock_run_sh.return_value = "sha1\n"
+    mock_stream.side_effect = [0, 1]
+    assert _make_local().clear_all() is False
+    assert mock_stream.call_count == 2
+
+
 # ── _validate_dockerfile_venvs ────────────────────────────────────────────────
 
 def test_validate_raises_on_venv_base_mismatch(tmp_path):
