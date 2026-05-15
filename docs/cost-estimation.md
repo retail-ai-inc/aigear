@@ -8,18 +8,17 @@
 
 Same three team sizes; **Aigear baseline** = ephemeral training VMs + shared GKE for serving + storage/scheduler/KMS, etc.
 
-| Team size | Aigear | + MLflow (~$12) | Kubeflow (GKE control plane) | Vertex AI (per-model endpoints) |
-|-----------|--------|-----------------|------------------------------|----------------------------------|
-| Small (3 models, low runs) | **~$52** | ~$64 | ~$293 | ~$328 |
-| Medium (8 models, more GPU) | **~$143** | ~$155 | ~$335 | ~$914 |
-| Large (20 models, heavy GPU) | **~$364** | ~$376 | ~$508 | ~$2,398 |
+| Team size | Aigear | Kubeflow (GKE control plane) | Vertex AI (per-model endpoints) |
+|-----------|--------|------------------------------|----------------------------------|
+| Small (3 models, low runs) | **~$52** | ~$293 | ~$328 |
+| Medium (8 models, more GPU) | **~$143** | ~$335 | ~$914 |
+| Large (20 models, heavy GPU) | **~$364** | ~$508 | ~$2,398 |
 
 **Why the spread**
 
 | Stack | What you pay extra for |
 |-------|-------------------------|
 | **Aigear** | Mostly **always-on GKE** for serving; training is pay-per-use. |
-| **+ MLflow** | ~**$12/mo** (Cloud Run tracking + small Cloud SQL). |
 | **Kubeflow** | **~$289/mo fixed** cluster for the platform, even when idle. |
 | **Vertex AI** | **~$108/mo per online endpoint** (dedicated node) — cost **grows with model count**. |
 
@@ -37,8 +36,7 @@ Same three team sizes; **Aigear baseline** = ephemeral training VMs + shared GKE
 
 1. **Aigear** is cheapest when you have **many models** on **shared serving** — you avoid per-endpoint platform tax.  
 2. **Kubeflow** only makes sense when a **big always-on cluster** is justified.  
-3. **Vertex AI** is simple to operate but **serving cost scales linearly** with endpoints.  
-4. **MLflow add-on** is a small fixed bump for tracking/registry.
+3. **Vertex AI** is simple to operate but **serving cost scales linearly** with endpoints.
 
 **Parallel DAG:** parallel steps do **not** increase VM cost (same VM·hours); they shorten wall time. Firestore fan-in stays in free tier at these scales.
 
