@@ -162,7 +162,7 @@ One action (`--create`, `--delete`, `--clear`, `--retag`) is required. `--push` 
 |---|---|
 | `--create` | Build the Docker image locally |
 | `--delete` | Remove the Docker image with the current tag locally |
-| `--clear` | Remove **all** local images for this image name regardless of tag (use to wipe all versions at once) |
+| `--clear` | Delete **all** local images for this repository (every tag), then run `docker image prune -f` to clean up dangling images on the host (not limited to this project). With `--push`, also remove that image and **all** its tags from Artifact Registry. |
 | `--retag` | Tag an existing local image with a new tag (requires `--src_tag` and `--target_tag`) |
 
 **Scope modifiers**
