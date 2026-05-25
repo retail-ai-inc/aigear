@@ -83,6 +83,7 @@ class Infra:
             topic_name=self.aigear_config.gcp.pub_sub.topic_name,
             project_id=self.project_id,
             service_account=self.service_account,
+            project_name=AppConfig.project_name(),
         )
 
         self.service_accounts = ServiceAccounts(

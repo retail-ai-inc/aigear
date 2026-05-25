@@ -17,6 +17,7 @@ class CloudFunction:
         topic_name,
         project_id,
         service_account,
+        project_name: str | None = None,
     ):
         self.function_name = function_name
         self.region = region
@@ -24,6 +25,7 @@ class CloudFunction:
         self.topic_name = topic_name
         self.project_id = project_id
         self.service_account = service_account
+        self.project_name = project_name or ""
 
     def _function_path(self):
         source_path = Path(__file__).resolve().parent / "function"
@@ -36,6 +38,7 @@ class CloudFunction:
             content = Path(function_path_src).read_text(encoding="utf-8")
             content = (
                 content.replace("{{PROJECTID}}", self.project_id)
+                .replace("{{PROJECTNAME}}", self.project_name)
                 .replace("{{REGION}}", self.region)
                 .replace("{{TOPICSNAME}}", self.topic_name)
                 .replace("{{VENVBASEDIR}}", VENV_BASE_DIR)

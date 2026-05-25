@@ -1,10 +1,12 @@
 import { google } from 'googleapis';
 import functions from '@google-cloud/functions-framework';
+import crypto from 'node:crypto';
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
 const CONFIG = {
   projectId: '{{PROJECTID}}',
+  projectName: '{{PROJECTNAME}}',
   region:    '{{REGION}}',
   topicName: '{{TOPICSNAME}}',
   // serviceAccount is not hardcoded — fetched at runtime from the metadata server
@@ -58,6 +60,55 @@ const EXHAUSTED_CODES = [
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+function deriveRunId(projectName, pipelineVersion, runStartedAtUtc) {
+  const normalizedProjectName = projectName || '';
+  return crypto
+    .createHash('sha256')
+    .update(`${normalizedProjectName}:${pipelineVersion}:${runStartedAtUtc}`, 'utf8')
+    .digest('hex')
+    .slice(0, 16);
+}
+
+function resolveStepName(task) {
+  return task.step_name || 'model_service';
+}
+
+function sanitizeLabelValue(value) {
+  const lowered = String(value || '').toLowerCase();
+  const sanitized = lowered.replace(/[^a-z0-9_-]/g, '-').slice(0, 63);
+  return sanitized || 'na';
+}
+
+function getPublishTimeIso(cloudEvent) {
+  return cloudEvent?.data?.message?.publishTime || cloudEvent?.time || '';
+}
+
+function enrichIfNewRun(tasks, cloudEvent) {
+  if (!Array.isArray(tasks) || tasks.length === 0) return tasks;
+  if (tasks[0]?.run_id) return tasks;
+
+  const publishTimeIso = getPublishTimeIso(cloudEvent);
+  const runStartedAtUtc = new Date(publishTimeIso).toISOString();
+  if (!runStartedAtUtc || Number.isNaN(Date.parse(runStartedAtUtc))) {
+    throw new Error(`Invalid publish time for run enrichment: ${publishTimeIso}`);
+  }
+
+  const projectName = tasks[0]?.project_name || CONFIG.projectName || '';
+  const pipelineVersion = tasks[0]?.pipeline_version;
+  if (!pipelineVersion) {
+    throw new Error('Missing pipeline_version for run enrichment');
+  }
+
+  const runId = deriveRunId(projectName, pipelineVersion, runStartedAtUtc);
+  return tasks.map(task => ({
+    ...task,
+    project_name: projectName || undefined,
+    run_started_at_utc: runStartedAtUtc,
+    run_id: runId,
+    step_name: resolveStepName(task),
+  }));
+}
 
 /**
  * Converts a Python import path to the absolute yaml path inside the container.
@@ -157,15 +208,37 @@ function buildPipelineCommand(current) {
  * @param {string} p.gkeZone      GKE cluster zone  (from task field gke_zone)
  * @returns {string}
  */
-function buildStartupScript({ dockerImage, gpuFlag, pipelineCommand, yamlPathInImage, nextMessage, topicName, gkeCluster, gkeZone }) {
+function buildStartupScript({
+  dockerImage,
+  gpuFlag,
+  pipelineCommand,
+  yamlPathInImage,
+  nextMessage,
+  topicName,
+  gkeCluster,
+  gkeZone,
+  runId,
+  runStartedAtUtc,
+  pipelineVersion,
+  projectName,
+  stepName,
+}) {
   // Single-quote-escape all values interpolated into shell to prevent injection
   const esc = s => s.replace(/'/g, "'\\''");
 
   // ── Pipeline step ────────────────────────────────────────────────────────────
   // A pipeline failure is fatal: publish an error message, then delete the VM.
+  const dockerEnvArgs = [
+    `-e AIGEAR_RUN_ID='${esc(runId || '')}'`,
+    `-e AIGEAR_RUN_STARTED_AT_UTC='${esc(runStartedAtUtc || '')}'`,
+    `-e AIGEAR_PIPELINE_VERSION='${esc(pipelineVersion || '')}'`,
+    `-e AIGEAR_STEP_NAME='${esc(stepName || '')}'`,
+    `-e AIGEAR_PROJECT_NAME='${esc(projectName || '')}'`,
+  ].join(' ');
+
   const runPipeline = pipelineCommand ? `
 # ── Pipeline step ──
-docker run ${gpuFlag} '${esc(dockerImage)}' ${pipelineCommand}
+docker run ${gpuFlag} ${dockerEnvArgs} '${esc(dockerImage)}' ${pipelineCommand}
 docker_exit_code=$?
 if [ "$docker_exit_code" -ne 0 ]; then
   gcloud pubsub topics publish '${esc(topicName)}' --message '{"error":true,"exit_code":"'"$docker_exit_code"'"}'
@@ -216,11 +289,23 @@ else
 fi
 ` : '';
 
+  const startupMarker = JSON.stringify({
+    log_source: 'ml_pipeline',
+    event: 'vm_startup',
+    run_id: runId,
+    run_started_at_utc: runStartedAtUtc,
+    pipeline_version: pipelineVersion,
+    step_name: stepName,
+    project_name: projectName || undefined,
+  });
+
   // gcloud and docker are already on PATH in the custom image — no sudo needed.
   // nextMessage is inlined as a literal string by the Cloud Function at script-generation
   // time — the esc() function ensures single-quote safety for shell injection.
   return `#!/bin/bash
 set -euo pipefail
+
+echo '${esc(startupMarker)}'
 
 # Authenticate Docker to Artifact Registry (gcloud pre-installed in custom image)
 # Extract registry hostname from the image path (e.g. asia-northeast1-docker.pkg.dev)
@@ -332,7 +417,11 @@ function buildVmConfig({ current, vmName, startupScript, zone, serviceAccount })
       aliasIpRanges: [],
     }],
     description: '',
-    labels:      {},
+    labels:      {
+      run_id: sanitizeLabelValue(current.run_id),
+      pipeline_version: sanitizeLabelValue(current.pipeline_version),
+      step_name: sanitizeLabelValue(resolveStepName(current)),
+    },
     scheduling: {
       preemptible:       false,
       // GPU VMs must use TERMINATE (live migration is not supported).
@@ -462,6 +551,13 @@ functions.cloudEvent('cronjobProcessPubSub', async cloudEvent => {
     return;
   }
 
+  try {
+    cronjobInfo = enrichIfNewRun(cronjobInfo, cloudEvent);
+  } catch (err) {
+    console.error(`Failed to enrich run metadata: ${err.message}`);
+    return;
+  }
+
   const [current, ...remaining] = cronjobInfo;
   console.log(`Processing task: ${JSON.stringify(current)}`);
 
@@ -507,6 +603,11 @@ functions.cloudEvent('cronjobProcessPubSub', async cloudEvent => {
     topicName:      CONFIG.topicName,
     gkeCluster:     current.gke_cluster || '',
     gkeZone:        current.gke_zone    || '',
+    runId:          current.run_id || '',
+    runStartedAtUtc: current.run_started_at_utc || '',
+    pipelineVersion: current.pipeline_version || '',
+    projectName:     current.project_name || '',
+    stepName:        resolveStepName(current),
   });
 
   const vmName = `${current.vm_name}-${Date.now()}`;
@@ -518,10 +619,22 @@ functions.cloudEvent('cronjobProcessPubSub', async cloudEvent => {
     });
     const authClient = await auth.getClient();
 
-    await createVMWithFallback(
+    const zone = await createVMWithFallback(
       authClient,
       (zone, serviceAccount) => buildVmConfig({ current, vmName, startupScript, zone, serviceAccount }),
     );
+
+    console.log(JSON.stringify({
+      log_source: 'cloud_function',
+      event: 'vm_created',
+      run_id: current.run_id,
+      run_started_at_utc: current.run_started_at_utc,
+      pipeline_version: current.pipeline_version,
+      step_name: resolveStepName(current),
+      project_name: current.project_name || undefined,
+      instance_name: vmName,
+      zone,
+    }));
 
   } catch (err) {
     console.error('Failed to create VM in all zones:', err);

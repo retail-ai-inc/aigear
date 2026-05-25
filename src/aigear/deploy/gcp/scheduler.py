@@ -1,7 +1,7 @@
 import json
 
 from aigear.common import run_sh
-from aigear.common.config import AigearConfig, PipelinesConfig
+from aigear.common.config import AigearConfig, AppConfig, PipelinesConfig
 from aigear.common.constant import ENV_STAGING
 from aigear.common.image import get_image_path
 from aigear.common.logger import Logging
@@ -215,6 +215,7 @@ def _build_step_message(
     docker_image: str,
     gke_cluster: str,
     gke_zone: str,
+    project_name: str | None = None,
     venv: str | None = None,
     env: str | None = None,
     step_name: str | None = None,
@@ -234,6 +235,8 @@ def _build_step_message(
 
     message["docker_image"] = docker_image
     message["pipeline_version"] = pipeline_version
+    if project_name:
+        message["project_name"] = project_name
 
     # step_name is used by the VM to run: aigear-task workflow --step <step_name>
     # Only set for workflow steps (not model_service)
@@ -292,6 +295,7 @@ def _build_messages(
     venv_pl = pipeline_config.get("venv_pl")
     venv_ms = pipeline_config.get("model_service", {}).get("venv_ms")
     ms_config = pipeline_config.get("model_service", {})
+    project_name = AppConfig.project_name()
 
     invalid = [s for s in step_names if s not in pipeline_config]
     if invalid:
@@ -324,6 +328,7 @@ def _build_messages(
             docker_image=step_docker_image,
             gke_cluster=gke_cluster,
             gke_zone=gke_zone,
+            project_name=project_name,
             venv=step_venv,
             env=step_env,
             step_name=resolved_step_name,

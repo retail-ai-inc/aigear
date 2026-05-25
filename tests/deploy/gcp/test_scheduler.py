@@ -170,6 +170,19 @@ def test_build_step_message_includes_docker_image_and_version():
     assert msg["pipeline_version"] == "v1"
 
 
+def test_build_step_message_includes_project_name_when_provided():
+    step_config = {"resources": {"vm_name": "my-vm"}}
+    msg = _build_step_message(
+        step_config=step_config,
+        pipeline_version="v1",
+        docker_image="my-image:v1",
+        gke_cluster="my-cluster",
+        gke_zone="asia-northeast1",
+        project_name="demo",
+    )
+    assert msg["project_name"] == "demo"
+
+
 def test_build_step_message_merges_resources():
     step_config = {"resources": {"vm_name": "my-vm", "spec": "e2-standard-4"}}
     msg = _build_step_message(

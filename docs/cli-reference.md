@@ -12,6 +12,7 @@ All CLI entry points are installed as standalone commands by `pip install aigear
 | `aigear-model` | Generate YAML and manage the lifecycle of a gRPC model service (deploy, update, delete, status) |
 | `aigear-env-schema` | Auto-generate a Pydantic schema from `env.json` |
 | `aigear-kms-env` | Encrypt or decrypt `env.json` using Cloud KMS |
+| `aigear-logs` | Discover pipeline runs and query Cloud Logging by `run_id` |
 
 ---
 
@@ -301,3 +302,40 @@ aigear-kms-env {--encrypt | --decrypt}
 | `--key` | `None` | KMS key name. Falls back to `env.json` if omitted. |
 
 > When decrypting (before `env.json` exists), provide `--project-id`, `--location`, `--keyring`, and `--key` explicitly, since there is no `env.json` to fall back on.
+
+---
+
+### `aigear-logs`
+
+Discover run IDs for a given date/version and then query logs by `run_id`. Discovery results are cached locally for 3 hours to reduce repeated Cloud Logging scans.
+
+```
+aigear-logs [--version VERSION --run-date YYYY-MM-DD]
+            [--run-id RUN_ID]
+            [--step STEP_NAME]
+            [--log-source {cloud_function,ml_pipeline}]
+            [--time-zone IANA_TZ]
+            [--limit N]
+            [--no-cache]
+            [--clear-cache]
+```
+
+| Argument | Default | Description |
+|---|---|---|
+| `--version` | — | Pipeline version used during discovery mode |
+| `--run-date` | — | Date interpreted in scheduler timezone, then converted to UTC for querying |
+| `--run-id` | — | Direct query mode; skips discovery |
+| `--step` | — | Optional `step_name` filter |
+| `--log-source` | — | Optional source filter (`cloud_function` or `ml_pipeline`) |
+| `--time-zone` | scheduler `time_zone` from `env.json` | Override timezone used to interpret `--run-date` |
+| `--limit` | `200` | Max logs returned per query |
+| `--no-cache` | `false` | Skip local discovery cache |
+| `--clear-cache` | `false` | Remove local discovery cache and exit |
+
+**Flow**
+
+1. If `--run-id` is provided, query logs directly by `run_id`.
+2. Otherwise discover run IDs for `--version` + `--run-date` (0/1/N branch):
+   - 0: exit with "no runs"
+   - 1: auto-select and query
+   - N: interactive selection, then query
