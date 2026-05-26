@@ -60,7 +60,6 @@ class CloudFunction:
             "--runtime=nodejs24",
             f"--region={self.region}",
             f"--entry-point={self.entry_point}",
-            f"--trigger-topic={self.topic_name}",
             f"--source={source_path}",
             f"--project={self.project_id}",
             f"--service-account={self.service_account}",

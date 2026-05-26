@@ -31,6 +31,8 @@ def _make_infra():
     infra.cloud_kms = MagicMock()
     infra.cloud_build = MagicMock()
     infra.cloud_function = MagicMock()
+    infra.eventarc_trigger = MagicMock()
+    infra.eventarc_trigger.trigger_name = "my-function-pubsub"
     infra.kubernetes_cluster = MagicMock()
     return infra
 
@@ -118,6 +120,67 @@ def test_ensure_pubsub_skips_when_exists():
     infra.pubsub.describe.return_value = True
     infra._ensure_pubsub()
     infra.pubsub.create.assert_not_called()
+
+
+# ── _ensure_cloud_function ────────────────────────────────────────────────────
+
+def test_ensure_cloud_function_deploys_when_not_exists():
+    infra = _make_infra()
+    infra.cloud_function.describe.return_value = False
+    infra._ensure_cloud_function()
+    infra.cloud_function.deploy.assert_called_once()
+    infra.cloud_function.add_permissions_to_cloud_function.assert_called_once()
+
+
+def test_ensure_cloud_function_skips_when_exists():
+    infra = _make_infra()
+    infra.cloud_function.describe.return_value = True
+    infra._ensure_cloud_function()
+    infra.cloud_function.deploy.assert_not_called()
+
+
+# ── _ensure_eventarc_trigger ──────────────────────────────────────────────────
+
+def test_ensure_eventarc_trigger_creates_when_not_exists():
+    infra = _make_infra()
+    infra.eventarc_trigger.describe.return_value = False
+    infra.pubsub.has_subscriptions.return_value = True
+    infra._ensure_eventarc_trigger()
+    infra.eventarc_trigger.add_permissions.assert_called_once()
+    infra.eventarc_trigger.create.assert_called_once()
+
+
+def test_ensure_eventarc_trigger_skips_create_when_exists():
+    infra = _make_infra()
+    infra.eventarc_trigger.describe.return_value = True
+    infra.pubsub.has_subscriptions.return_value = True
+    infra._ensure_eventarc_trigger()
+    infra.eventarc_trigger.create.assert_not_called()
+
+
+def test_ensure_eventarc_trigger_raises_when_no_subscription():
+    infra = _make_infra()
+    infra.eventarc_trigger.describe.return_value = True
+    infra.pubsub.has_subscriptions.return_value = False
+    try:
+        infra._ensure_eventarc_trigger()
+        assert False, "expected RuntimeError"
+    except RuntimeError as exc:
+        assert "no subscription" in str(exc).lower()
+
+
+def test_delete_eventarc_trigger_deletes_when_exists():
+    infra = _make_infra()
+    infra.eventarc_trigger.describe.return_value = True
+    infra._delete_eventarc_trigger()
+    infra.eventarc_trigger.delete.assert_called_once()
+
+
+def test_delete_eventarc_trigger_skips_when_not_exists():
+    infra = _make_infra()
+    infra.eventarc_trigger.describe.return_value = False
+    infra._delete_eventarc_trigger()
+    infra.eventarc_trigger.delete.assert_not_called()
 
 
 # ── _ensure_cloud_build ───────────────────────────────────────────────────────

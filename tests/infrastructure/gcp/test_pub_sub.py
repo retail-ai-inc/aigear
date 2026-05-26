@@ -69,6 +69,25 @@ def test_add_permissions_uses_full_topic_path(mock_run_sh):
     assert "projects/my-project/topics/my-topic" in all_calls
 
 
+# ── PubSub.list_subscriptions / has_subscriptions ─────────────────────────────
+
+@patch("aigear.infrastructure.gcp.pub_sub.run_sh")
+def test_list_subscriptions_parses_project_paths(mock_run_sh):
+    mock_run_sh.return_value = (
+        "projects/my-project/subscriptions/eventarc-asia-northeast1-fn-sub-001\n"
+    )
+    subs = _make_pubsub().list_subscriptions()
+    assert subs == [
+        "projects/my-project/subscriptions/eventarc-asia-northeast1-fn-sub-001"
+    ]
+
+
+@patch("aigear.infrastructure.gcp.pub_sub.run_sh")
+def test_has_subscriptions_returns_false_when_none(mock_run_sh):
+    mock_run_sh.return_value = ""
+    assert _make_pubsub().has_subscriptions() is False
+
+
 # ── PubSub.delete ─────────────────────────────────────────────────────────────
 
 @patch("aigear.infrastructure.gcp.pub_sub.run_sh")

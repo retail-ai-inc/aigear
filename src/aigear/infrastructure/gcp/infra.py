@@ -10,6 +10,7 @@ from aigear.infrastructure.gcp.artifacts import Artifacts
 from aigear.infrastructure.gcp.bucket import Bucket
 from aigear.infrastructure.gcp.build import CloudBuild
 from aigear.infrastructure.gcp.constant import entry_point_of_cloud_fuction
+from aigear.infrastructure.gcp.eventarc import EventarcTrigger
 from aigear.infrastructure.gcp.function import CloudFunction
 from aigear.infrastructure.gcp.iam import ServiceAccounts
 from aigear.infrastructure.gcp.kms import CloudKMS
@@ -93,6 +94,14 @@ class Infra:
         self.pubsub = PubSub(
             topic_name=self.aigear_config.gcp.pub_sub.topic_name,
             project_id=self.project_id,
+        )
+
+        self.eventarc_trigger = EventarcTrigger.from_function(
+            function_name=self.aigear_config.gcp.cloud_function.function_name,
+            region=self.location,
+            topic_name=self.aigear_config.gcp.pub_sub.topic_name,
+            project_id=self.project_id,
+            trigger_service_account=self.service_account,
         )
 
         self.artifacts = Artifacts(
@@ -341,6 +350,13 @@ class Infra:
         else:
             self._step_skip(f"Kubernetes Cluster ({cfg.kubernetes.cluster_name})")
 
+        if cfg.cloud_function.on:
+            phase2_tasks[f"Cloud Function ({cfg.cloud_function.function_name})"] = (
+                self._ensure_cloud_function
+            )
+        else:
+            self._step_skip(f"Cloud Function ({cfg.cloud_function.function_name})")
+
         if phase2_tasks:
             with ThreadPoolExecutor(max_workers=len(phase2_tasks)) as executor:
                 futures = {
@@ -352,34 +368,47 @@ class Infra:
                     if not future.result():
                         failed_steps.append(title)
 
-        # ── Gate 2→3: Pub/Sub must exist ──────────────────────────────
-        # Phase 2 already verified pubsub state; reuse that result instead of
-        # calling describe() again.
+        # ── Gate 2→3: Pub/Sub + Cloud Function must exist for Eventarc ─
         pubsub_step_key = f"Pub/Sub Topic ({cfg.pub_sub.topic_name})"
+        cf_step_key = f"Cloud Function ({cfg.cloud_function.function_name})"
         pubsub_ok = cfg.pub_sub.on and pubsub_step_key not in failed_steps
-        if cfg.cloud_function.on and not pubsub_ok:
-            self._step_fail(
-                f"Gate 2→3: Pub/Sub Topic ({cfg.pub_sub.topic_name})",
-                "not found — Phase 3 skipped",
-            )
-            failed_steps.append(
-                f"Gate 2→3: Pub/Sub Topic ({cfg.pub_sub.topic_name}) not found"
-            )
-            self._log_summary(failed_steps, "Init")
-            return
+        cf_ok = cfg.cloud_function.on and cf_step_key not in failed_steps
+        need_eventarc = cfg.pub_sub.on and cfg.cloud_function.on
 
-        # ── Phase 3: Cloud Function ────────────────────────────────────
-        if cfg.cloud_function.on:
-            success = self._step(
-                f"Cloud Function ({cfg.cloud_function.function_name})",
-                self._ensure_cloud_function,
-            )
-            if not success:
-                failed_steps.append(
-                    f"Cloud Function ({cfg.cloud_function.function_name})"
+        if need_eventarc:
+            if not pubsub_ok:
+                self._step_fail(
+                    f"Gate 2→3: Pub/Sub Topic ({cfg.pub_sub.topic_name})",
+                    "not found — Eventarc trigger skipped",
                 )
-        else:
-            self._step_skip(f"Cloud Function ({cfg.cloud_function.function_name})")
+                failed_steps.append(
+                    f"Gate 2→3: Pub/Sub Topic ({cfg.pub_sub.topic_name}) not found"
+                )
+                self._log_summary(failed_steps, "Init")
+                return
+            if not cf_ok:
+                self._step_fail(
+                    f"Gate 2→3: Cloud Function ({cfg.cloud_function.function_name})",
+                    "not found — Eventarc trigger skipped",
+                )
+                failed_steps.append(
+                    f"Gate 2→3: Cloud Function ({cfg.cloud_function.function_name}) not found"
+                )
+                self._log_summary(failed_steps, "Init")
+                return
+
+        # ── Phase 3: Eventarc Pub/Sub trigger ─────────────────────────
+        if need_eventarc:
+            trigger_label = (
+                f"Eventarc Trigger ({self.eventarc_trigger.trigger_name})"
+            )
+            success = self._step(trigger_label, self._ensure_eventarc_trigger)
+            if not success:
+                failed_steps.append(trigger_label)
+        elif cfg.cloud_function.on or cfg.pub_sub.on:
+            self._step_skip(
+                f"Eventarc Trigger ({self.eventarc_trigger.trigger_name})"
+            )
 
         self._log_summary(failed_steps, "Init")
 
@@ -554,9 +583,10 @@ class Infra:
 
     def _ensure_cloud_function(self):
         exists = self.cloud_function.describe()
+        function_name = self.aigear_config.gcp.cloud_function.function_name
         if not exists:
             logger.info(
-                f"Cloud Function ({self.aigear_config.gcp.cloud_function.function_name}) not found in region "
+                f"Cloud Function ({function_name}) not found in region "
                 f"({self.location}). Deploying Cloud Function..."
             )
             self.cloud_function.deploy()
@@ -564,13 +594,41 @@ class Infra:
                 sa_email=self.service_accounts.sa_email
             )
             logger.info(
-                f"Cloud Function ({self.aigear_config.gcp.cloud_function.function_name}) deployed successfully."
+                f"Cloud Function ({function_name}) deployed successfully."
             )
         else:
             logger.info(
-                f"Cloud Function ({self.aigear_config.gcp.cloud_function.function_name}) already exists in region "
+                f"Cloud Function ({function_name}) already exists in region "
                 f"({self.location}). Skipping deployment."
             )
+
+    def _ensure_eventarc_trigger(self):
+        trigger_name = self.eventarc_trigger.trigger_name
+        topic_name = self.aigear_config.gcp.pub_sub.topic_name
+        if not self.eventarc_trigger.describe():
+            logger.info(
+                f"Eventarc trigger ({trigger_name}) not found in region "
+                f"({self.location}). Creating Pub/Sub trigger..."
+            )
+            self.eventarc_trigger.add_permissions(
+                sa_email=self.service_accounts.sa_email
+            )
+            self.eventarc_trigger.create()
+        else:
+            logger.info(
+                f"Eventarc trigger ({trigger_name}) already exists in region "
+                f"({self.location}). Skipping creation."
+            )
+
+        if not self.pubsub.has_subscriptions():
+            raise RuntimeError(
+                f"Eventarc trigger ({trigger_name}) is configured but Pub/Sub topic "
+                f"({topic_name}) has no subscription. "
+                f"Verify Eventarc API is enabled in project ({self.project_id})."
+            )
+        logger.info(
+            f"Eventarc trigger ({trigger_name}) ready for topic ({topic_name})."
+        )
 
     def _ensure_pre_vm_image(self):
         from aigear.infrastructure.gcp.pre_vm_image import PreVMImage
@@ -731,11 +789,19 @@ class Infra:
                     if not future.result():
                         failed_steps.append(title)
 
-        # ── Phase 3: Cloud Function ────────────────────────────────────
         if cfg.cloud_function.on:
             self._step_no_update(f"Cloud Function ({cfg.cloud_function.function_name})")
         else:
             self._step_skip(f"Cloud Function ({cfg.cloud_function.function_name})")
+
+        if cfg.pub_sub.on and cfg.cloud_function.on:
+            self._step_no_update(
+                f"Eventarc Trigger ({self.eventarc_trigger.trigger_name})"
+            )
+        else:
+            self._step_skip(
+                f"Eventarc Trigger ({self.eventarc_trigger.trigger_name})"
+            )
 
         self._log_summary(failed_steps, "Update")
 
@@ -752,18 +818,18 @@ class Infra:
         failed_steps = []
         cfg = self.aigear_config.gcp
 
-        # ── Phase 1: Cloud Function (reverse of creation phase 3) ────
-        if cfg.cloud_function.on:
-            success = self._step(
-                f"Cloud Function ({cfg.cloud_function.function_name})",
-                self._delete_cloud_function,
+        # ── Phase 1: Eventarc trigger (reverse of creation phase 3) ───
+        if cfg.pub_sub.on and cfg.cloud_function.on:
+            trigger_label = (
+                f"Eventarc Trigger ({self.eventarc_trigger.trigger_name})"
             )
+            success = self._step(trigger_label, self._delete_eventarc_trigger)
             if not success:
-                failed_steps.append(
-                    f"Cloud Function ({cfg.cloud_function.function_name})"
-                )
+                failed_steps.append(trigger_label)
         else:
-            self._step_skip(f"Cloud Function ({cfg.cloud_function.function_name})")
+            self._step_skip(
+                f"Eventarc Trigger ({self.eventarc_trigger.trigger_name})"
+            )
 
         # ── Phase 2: Independent resources (parallel) ─────────────────
         phase2_tasks = {}
@@ -821,6 +887,13 @@ class Infra:
         else:
             self._step_skip(f"Kubernetes Cluster ({cfg.kubernetes.cluster_name})")
 
+        if cfg.cloud_function.on:
+            phase2_tasks[f"Cloud Function ({cfg.cloud_function.function_name})"] = (
+                self._delete_cloud_function
+            )
+        else:
+            self._step_skip(f"Cloud Function ({cfg.cloud_function.function_name})")
+
         if phase2_tasks:
             with ThreadPoolExecutor(max_workers=len(phase2_tasks)) as executor:
                 futures = {
@@ -848,6 +921,17 @@ class Infra:
     # ================================================================
     # Actual delete actions
     # ================================================================
+    def _delete_eventarc_trigger(self):
+        if self.eventarc_trigger.describe():
+            logger.info(
+                f"Deleting Eventarc trigger ({self.eventarc_trigger.trigger_name})..."
+            )
+            self.eventarc_trigger.delete()
+        else:
+            logger.info(
+                f"Eventarc trigger ({self.eventarc_trigger.trigger_name}) not found. Skipping."
+            )
+
     def _delete_cloud_function(self):
         exists = self.cloud_function.describe()
         if exists:
@@ -1047,6 +1131,11 @@ class Infra:
                 f"Cloud Function ({cfg.cloud_function.function_name})",
                 cfg.cloud_function.on,
                 self.cloud_function.describe,
+            ),
+            (
+                f"Eventarc Trigger ({self.eventarc_trigger.trigger_name})",
+                cfg.pub_sub.on and cfg.cloud_function.on,
+                self.eventarc_trigger.describe,
             ),
         ]
 

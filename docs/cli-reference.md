@@ -52,8 +52,8 @@ Resource creation runs in three ordered phases:
 | Phase | Resources | Mode |
 |---|---|---|
 | 1 | Service Account + IAM bindings | Sequential (must be first) |
-| 2 | Buckets, Artifact Registry, Pub/Sub, KMS, Cloud Build, Pre-VM Image, Kubernetes | **Parallel** |
-| 3 | Cloud Function | Sequential (depends on Pub/Sub from Phase 2) |
+| 2 | Buckets, Artifact Registry, Pub/Sub, KMS, Cloud Build, Pre-VM Image, Kubernetes, Cloud Function (deploy only) | **Parallel** |
+| 3 | Eventarc Pub/Sub trigger | Sequential (requires Pub/Sub topic and Cloud Function from Phase 2) |
 
 - Each step is idempotent — existing resources are detected and skipped.
 - If the GCP default subnet is not yet ready (common in new projects), Pre-VM Image creation retries automatically up to 5 times with a 30-second wait between attempts.
