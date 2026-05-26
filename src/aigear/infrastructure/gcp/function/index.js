@@ -1,5 +1,6 @@
 import { google } from 'googleapis';
 import functions from '@google-cloud/functions-framework';
+import { Logging } from '@google-cloud/logging';
 import crypto from 'node:crypto';
 
 // ─── Config ───────────────────────────────────────────────────────────────────
@@ -40,6 +41,59 @@ const CONFIG = {
 };
 
 CONFIG.fallbackZones = ['a', 'b', 'c'].map(s => `${CONFIG.region}-${s}`);
+
+let _structuredLog = null;
+
+function getStructuredLog() {
+  if (!_structuredLog) {
+    const logging = new Logging({ projectId: CONFIG.projectId });
+    _structuredLog = logging.log('cronjobProcessPubSub');
+  }
+  return _structuredLog;
+}
+
+async function writeStructuredLog(payload, severity = 'INFO') {
+  const log = getStructuredLog();
+  const entry = log.entry({ severity }, payload);
+  await log.write(entry);
+}
+
+function buildRunLogFields(task = {}) {
+  if (!task || typeof task !== 'object') {
+    return {};
+  }
+  return {
+    run_id: task.run_id || undefined,
+    run_started_at_utc: task.run_started_at_utc || undefined,
+    pipeline_version: task.pipeline_version || undefined,
+    step_name: task.step_name || undefined,
+    project_name: task.project_name || undefined,
+    instance_name: task.instance_name || undefined,
+    zone: task.zone || undefined,
+  };
+}
+
+async function writeCloudFunctionLog({
+  event,
+  message,
+  severity = 'INFO',
+  task = null,
+  extra = {},
+}) {
+  const payload = {
+    log_source: 'cloud_function',
+    event,
+    message,
+    ...buildRunLogFields(task || {}),
+    ...extra,
+  };
+  try {
+    await writeStructuredLog(payload, severity);
+  } catch (err) {
+    // Keep one stderr fallback in case Cloud Logging write itself fails.
+    console.error(`Failed to write structured CF log: ${err.message}`);
+  }
+}
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -461,13 +515,22 @@ function isExhaustedError(err) {
  * @param {Function} configFactory  (zone, serviceAccount) => vmConfig
  * @returns {Promise<string>}  the zone where the VM was successfully created
  */
-async function createVMWithFallback(authClient, configFactory) {
+async function createVMWithFallback(authClient, configFactory, logContext = {}) {
   const compute        = google.compute({ version: 'v1', auth: authClient });
   const serviceAccount = await getRuntimeServiceAccount();
-  console.log(`Using service account: ${serviceAccount}`);
+  await writeCloudFunctionLog({
+    event: 'runtime_service_account_resolved',
+    message: 'runtime_service_account_resolved',
+    task: logContext,
+    extra: { service_account_email: serviceAccount },
+  });
 
   for (const z of CONFIG.fallbackZones) {
-    console.log(`Trying zone: ${z}`);
+    await writeCloudFunctionLog({
+      event: 'vm_zone_attempt',
+      message: 'vm_zone_attempt',
+      task: { ...logContext, zone: z },
+    });
     const zonedConfig = configFactory(z, serviceAccount);
 
     try {
@@ -478,7 +541,12 @@ async function createVMWithFallback(authClient, configFactory) {
       });
 
       let operation = response.data;
-      console.log(`VM creation started in zone ${z}, operation: ${operation.name}`);
+      await writeCloudFunctionLog({
+        event: 'vm_creation_started',
+        message: 'vm_creation_started',
+        task: { ...logContext, zone: z, instance_name: zonedConfig.name },
+        extra: { operation_name: operation.name },
+      });
 
       while (operation.status !== 'DONE') {
         await sleep(3000);
@@ -488,24 +556,45 @@ async function createVMWithFallback(authClient, configFactory) {
           operation: operation.name,
         });
         operation = opRes.data;
-        console.log(`Operation status: ${operation.status}`);
+        await writeCloudFunctionLog({
+          event: 'vm_creation_operation_status',
+          message: `vm_creation_operation_status:${operation.status}`,
+          task: { ...logContext, zone: z, instance_name: zonedConfig.name },
+          extra: { operation_name: operation.name, operation_status: operation.status },
+        });
       }
 
       if (operation.error) {
         const code = operation.error.errors?.[0]?.code || '';
         if (EXHAUSTED_CODES.some(c => code.includes(c))) {
-          console.warn(`Zone ${z} exhausted (operation error), trying next...`);
+          await writeCloudFunctionLog({
+            event: 'vm_zone_exhausted',
+            message: 'vm_zone_exhausted',
+            severity: 'WARNING',
+            task: { ...logContext, zone: z },
+            extra: { exhausted_code: code || undefined },
+          });
           continue;
         }
         throw new Error(`VM operation failed: ${JSON.stringify(operation.error)}`);
       }
 
-      console.log(`VM created in zone: ${z}, name: ${zonedConfig.name}`);
+      await writeCloudFunctionLog({
+        event: 'vm_created_in_zone',
+        message: 'vm_created_in_zone',
+        task: { ...logContext, zone: z, instance_name: zonedConfig.name },
+      });
       return z;
 
     } catch (err) {
       if (isExhaustedError(err)) {
-        console.warn(`Zone ${z} exhausted, trying next...`);
+        await writeCloudFunctionLog({
+          event: 'vm_zone_exhausted',
+          message: 'vm_zone_exhausted',
+          severity: 'WARNING',
+          task: { ...logContext, zone: z },
+          extra: { exhausted_error: err.message || String(err) },
+        });
         continue;
       }
       throw err;
@@ -519,15 +608,27 @@ async function createVMWithFallback(authClient, configFactory) {
 
 functions.cloudEvent('cronjobProcessPubSub', async cloudEvent => {
   const message = Buffer.from(cloudEvent.data.message.data, 'base64').toString().trim();
-  console.log(`Received message: ${message}`);
+  await writeCloudFunctionLog({
+    event: 'pubsub_message_received',
+    message: 'pubsub_message_received',
+    extra: { raw_message: message },
+  });
 
   // Terminal message checks
   if (message.startsWith('Exit code:')) {
-    console.error(`Pipeline failed: ${message}`);
+    await writeCloudFunctionLog({
+      event: 'pipeline_failed_terminal_message',
+      message: 'pipeline_failed_terminal_message',
+      severity: 'ERROR',
+      extra: { raw_message: message },
+    });
     return;
   }
   if (message === MSG.PIPELINE_DONE || message === MSG.EMPTY_QUEUE) {
-    console.log('Pipeline completed, no more steps.');
+    await writeCloudFunctionLog({
+      event: 'pipeline_completed',
+      message: 'pipeline_completed',
+    });
     return;
   }
 
@@ -536,36 +637,65 @@ functions.cloudEvent('cronjobProcessPubSub', async cloudEvent => {
   try {
     cronjobInfo = JSON.parse(message);
   } catch {
-    console.error(`Invalid JSON message: ${message}`);
+    await writeCloudFunctionLog({
+      event: 'invalid_json_message',
+      message: 'invalid_json_message',
+      severity: 'ERROR',
+      extra: { raw_message: message },
+    });
     return;
   }
 
   // Error payload
   if (cronjobInfo?.error) {
-    console.error(`Pipeline step failed with exit code: ${cronjobInfo.exit_code}`);
+    await writeCloudFunctionLog({
+      event: 'pipeline_step_failed',
+      message: 'pipeline_step_failed',
+      severity: 'ERROR',
+      extra: { exit_code: cronjobInfo.exit_code || undefined },
+    });
     return;
   }
 
   if (!Array.isArray(cronjobInfo) || cronjobInfo.length === 0) {
-    console.log('Empty or invalid cronjobInfo, exiting.');
+    await writeCloudFunctionLog({
+      event: 'empty_or_invalid_cronjob_info',
+      message: 'empty_or_invalid_cronjob_info',
+      severity: 'WARNING',
+    });
     return;
   }
 
   try {
     cronjobInfo = enrichIfNewRun(cronjobInfo, cloudEvent);
   } catch (err) {
-    console.error(`Failed to enrich run metadata: ${err.message}`);
+    await writeCloudFunctionLog({
+      event: 'run_enrichment_failed',
+      message: 'run_enrichment_failed',
+      severity: 'ERROR',
+      extra: { error: err.message },
+    });
     return;
   }
 
   const [current, ...remaining] = cronjobInfo;
-  console.log(`Processing task: ${JSON.stringify(current)}`);
+  await writeCloudFunctionLog({
+    event: 'task_processing_started',
+    message: 'task_processing_started',
+    task: current,
+  });
 
   // Validate
   try {
     validateTask(current);
   } catch (err) {
-    console.error(`Task validation failed: ${err.message}`);
+    await writeCloudFunctionLog({
+      event: 'task_validation_failed',
+      message: 'task_validation_failed',
+      severity: 'ERROR',
+      task: current,
+      extra: { error: err.message },
+    });
     return;
   }
 
@@ -578,7 +708,13 @@ functions.cloudEvent('cronjobProcessPubSub', async cloudEvent => {
   try {
     pipelineCommand = buildPipelineCommand(current);
   } catch (err) {
-    console.error(`Failed to build pipeline command: ${err.message}`);
+    await writeCloudFunctionLog({
+      event: 'pipeline_command_build_failed',
+      message: 'pipeline_command_build_failed',
+      severity: 'ERROR',
+      task: current,
+      extra: { error: err.message },
+    });
     return;
   }
 
@@ -589,8 +725,15 @@ functions.cloudEvent('cronjobProcessPubSub', async cloudEvent => {
     ? modelClassPathToYaml(current.model_class_path, current.env || 'staging')
     : '';
 
-  console.log(`pipelineCommand: ${pipelineCommand || '(skipped)'}`);
-  console.log(`yamlPathInImage: ${yamlPathInImage || '(skipped)'}`);
+  await writeCloudFunctionLog({
+    event: 'task_command_metadata',
+    message: 'task_command_metadata',
+    task: current,
+    extra: {
+      pipeline_command_present: Boolean(pipelineCommand),
+      yaml_path_in_image_present: Boolean(yamlPathInImage),
+    },
+  });
 
   // Build startup script
   const nextMessage   = JSON.stringify(remaining);
@@ -622,21 +765,29 @@ functions.cloudEvent('cronjobProcessPubSub', async cloudEvent => {
     const zone = await createVMWithFallback(
       authClient,
       (zone, serviceAccount) => buildVmConfig({ current, vmName, startupScript, zone, serviceAccount }),
+      {
+        run_id: current.run_id,
+        run_started_at_utc: current.run_started_at_utc,
+        pipeline_version: current.pipeline_version,
+        step_name: resolveStepName(current),
+        project_name: current.project_name || undefined,
+        instance_name: vmName,
+      },
     );
 
-    console.log(JSON.stringify({
-      log_source: 'cloud_function',
+    await writeCloudFunctionLog({
       event: 'vm_created',
-      run_id: current.run_id,
-      run_started_at_utc: current.run_started_at_utc,
-      pipeline_version: current.pipeline_version,
-      step_name: resolveStepName(current),
-      project_name: current.project_name || undefined,
-      instance_name: vmName,
-      zone,
-    }));
+      message: 'vm_created',
+      task: { ...current, instance_name: vmName, zone },
+    });
 
   } catch (err) {
-    console.error('Failed to create VM in all zones:', err);
+    await writeCloudFunctionLog({
+      event: 'vm_creation_failed',
+      message: 'vm_creation_failed',
+      severity: 'ERROR',
+      task: { ...current, instance_name: vmName },
+      extra: { error: err.message || String(err) },
+    });
   }
 });

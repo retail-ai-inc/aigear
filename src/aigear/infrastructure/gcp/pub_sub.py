@@ -60,7 +60,7 @@ class PubSub:
             )
         return is_exist
 
-    def _delete_subscriptions(self):
+    def list_subscriptions(self) -> list[str]:
         event = run_sh(
             [
                 "gcloud",
@@ -71,7 +71,17 @@ class PubSub:
                 f"--project={self.project_id}",
             ]
         )
-        subscriptions = [line.strip() for line in event.splitlines() if line.strip().startswith("projects/")]
+        return [
+            line.strip()
+            for line in event.splitlines()
+            if line.strip().startswith("projects/")
+        ]
+
+    def has_subscriptions(self) -> bool:
+        return bool(self.list_subscriptions())
+
+    def _delete_subscriptions(self):
+        subscriptions = self.list_subscriptions()
         for sub in subscriptions:
             result = run_sh(
                 ["gcloud", "pubsub", "subscriptions", "delete", sub, f"--project={self.project_id}"]

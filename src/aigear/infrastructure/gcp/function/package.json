@@ -5,6 +5,7 @@
   },
   "dependencies": {
     "googleapis": "^144.0.0",
-    "@google-cloud/functions-framework": "^3.0.0"
+    "@google-cloud/functions-framework": "^3.0.0",
+    "@google-cloud/logging": "^11.0.0"
   }
 }

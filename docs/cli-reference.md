@@ -332,6 +332,14 @@ aigear-logs [--version VERSION --run-date YYYY-MM-DD]
 | `--no-cache` | `false` | Skip local discovery cache |
 | `--clear-cache` | `false` | Remove local discovery cache and exit |
 
+**Pipeline logging (`env.json` → `aigear.gcp.logging`)**
+
+| Environment | Behavior |
+|---|---|
+| Local `aigear-task` | `Logging.for_task()` → stdout only |
+| VM + `gcp.logging=false` | stdout with run fields; lifecycle events to Cloud Logging |
+| VM + `gcp.logging=true` | stdout + all task logs to Cloud Logging (`log_source=ml_pipeline`, `run_id`, …) |
+
 **Flow**
 
 1. If `--run-id` is provided, query logs directly by `run_id`.
