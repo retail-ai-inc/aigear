@@ -32,20 +32,19 @@ class CloudFunction:
 
         function_path_src = source_path / "index.js"
         function_file_dst = destination_path / "index.js"
-        if not function_file_dst.exists():
-            content = Path(function_path_src).read_text(encoding="utf-8")
-            content = (
-                content.replace("{{PROJECTID}}", self.project_id)
-                .replace("{{REGION}}", self.region)
-                .replace("{{TOPICSNAME}}", self.topic_name)
-                .replace("{{VENVBASEDIR}}", VENV_BASE_DIR)
-            )
-            function_file_dst.write_text(content, encoding="utf-8")
+        # Always rewrite rendered source so local cache does not keep stale config/code.
+        content = Path(function_path_src).read_text(encoding="utf-8")
+        content = (
+            content.replace("{{PROJECTID}}", self.project_id)
+            .replace("{{REGION}}", self.region)
+            .replace("{{TOPICSNAME}}", self.topic_name)
+            .replace("{{VENVBASEDIR}}", VENV_BASE_DIR)
+        )
+        function_file_dst.write_text(content, encoding="utf-8")
 
         package_file_src = source_path / "package.json"
         package_file_dst = destination_path / "package.json"
-        if not package_file_dst.exists():
-            shutil.copy(package_file_src, package_file_dst)
+        shutil.copy(package_file_src, package_file_dst)
 
         return destination_path.as_posix()
 
@@ -63,6 +62,8 @@ class CloudFunction:
             f"--source={source_path}",
             f"--project={self.project_id}",
             f"--service-account={self.service_account}",
+            # Gen2 requires a trigger when creating a new function.
+            "--trigger-http",
             "--quiet",
             "--no-allow-unauthenticated",
         ]
