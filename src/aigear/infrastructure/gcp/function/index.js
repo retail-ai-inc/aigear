@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { google } from 'googleapis';
 import functions from '@google-cloud/functions-framework';
 
@@ -64,7 +65,17 @@ const FATAL_VM_ERROR_CODES = [
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
+const INSERT_OPERATION_WAIT_MS = 20000;
+
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+/**
+ * Stable id for the current Pub/Sub payload so redeliveries reuse the same VM name
+ * instead of spawning duplicates with Date.now().
+ */
+function taskKeyFromMessage(message) {
+  return crypto.createHash('sha256').update(message).digest('hex').slice(0, 12);
+}
 
 /**
  * Converts a Python import path to the absolute yaml path inside the container.
@@ -403,6 +414,36 @@ function isExhaustedError(err) {
   return EXHAUSTED_CODES.some(code => errorText(err).includes(code));
 }
 
+function isAlreadyExistsError(err) {
+  const msg = errorText(err);
+  return msg.includes('alreadyExists') || msg.includes('ALREADY_EXISTS');
+}
+
+async function vmExistsInZone(compute, zone, vmName) {
+  try {
+    await compute.instances.get({
+      project:  CONFIG.projectId,
+      zone,
+      instance: vmName,
+    });
+    return true;
+  } catch (err) {
+    const msg = errorText(err);
+    if (msg.includes('NOT_FOUND') || msg.includes('404')) return false;
+    throw err;
+  }
+}
+
+/**
+ * Return the zone where a VM with this name already exists, or null.
+ */
+async function findExistingVmZone(compute, vmName) {
+  for (const z of CONFIG.fallbackZones) {
+    if (await vmExistsInZone(compute, z, vmName)) return z;
+  }
+  return null;
+}
+
 /**
  * True when VM creation cannot succeed by switching zones or redelivering Pub/Sub
  * (e.g. custom source image missing from the project).
@@ -444,17 +485,62 @@ async function publishPipelineError(authClient, err, forcedExitCode = null) {
 }
 
 /**
+ * Poll the insert operation briefly so fatal errors (e.g. missing custom image)
+ * are caught before acking Pub/Sub, without waiting for the full VM boot.
+ *
+ * @returns {{ exhausted?: true, pending?: true }}
+ */
+async function waitForInsertOperation(compute, zone, operation) {
+  const deadline = Date.now() + INSERT_OPERATION_WAIT_MS;
+
+  while (operation.status !== 'DONE' && Date.now() < deadline) {
+    await sleep(2000);
+    const opRes = await compute.zoneOperations.get({
+      project:   CONFIG.projectId,
+      zone,
+      operation: operation.name,
+    });
+    operation = opRes.data;
+  }
+
+  if (operation.status === 'DONE' && operation.error) {
+    const opErr = JSON.stringify(operation.error);
+    if (isFatalVmError(opErr)) {
+      throw new Error(`Fatal VM error (non-retryable): ${opErr}`);
+    }
+    if (isExhaustedError(opErr)) {
+      return { exhausted: true };
+    }
+    throw new Error(`VM operation failed: ${opErr}`);
+  }
+
+  if (operation.status !== 'DONE') {
+    console.log(`VM insert still running in zone ${zone}, acking Pub/Sub early.`);
+    return { pending: true };
+  }
+
+  return {};
+}
+
+/**
  * Tries each fallback zone in order until the VM is created.
  * serviceAccount is resolved once before the loop to avoid redundant metadata calls.
  *
  * @param {object}   authClient
  * @param {Function} configFactory  (zone, serviceAccount) => vmConfig
+ * @param {string}   vmName
  * @returns {Promise<string>}  the zone where the VM was successfully created
  */
-async function createVMWithFallback(authClient, configFactory) {
+async function createVMWithFallback(authClient, configFactory, vmName) {
   const compute        = google.compute({ version: 'v1', auth: authClient });
   const serviceAccount = await getRuntimeServiceAccount();
   console.log(`Using service account: ${serviceAccount}`);
+
+  const existingZone = await findExistingVmZone(compute, vmName);
+  if (existingZone) {
+    console.log(`VM ${vmName} already exists in zone ${existingZone}, skipping insert (Pub/Sub redelivery).`);
+    return existingZone;
+  }
 
   for (const z of CONFIG.fallbackZones) {
     console.log(`Trying zone: ${z}`);
@@ -467,36 +553,23 @@ async function createVMWithFallback(authClient, configFactory) {
         requestBody: zonedConfig,
       });
 
-      let operation = response.data;
-      console.log(`VM creation started in zone ${z}, operation: ${operation.name}`);
-
-      while (operation.status !== 'DONE') {
-        await sleep(3000);
-        const opRes = await compute.zoneOperations.get({
-          project:   CONFIG.projectId,
-          zone:      z,
-          operation: operation.name,
-        });
-        operation = opRes.data;
-        console.log(`Operation status: ${operation.status}`);
+      const operation = response.data;
+      const waitResult = await waitForInsertOperation(compute, z, operation);
+      if (waitResult.exhausted) {
+        console.warn(`Zone ${z} exhausted (operation error), trying next...`);
+        continue;
       }
 
-      if (operation.error) {
-        const opErr = JSON.stringify(operation.error);
-        if (isFatalVmError(opErr)) {
-          throw new Error(`Fatal VM error (non-retryable): ${opErr}`);
-        }
-        if (isExhaustedError(opErr)) {
-          console.warn(`Zone ${z} exhausted (operation error), trying next...`);
-          continue;
-        }
-        throw new Error(`VM operation failed: ${opErr}`);
-      }
-
-      console.log(`VM created in zone: ${z}, name: ${zonedConfig.name}`);
+      console.log(
+        `VM creation ${waitResult.pending ? 'started' : 'completed'} in zone ${z}, name: ${zonedConfig.name}, operation: ${operation.name}`,
+      );
       return z;
 
     } catch (err) {
+      if (isAlreadyExistsError(err)) {
+        console.log(`VM ${zonedConfig.name} already exists in zone ${z}, treating as success.`);
+        return z;
+      }
       if (isFatalVmError(err)) {
         throw err;
       }
@@ -590,6 +663,12 @@ functions.cloudEvent('cronjobProcessPubSub', async cloudEvent => {
     pipelineCommand = buildPipelineCommand(current);
   } catch (err) {
     console.error(`Failed to build pipeline command: ${err.message}`);
+    try {
+      const client = await getAuthClient();
+      await publishPipelineError(client, err, 'task_invalid');
+    } catch (publishErr) {
+      console.error(`Failed to publish validation error: ${publishErr.message}`);
+    }
     return;
   }
 
@@ -616,7 +695,7 @@ functions.cloudEvent('cronjobProcessPubSub', async cloudEvent => {
     gkeZone:        current.gke_zone    || '',
   });
 
-  const vmName = `${current.vm_name}-${Date.now()}`;
+  const vmName = `${current.vm_name}-${taskKeyFromMessage(message)}`;
 
   // Create VM
   try {
@@ -625,6 +704,7 @@ functions.cloudEvent('cronjobProcessPubSub', async cloudEvent => {
     await createVMWithFallback(
       authClient,
       (zone, serviceAccount) => buildVmConfig({ current, vmName, startupScript, zone, serviceAccount }),
+      vmName,
     );
 
   } catch (err) {
