@@ -65,6 +65,8 @@
 | `on` | `boolean` | Enable Cloud Function creation | `true` |
 | `function_name` | `string` | Function name | `test-sklearn-pipeline-run` |
 
+> Deploys a Gen2 function (Cloud Run service) in Phase 2 of `aigear-infra --create` **without** a Pub/Sub trigger. To connect the function to a topic, also enable `pub_sub` so Phase 3 can create an Eventarc Pub/Sub trigger.
+
 #### 2.1.6 IAM (`iam`)
 
 | Parameter | Type | Description | Example |
@@ -78,6 +80,8 @@
 | :--- | :--- | :--- | :--- |
 | `on` | `boolean` | Enable Pub/Sub topic creation | `true` |
 | `topic_name` | `string` | Topic name | `test-sklearn-pipeline-pubsub` |
+
+> Phase 2 creates the **topic** only. A **subscription** (managed by Eventarc) is created in Phase 3 when **both** `pub_sub.on` and `cloud_function.on` are `true`. Cloud Scheduler and other publishers send messages to the topic; the subscription forwards them to the Cloud Function.
 
 #### 2.1.8 Artifact Registry (`artifacts`)
 

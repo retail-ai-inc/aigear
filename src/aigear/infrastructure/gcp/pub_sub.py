@@ -1,7 +1,6 @@
 from aigear.common import run_sh
 from aigear.common.logger import Logging
 
-
 logger = Logging(log_name=__name__).console_logging()
 
 
@@ -81,10 +80,16 @@ class PubSub:
         return bool(self.list_subscriptions())
 
     def _delete_subscriptions(self):
-        subscriptions = self.list_subscriptions()
-        for sub in subscriptions:
+        for sub in self.list_subscriptions():
             result = run_sh(
-                ["gcloud", "pubsub", "subscriptions", "delete", sub, f"--project={self.project_id}"]
+                [
+                    "gcloud",
+                    "pubsub",
+                    "subscriptions",
+                    "delete",
+                    sub,
+                    f"--project={self.project_id}",
+                ]
             )
             if "ERROR" in result:
                 logger.error(f"Failed to delete subscription '{sub}': {result}")

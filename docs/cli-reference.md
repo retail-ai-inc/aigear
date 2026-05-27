@@ -45,16 +45,28 @@ aigear-infra {--create | --update | --delete | --status}
 |---|---|
 | `--create` | Initialize GCP infrastructure resources. |
 | `--update` | Update resources that support update: Cloud Build trigger (config) and Kubernetes cluster (node count, autoscaling). Resources that do not support update are skipped with a log message. |
-| `--delete` | Delete GCP infrastructure resources. Note: Cloud KMS keyrings cannot be deleted (a GCP platform limitation); key versions are scheduled for destruction but the keyring itself persists. |
-| `--status` | Query and display the live state of all GCP infrastructure resources. |
+| `--delete` | Delete GCP infrastructure resources (see deletion phases below). Note: Cloud KMS keyrings cannot be deleted (a GCP platform limitation); key versions are scheduled for destruction but the keyring itself persists. |
+| `--status` | Query and display the live state of all GCP infrastructure resources (including Eventarc Pub/Sub trigger when applicable). |
 
-Resource creation runs in three ordered phases:
+**`--create`** runs in three ordered phases:
 
 | Phase | Resources | Mode |
 |---|---|---|
 | 1 | Service Account + IAM bindings | Sequential (must be first) |
-| 2 | Buckets, Artifact Registry, Pub/Sub, KMS, Cloud Build, Pre-VM Image, Kubernetes | **Parallel** |
-| 3 | Cloud Function | Sequential (depends on Pub/Sub from Phase 2) |
+| 2 | Buckets, Artifact Registry, Pub/Sub topic, KMS, Cloud Build, Pre-VM Image, Kubernetes, Cloud Function (deploy only, no Pub/Sub trigger) | **Parallel** |
+| 3 | Eventarc Pub/Sub trigger | Sequential (requires Pub/Sub topic **and** Cloud Function from Phase 2) |
+
+Phase 3 runs only when **both** `gcp.pub_sub.on` and `gcp.cloud_function.on` are `true`. The trigger creates the Pub/Sub **subscription** that delivers topic messages to the function (per [Cloud Run Pub/Sub triggers](https://cloud.google.com/run/docs/triggering/pubsub-triggers#gcloud)).
+
+**`--delete`** runs in reverse order:
+
+| Phase | Resources | Mode |
+|---|---|---|
+| 1 | Eventarc Pub/Sub trigger (if both `pub_sub` and `cloud_function` enabled), then Cloud Function | Sequential |
+| 2 | Buckets, Artifact Registry, Pub/Sub topic, KMS, Cloud Build, Pre-VM Image, Kubernetes | **Parallel** |
+| 3 | Service Account | Sequential (last) |
+
+Pub/Sub topic deletion removes any remaining subscriptions on that topic before the topic itself is deleted.
 
 - Each step is idempotent — existing resources are detected and skipped.
 - If the GCP default subnet is not yet ready (common in new projects), Pre-VM Image creation retries automatically up to 5 times with a 30-second wait between attempts.

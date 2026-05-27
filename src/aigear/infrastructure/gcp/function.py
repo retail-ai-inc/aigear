@@ -63,7 +63,6 @@ class CloudFunction:
             "--runtime=nodejs24",
             f"--region={self.region}",
             f"--entry-point={self.entry_point}",
-            f"--trigger-topic={self.topic_name}",
             f"--source={source_path}",
             f"--project={self.project_id}",
             f"--service-account={self.service_account}",
@@ -71,6 +70,15 @@ class CloudFunction:
             "--no-allow-unauthenticated",
         ]
         run_sh(command, timeout=600, check=True)
+
+    def ensure(self, invoker_sa_email: str):
+        """Deploy if missing, then ensure run.invoker for the trigger identity."""
+        if not self.describe():
+            logger.info(
+                f"Deploying Cloud Function ({self.function_name}) in {self.region}..."
+            )
+            self.deploy()
+        self.add_permissions_to_cloud_function(sa_email=invoker_sa_email)
 
     def add_permissions_to_cloud_function(self, sa_email):
         command = [
