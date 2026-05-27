@@ -97,6 +97,37 @@ class PubSub:
             if sub and self.subscription_status(sub) == "orphan"
         ]
 
+    def tune_push_subscription(
+        self,
+        subscription: str,
+        *,
+        ack_deadline_sec: int = 300,
+        min_retry_delay_sec: int = 60,
+    ):
+        """
+        Extend push ack deadline and backoff (reduces Pub/Sub redelivery).
+
+        Eventarc defaults to a short ack deadline (~10s); VM insert often needs longer.
+        """
+        sub_id = subscription.rsplit("/", 1)[-1]
+        run_sh(
+            [
+                "gcloud",
+                "pubsub",
+                "subscriptions",
+                "update",
+                sub_id,
+                f"--project={self.project_id}",
+                f"--ack-deadline={ack_deadline_sec}",
+                f"--min-retry-delay={min_retry_delay_sec}s",
+            ],
+            check=True,
+        )
+        logger.info(
+            f"Pub/Sub subscription ({sub_id}): ack-deadline={ack_deadline_sec}s, "
+            f"min-retry-delay={min_retry_delay_sec}s"
+        )
+
     def create(self):
         command = [
             "gcloud",

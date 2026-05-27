@@ -548,7 +548,7 @@ async function createVMWithFallback(authClient, configFactory, vmName) {
 
   const existingZone = await findExistingVmZone(compute, vmName);
   if (existingZone) {
-    console.log(`VM ${vmName} already exists in zone ${existingZone}, skipping insert (Pub/Sub redelivery).`);
+    console.log(`VM ${vmName} already exists in zone ${existingZone}, skipping insert.`);
     return existingZone;
   }
 

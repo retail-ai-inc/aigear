@@ -5,6 +5,10 @@ from aigear.common.logger import Logging
 
 logger = Logging(log_name=__name__).console_logging()
 
+# Align with master --trigger-topic: long enough for VM insert + function return.
+PUSH_ACK_DEADLINE_SEC = 300
+PUSH_MIN_RETRY_DELAY_SEC = 60
+
 
 def pubsub_trigger_name(function_name: str) -> str:
     """Stable Eventarc trigger id for a Cloud Function Pub/Sub binding."""
@@ -110,6 +114,17 @@ class EventarcPubSubTrigger:
             self._subscription_candidates(pubsub, transport_sub)
         ) is not None
 
+    def _tune_push_subscription(self, pubsub, transport_sub: str | None):
+        healthy = pubsub.find_healthy_subscription(
+            self._subscription_candidates(pubsub, transport_sub)
+        )
+        if healthy:
+            pubsub.tune_push_subscription(
+                healthy,
+                ack_deadline_sec=PUSH_ACK_DEADLINE_SEC,
+                min_retry_delay_sec=PUSH_MIN_RETRY_DELAY_SEC,
+            )
+
     def _delete_orphan_subscriptions(self, pubsub, transport_sub: str | None):
         candidates = self._subscription_candidates(pubsub, transport_sub)
         for sub in pubsub.find_orphan_subscriptions(candidates):
@@ -211,6 +226,7 @@ class EventarcPubSubTrigger:
             healthy = pubsub.find_healthy_subscription(
                 self._subscription_candidates(pubsub, transport_sub)
             )
+            self._tune_push_subscription(pubsub, transport_sub)
             logger.info(
                 f"Eventarc trigger ({self.trigger_name}) already ready "
                 f"(subscription {healthy.rsplit('/', 1)[-1]} on {self.topic_name})."
@@ -247,6 +263,7 @@ class EventarcPubSubTrigger:
                     f"No healthy Pub/Sub subscription on topic ({self.topic_name}) "
                     f"after Eventarc trigger ({self.trigger_name}) setup."
                 )
+            self._tune_push_subscription(pubsub, None)
 
     def delete_if_exists(self):
         if self.describe():

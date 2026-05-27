@@ -67,12 +67,14 @@ def test_ensure_fast_path_when_subscription_healthy(mock_run_sh):
             trigger, "_describe_transport", return_value=(True, transport_sub)
         ):
             with patch.object(trigger, "_is_ready", return_value=True):
-                with patch(
-                    "aigear.infrastructure.gcp.pub_sub.PubSub.find_healthy_subscription",
-                    return_value=transport_sub,
-                ):
-                    trigger.ensure()
+                with patch.object(trigger, "_tune_push_subscription") as mock_tune:
+                    with patch(
+                        "aigear.infrastructure.gcp.pub_sub.PubSub.find_healthy_subscription",
+                        return_value=transport_sub,
+                    ):
+                        trigger.ensure()
     mock_create.assert_not_called()
+    mock_tune.assert_called_once()
 
 
 @patch("aigear.infrastructure.gcp.eventarc.run_sh")

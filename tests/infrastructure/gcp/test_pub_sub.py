@@ -117,6 +117,18 @@ def test_find_orphan_subscriptions(mock_run_sh):
     assert orphans == ["projects/my-project/subscriptions/orphan-sub"]
 
 
+@patch("aigear.infrastructure.gcp.pub_sub.run_sh")
+def test_tune_push_subscription_updates_ack_and_retry(mock_run_sh):
+    ps = _make_pubsub()
+    sub = "projects/my-project/subscriptions/eventarc-sub"
+    ps.tune_push_subscription(sub, ack_deadline_sec=300, min_retry_delay_sec=60)
+    cmd = mock_run_sh.call_args[0][0]
+    assert cmd[:4] == ["gcloud", "pubsub", "subscriptions", "update"]
+    assert cmd[4] == "eventarc-sub"
+    assert "--ack-deadline=300" in cmd
+    assert "--min-retry-delay=60s" in cmd
+
+
 # ── PubSub.add_permissions_to_pubsub ─────────────────────────────────────────
 
 @patch("aigear.infrastructure.gcp.pub_sub.run_sh")

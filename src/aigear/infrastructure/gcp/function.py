@@ -7,6 +7,9 @@ from aigear.common.logger import Logging
 
 logger = Logging(log_name=__name__).console_logging()
 
+# Must be >= Pub/Sub push ack deadline (see eventarc.PUSH_ACK_DEADLINE_SEC).
+REQUEST_TIMEOUT_SEC = 300
+
 
 class CloudFunction:
     def __init__(
@@ -64,10 +67,31 @@ class CloudFunction:
             f"--service-account={self.service_account}",
             # Gen2 requires a trigger when creating a new function.
             "--trigger-http",
+            f"--timeout={REQUEST_TIMEOUT_SEC}s",
             "--quiet",
             "--no-allow-unauthenticated",
         ]
         run_sh(command, timeout=600, check=True)
+
+    def _ensure_request_timeout(self):
+        run_sh(
+            [
+                "gcloud",
+                "run",
+                "services",
+                "update",
+                self.function_name,
+                f"--region={self.region}",
+                f"--project={self.project_id}",
+                f"--timeout={REQUEST_TIMEOUT_SEC}",
+                "--quiet",
+            ],
+            check=True,
+        )
+        logger.info(
+            f"Cloud Function ({self.function_name}) request timeout "
+            f"set to {REQUEST_TIMEOUT_SEC}s"
+        )
 
     def ensure(self, invoker_sa_email: str):
         """Deploy if missing, then ensure run.invoker for the trigger identity."""
@@ -76,6 +100,8 @@ class CloudFunction:
                 f"Deploying Cloud Function ({self.function_name}) in {self.region}..."
             )
             self.deploy()
+        else:
+            self._ensure_request_timeout()
         self.add_permissions_to_cloud_function(sa_email=invoker_sa_email)
 
     def add_permissions_to_cloud_function(self, sa_email):
