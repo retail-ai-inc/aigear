@@ -419,6 +419,17 @@ function isAlreadyExistsError(err) {
   return msg.includes('alreadyExists') || msg.includes('ALREADY_EXISTS');
 }
 
+function isNotFoundError(err) {
+  const status = err?.response?.status ?? err?.code;
+  if (status === 404) return true;
+  const reasons = err?.response?.data?.error?.errors;
+  if (Array.isArray(reasons) && reasons.some(e => e.reason === 'notFound')) {
+    return true;
+  }
+  const msg = errorText(err);
+  return /not.?found/i.test(msg) || msg.includes('NOT_FOUND');
+}
+
 async function vmExistsInZone(compute, zone, vmName) {
   try {
     await compute.instances.get({
@@ -428,8 +439,7 @@ async function vmExistsInZone(compute, zone, vmName) {
     });
     return true;
   } catch (err) {
-    const msg = errorText(err);
-    if (msg.includes('NOT_FOUND') || msg.includes('404')) return false;
+    if (isNotFoundError(err)) return false;
     throw err;
   }
 }
