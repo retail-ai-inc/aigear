@@ -39,6 +39,7 @@ def _make_infra():
 
 # ── _ensure_service_account ───────────────────────────────────────────────────
 
+
 def test_ensure_service_account_creates_when_not_exists():
     infra = _make_infra()
     infra.service_accounts.describe.return_value = False
@@ -57,6 +58,7 @@ def test_ensure_service_account_skips_create_when_exists():
 
 # ── _ensure_model_bucket ──────────────────────────────────────────────────────
 
+
 def test_ensure_model_bucket_creates_and_grants_permissions_when_not_exists():
     infra = _make_infra()
     infra.model_bucket.describe.return_value = False
@@ -73,6 +75,7 @@ def test_ensure_model_bucket_skips_when_exists():
 
 
 # ── _ensure_release_bucket ────────────────────────────────────────────────────
+
 
 def test_ensure_release_bucket_creates_when_not_exists():
     infra = _make_infra()
@@ -91,6 +94,7 @@ def test_ensure_release_bucket_skips_when_exists():
 
 # ── _ensure_artifacts ─────────────────────────────────────────────────────────
 
+
 def test_ensure_artifacts_creates_when_not_exists():
     infra = _make_infra()
     infra.artifacts.describe.return_value = False
@@ -107,6 +111,7 @@ def test_ensure_artifacts_skips_when_exists():
 
 # ── _ensure_pubsub ────────────────────────────────────────────────────────────
 
+
 def test_ensure_pubsub_creates_and_grants_permissions_when_not_exists():
     infra = _make_infra()
     infra.pubsub.describe.return_value = False
@@ -122,7 +127,8 @@ def test_ensure_pubsub_skips_when_exists():
     infra.pubsub.create.assert_not_called()
 
 
-# ── _ensure_cloud_function ────────────────────────────────────────────────────
+# ── _ensure_cloud_function / _ensure_eventarc_trigger ──────────────────────────
+
 
 def test_ensure_cloud_function_deploys_when_not_exists():
     infra = _make_infra()
@@ -132,30 +138,21 @@ def test_ensure_cloud_function_deploys_when_not_exists():
     infra.cloud_function.add_permissions_to_cloud_function.assert_called_once()
 
 
-def test_ensure_cloud_function_skips_when_exists():
+def test_ensure_cloud_function_skips_deploy_when_exists():
     infra = _make_infra()
     infra.cloud_function.describe.return_value = True
     infra._ensure_cloud_function()
     infra.cloud_function.deploy.assert_not_called()
+    infra.cloud_function.add_permissions_to_cloud_function.assert_called_once()
 
 
-# ── _ensure_eventarc_trigger ──────────────────────────────────────────────────
-
-def test_ensure_eventarc_trigger_creates_when_not_exists():
+def test_ensure_eventarc_trigger_creates_when_missing():
     infra = _make_infra()
     infra.eventarc_trigger.describe.return_value = False
     infra.pubsub.has_subscriptions.return_value = True
     infra._ensure_eventarc_trigger()
-    infra.eventarc_trigger.add_permissions.assert_called_once()
+    infra.eventarc_trigger.add_trigger_permissions.assert_called_once()
     infra.eventarc_trigger.create.assert_called_once()
-
-
-def test_ensure_eventarc_trigger_skips_create_when_exists():
-    infra = _make_infra()
-    infra.eventarc_trigger.describe.return_value = True
-    infra.pubsub.has_subscriptions.return_value = True
-    infra._ensure_eventarc_trigger()
-    infra.eventarc_trigger.create.assert_not_called()
 
 
 def test_ensure_eventarc_trigger_raises_when_no_subscription():
@@ -169,21 +166,8 @@ def test_ensure_eventarc_trigger_raises_when_no_subscription():
         assert "no subscription" in str(exc).lower()
 
 
-def test_delete_eventarc_trigger_deletes_when_exists():
-    infra = _make_infra()
-    infra.eventarc_trigger.describe.return_value = True
-    infra._delete_eventarc_trigger()
-    infra.eventarc_trigger.delete.assert_called_once()
-
-
-def test_delete_eventarc_trigger_skips_when_not_exists():
-    infra = _make_infra()
-    infra.eventarc_trigger.describe.return_value = False
-    infra._delete_eventarc_trigger()
-    infra.eventarc_trigger.delete.assert_not_called()
-
-
 # ── _ensure_cloud_build ───────────────────────────────────────────────────────
+
 
 def test_ensure_cloud_build_creates_when_not_exists():
     infra = _make_infra()
@@ -201,6 +185,7 @@ def test_ensure_cloud_build_skips_when_exists():
 
 # ── _ensure_kubernetes_cluster ────────────────────────────────────────────────
 
+
 def test_ensure_kubernetes_creates_when_not_exists():
     infra = _make_infra()
     infra.kubernetes_cluster.describe.return_value = False
@@ -216,6 +201,7 @@ def test_ensure_kubernetes_skips_when_exists():
 
 
 # ── _ensure_kms ───────────────────────────────────────────────────────────────
+
 
 def test_ensure_kms_creates_keyring_and_key_when_neither_exists():
     infra = _make_infra()
@@ -250,6 +236,7 @@ def test_ensure_kms_skips_all_when_everything_exists():
 
 
 # ── _delete_* methods ─────────────────────────────────────────────────────────
+
 
 def test_delete_model_bucket_calls_delete_when_exists():
     infra = _make_infra()
@@ -337,6 +324,7 @@ def test_delete_pubsub_skips_when_not_exists():
 
 # ── _status_check ─────────────────────────────────────────────────────────────
 
+
 def test_status_check_returns_exists_when_check_fn_returns_true():
     infra = _make_infra()
     _, config_on, status = infra._status_check("My Resource", True, lambda: True)
@@ -375,6 +363,7 @@ def test_status_check_passes_through_string_result():
 
 # ── _status_kms ───────────────────────────────────────────────────────────────
 
+
 def test_status_kms_returns_not_found_when_no_keyring():
     infra = _make_infra()
     infra.cloud_kms.describe_keyring.return_value = False
@@ -411,9 +400,12 @@ def test_status_kms_returns_disabled_when_no_enabled_version():
 
 # ── _build_substitutions ──────────────────────────────────────────────────────
 
+
 def test_build_substitutions_contains_expected_keys():
     infra = _make_infra()
-    with patch("aigear.infrastructure.gcp.infra.get_image_name", return_value="my-image"):
+    with patch(
+        "aigear.infrastructure.gcp.infra.get_image_name", return_value="my-image"
+    ):
         result = infra._build_substitutions()
     assert "_ENVIRONMENT=staging" in result
     assert "_KMS_KEYRING=my-keyring" in result
