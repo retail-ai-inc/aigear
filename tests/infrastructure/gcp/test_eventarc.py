@@ -56,13 +56,33 @@ def test_create_matches_official_gcloud_flags(mock_run_sh):
     )
 
 
+@patch("aigear.infrastructure.gcp.pub_sub.PubSub.has_subscriptions", return_value=True)
 @patch("aigear.infrastructure.gcp.eventarc.run_sh")
-def test_add_trigger_permissions_grants_event_receiver(mock_run_sh):
-    _make_trigger().add_trigger_permissions()
-    cmd = mock_run_sh.call_args[0][0]
-    joined = " ".join(cmd)
-    assert "add-iam-policy-binding" in joined
-    assert "roles/eventarc.eventReceiver" in joined
+def test_ensure_creates_trigger_when_missing(mock_run_sh, _mock_subs):
+    trigger = _make_trigger()
+    with patch.object(trigger, "describe", side_effect=[False, True]):
+        trigger.ensure()
+    assert mock_run_sh.call_count >= 2
+
+
+@patch("aigear.infrastructure.gcp.pub_sub.PubSub.has_subscriptions", return_value=False)
+@patch("aigear.infrastructure.gcp.eventarc.run_sh")
+def test_ensure_raises_when_no_subscription(mock_run_sh, _mock_subs):
+    trigger = _make_trigger()
+    with patch.object(trigger, "describe", return_value=True):
+        try:
+            trigger.ensure()
+            assert False, "expected RuntimeError"
+        except RuntimeError as exc:
+            assert "no subscription" in str(exc).lower()
+
+
+@patch("aigear.infrastructure.gcp.eventarc.run_sh")
+def test_delete_if_exists_skips_when_missing(mock_run_sh):
+    trigger = _make_trigger()
+    with patch.object(trigger, "describe", return_value=False):
+        trigger.delete_if_exists()
+    mock_run_sh.assert_not_called()
 
 
 @patch("aigear.infrastructure.gcp.eventarc.run_sh")

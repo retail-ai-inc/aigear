@@ -94,8 +94,7 @@ class EventarcPubSubTrigger:
         else:
             logger.info(f"Eventarc trigger '{self.trigger_name}' deleted.")
 
-    def add_trigger_permissions(self):
-        """Grant eventarc.eventReceiver on the project for the trigger identity."""
+    def _grant_event_receiver(self):
         command = [
             "gcloud",
             "projects",
@@ -107,3 +106,28 @@ class EventarcPubSubTrigger:
         ]
         run_sh(command, check=True)
         logger.info("✅ Successfully granted: roles/eventarc.eventReceiver")
+
+    def ensure(self):
+        """Create Pub/Sub Eventarc trigger if missing; verify topic has a subscription."""
+        from aigear.infrastructure.gcp.pub_sub import PubSub
+
+        if not self.describe():
+            logger.info(
+                f"Creating Eventarc trigger ({self.trigger_name}) for topic "
+                f"({self.topic_name})..."
+            )
+            self._grant_event_receiver()
+            self.create()
+        if not PubSub(self.topic_name, self.project_id).has_subscriptions():
+            raise RuntimeError(
+                f"Pub/Sub topic ({self.topic_name}) has no subscription after "
+                f"Eventarc trigger ({self.trigger_name}) setup."
+            )
+
+    def delete_if_exists(self):
+        if self.describe():
+            self.delete()
+        else:
+            logger.info(
+                f"Eventarc trigger ({self.trigger_name}) not found. Skipping."
+            )
