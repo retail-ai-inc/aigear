@@ -325,7 +325,7 @@ Discover run IDs for a given date/version and then query logs by `run_id`. Disco
 aigear-logs [--version VERSION --run-date YYYY-MM-DD]
             [--run-id RUN_ID]
             [--step STEP_NAME]
-            [--log-source {cloud_function,ml_pipeline}]
+            [--log-source {cloud_function,ml_pipeline,all}]
             [--time-zone IANA_TZ]
             [--limit N]
             [--no-cache]
@@ -338,7 +338,7 @@ aigear-logs [--version VERSION --run-date YYYY-MM-DD]
 | `--run-date` | — | Date interpreted in scheduler timezone, then converted to UTC for querying |
 | `--run-id` | — | Direct query mode; skips discovery |
 | `--step` | — | Optional `step_name` filter |
-| `--log-source` | — | Optional source filter (`cloud_function` or `ml_pipeline`) |
+| `--log-source` | — | Optional source filter (`cloud_function`, `ml_pipeline`, or `all`) |
 | `--time-zone` | scheduler `time_zone` from `env.json` | Override timezone used to interpret `--run-date` |
 | `--limit` | `200` | Max logs returned per query |
 | `--no-cache` | `false` | Skip local discovery cache |
@@ -359,3 +359,17 @@ aigear-logs [--version VERSION --run-date YYYY-MM-DD]
    - 0: exit with "no runs"
    - 1: auto-select and query
    - N: interactive selection, then query
+
+**Verification Checklist (post-deploy)**
+
+1. Trigger scheduler once, then filter Cloud Logging with `jsonPayload.event="run_context_initialized"` and verify `log_source=cloud_function` plus a non-empty `run_id`.
+2. Run `aigear-logs --version <v> --run-date <YYYY-MM-DD>` and confirm run discovery works.
+3. Query by source:
+   - `aigear-logs --run-id <id> --log-source cloud_function`
+   - `aigear-logs --run-id <id> --log-source ml_pipeline`
+   - or `aigear-logs --run-id <id> --log-source all` to print both sections in one run.
+4. Publish an invalid JSON message to the topic and verify:
+   - Cloud Function logs include `invalid_json_message`
+   - a terminal `task_invalid` error payload is published
+   - no new VM insert is triggered
+   - any follow-up error payload invocation exits at `pipeline_step_failed` without VM creation.

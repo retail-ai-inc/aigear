@@ -14,6 +14,8 @@ from aigear.deploy.gcp.run_logs import (
     scheduler_timezone,
 )
 
+_ALL_LOG_SOURCES = ("cloud_function", "ml_pipeline")
+
 
 def _select_run_interactively(runs: list[RunSummary]) -> RunSummary | None:
     print("Multiple runs found. Select one run_id:")
@@ -52,6 +54,32 @@ def _print_logs(entries: list[dict[str, Any]]) -> None:
         print(f"[{timestamp}] {json.dumps(entry, ensure_ascii=True)}")
 
 
+def _query_logs(run_id: str, step: str | None, log_source: str, limit: int) -> None:
+    if log_source == "all":
+        for index, source in enumerate(_ALL_LOG_SOURCES):
+            if index > 0:
+                print()
+            print(f"=== {source} logs ===")
+            _print_logs(
+                query_logs_by_run_id(
+                    run_id=run_id,
+                    step=step,
+                    log_source=source,
+                    limit=limit,
+                )
+            )
+        return
+
+    _print_logs(
+        query_logs_by_run_id(
+            run_id=run_id,
+            step=step,
+            log_source=log_source or None,
+            limit=limit,
+        )
+    )
+
+
 def get_argument() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Discover and query GCP logs by run metadata.",
@@ -64,7 +92,7 @@ def get_argument() -> argparse.Namespace:
     parser.add_argument(
         "--log-source",
         default="",
-        choices=["", "cloud_function", "ml_pipeline"],
+        choices=["", "cloud_function", "ml_pipeline", "all"],
         help="Optional source filter.",
     )
     parser.add_argument(
@@ -86,13 +114,12 @@ def gcp_logs() -> None:
         return
 
     if args.run_id:
-        entries = query_logs_by_run_id(
+        _query_logs(
             run_id=args.run_id,
             step=args.step or None,
-            log_source=args.log_source or None,
+            log_source=args.log_source,
             limit=args.limit,
         )
-        _print_logs(entries)
         return
 
     if not args.version:
@@ -134,10 +161,9 @@ def gcp_logs() -> None:
         if not selected:
             return
 
-    entries = query_logs_by_run_id(
+    _query_logs(
         run_id=selected.run_id,
         step=args.step or None,
-        log_source=args.log_source or None,
+        log_source=args.log_source,
         limit=args.limit,
     )
-    _print_logs(entries)

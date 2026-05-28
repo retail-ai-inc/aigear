@@ -637,6 +637,12 @@ async function publishPipelineError(authClient, err, forcedExitCode = null) {
   }
 }
 
+async function failTaskAndStop(getAuthClient, err, forcedExitCode, logFn) {
+  await logFn();
+  const authClient = await getAuthClient();
+  await publishPipelineError(authClient, err, forcedExitCode);
+}
+
 /**
  * Poll the insert operation briefly so fatal errors (e.g. missing custom image)
  * are caught before acking Pub/Sub, without waiting for the full VM boot.
@@ -682,7 +688,7 @@ async function waitForInsertOperation(compute, zone, operation) {
  * @param {object}   authClient
  * @param {Function} configFactory  (zone, serviceAccount) => vmConfig
  * @param {string}   vmName
- * @returns {Promise<string>}  the zone where the VM was successfully created
+ * @returns {Promise<{zone: string, operationPending: boolean, deduplicated: boolean}>}
  */
 async function createVMWithFallback(authClient, configFactory, vmName, logContext = {}) {
   const compute        = google.compute({ version: 'v1', auth: authClient });
@@ -696,8 +702,17 @@ async function createVMWithFallback(authClient, configFactory, vmName, logContex
 
   const existingZone = await findExistingVmZone(compute, vmName);
   if (existingZone) {
+    await writeCloudFunctionLog({
+      event: 'vm_already_exists',
+      message: 'vm_already_exists',
+      task: { ...logContext, zone: existingZone, instance_name: vmName },
+      extra: {
+        operation_pending: false,
+        deduplicated: true,
+      },
+    });
     console.log(`VM ${vmName} already exists in zone ${existingZone}, skipping insert.`);
-    return existingZone;
+    return { zone: existingZone, operationPending: false, deduplicated: true };
   }
 
   for (const z of CONFIG.fallbackZones) {
@@ -738,18 +753,30 @@ async function createVMWithFallback(authClient, configFactory, vmName, logContex
         event: 'vm_created_in_zone',
         message: 'vm_created_in_zone',
         task: { ...logContext, zone: z, instance_name: zonedConfig.name },
-        extra: { operation_pending: Boolean(waitResult.pending) },
+        extra: {
+          operation_pending: Boolean(waitResult.pending),
+          deduplicated: false,
+        },
       });
 
       console.log(
         `VM creation ${waitResult.pending ? 'started' : 'completed'} in zone ${z}, name: ${zonedConfig.name}, operation: ${operation.name}`,
       );
-      return z;
+      return { zone: z, operationPending: Boolean(waitResult.pending), deduplicated: false };
 
     } catch (err) {
       if (isAlreadyExistsError(err)) {
+        await writeCloudFunctionLog({
+          event: 'vm_already_exists',
+          message: 'vm_already_exists',
+          task: { ...logContext, zone: z, instance_name: zonedConfig.name },
+          extra: {
+            operation_pending: false,
+            deduplicated: true,
+          },
+        });
         console.log(`VM ${zonedConfig.name} already exists in zone ${z}, treating as success.`);
-        return z;
+        return { zone: z, operationPending: false, deduplicated: true };
       }
       if (isFatalVmError(err)) {
         throw err;
@@ -845,27 +872,44 @@ functions.cloudEvent('cronjobProcessPubSub', async cloudEvent => {
   }
 
   if (!Array.isArray(cronjobInfo) || cronjobInfo.length === 0) {
-    await writeCloudFunctionLog({
-      event: 'empty_or_invalid_cronjob_info',
-      message: 'empty_or_invalid_cronjob_info',
-      severity: 'WARNING',
-    });
+    try {
+      await failTaskAndStop(getAuthClient, new Error('empty_or_invalid_cronjob_info'), 'task_invalid', async () => {
+        await writeCloudFunctionLog({
+          event: 'empty_or_invalid_cronjob_info',
+          message: 'empty_or_invalid_cronjob_info',
+          severity: 'WARNING',
+        });
+      });
+    } catch (publishErr) {
+      console.error(`Failed to publish validation error: ${publishErr.message}`);
+    }
     return;
   }
 
   try {
     cronjobInfo = enrichIfNewRun(cronjobInfo, cloudEvent);
   } catch (err) {
-    await writeCloudFunctionLog({
-      event: 'run_enrichment_failed',
-      message: 'run_enrichment_failed',
-      severity: 'ERROR',
-      extra: { error: err.message },
-    });
+    try {
+      await failTaskAndStop(getAuthClient, err, 'task_invalid', async () => {
+        await writeCloudFunctionLog({
+          event: 'run_enrichment_failed',
+          message: 'run_enrichment_failed',
+          severity: 'ERROR',
+          extra: { error: err.message },
+        });
+      });
+    } catch (publishErr) {
+      console.error(`Failed to publish enrichment error: ${publishErr.message}`);
+    }
     return;
   }
 
   const [current, ...remaining] = cronjobInfo;
+  await writeCloudFunctionLog({
+    event: 'run_context_initialized',
+    message: 'run_context_initialized',
+    task: current,
+  });
   await writeCloudFunctionLog({
     event: 'task_processing_started',
     message: 'task_processing_started',
@@ -958,7 +1002,7 @@ functions.cloudEvent('cronjobProcessPubSub', async cloudEvent => {
   try {
     authClient = await getAuthClient();
 
-    const zone = await createVMWithFallback(
+    const vmCreation = await createVMWithFallback(
       authClient,
       (zone, serviceAccount) => buildVmConfig({ current, vmName, startupScript, zone, serviceAccount }),
       vmName,
@@ -975,7 +1019,11 @@ functions.cloudEvent('cronjobProcessPubSub', async cloudEvent => {
     await writeCloudFunctionLog({
       event: 'vm_created',
       message: 'vm_created',
-      task: { ...current, instance_name: vmName, zone },
+      task: { ...current, instance_name: vmName, zone: vmCreation.zone },
+      extra: {
+        operation_pending: vmCreation.operationPending,
+        deduplicated: vmCreation.deduplicated,
+      },
     });
 
   } catch (err) {
