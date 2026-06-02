@@ -83,6 +83,21 @@ def test_describe_returns_false_when_output_empty(mock_run_sh):
     assert sa.describe() is False
 
 
+# ── ServiceAccounts.add_iam_policy_binding ────────────────────────────────────
+
+@patch("aigear.infrastructure.gcp.iam.run_sh")
+@patch.object(ServiceAccounts, "_wait_for_sa_ready")
+def test_add_iam_policy_binding_includes_logging_log_writer(mock_wait, mock_run_sh):
+    sa = _make_sa()
+    sa.add_iam_policy_binding()
+    project_cmds = [
+        call[0][0]
+        for call in mock_run_sh.call_args_list
+        if call[0][0][0] == "gcloud" and "projects" in call[0][0]
+    ]
+    assert any("--role=roles/logging.logWriter" in cmd for cmd in project_cmds)
+
+
 # ── ServiceAccounts.delete ────────────────────────────────────────────────────
 
 @patch("aigear.infrastructure.gcp.iam.run_sh")
