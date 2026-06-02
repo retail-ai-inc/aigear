@@ -152,10 +152,11 @@ function enrichIfNewRun(tasks, cloudEvent) {
   if (tasks[0]?.run_id) return tasks;
 
   const publishTimeIso = getPublishTimeIso(cloudEvent);
-  const runStartedAtUtc = new Date(publishTimeIso).toISOString();
-  if (!runStartedAtUtc || Number.isNaN(Date.parse(runStartedAtUtc))) {
+  const startedAt = new Date(publishTimeIso);
+  if (!publishTimeIso || Number.isNaN(startedAt.getTime())) {
     throw new Error(`Invalid publish time for run enrichment: ${publishTimeIso}`);
   }
+  const runStartedAtUtc = startedAt.toISOString();
 
   const projectName = tasks[0]?.project_name || CONFIG.projectName || '';
   const pipelineVersion = tasks[0]?.pipeline_version;
