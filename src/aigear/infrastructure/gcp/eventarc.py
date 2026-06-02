@@ -110,9 +110,12 @@ class EventarcPubSubTrigger:
         return candidates
 
     def _is_ready(self, pubsub, transport_sub: str | None) -> bool:
-        return pubsub.find_healthy_subscription(
-            self._subscription_candidates(pubsub, transport_sub)
-        ) is not None
+        return (
+            pubsub.find_healthy_subscription(
+                self._subscription_candidates(pubsub, transport_sub)
+            )
+            is not None
+        )
 
     def _tune_push_subscription(self, pubsub, transport_sub: str | None):
         healthy = pubsub.find_healthy_subscription(
@@ -142,7 +145,11 @@ class EventarcPubSubTrigger:
             )
 
     def _wait_for_ready(
-        self, pubsub, transport_sub: str | None, retries: int = 20, interval: float = 1.0
+        self,
+        pubsub,
+        transport_sub: str | None,
+        retries: int = 20,
+        interval: float = 1.0,
     ) -> bool:
         for i in range(retries + 1):
             _, current_sub = self._describe_transport()
@@ -175,7 +182,7 @@ class EventarcPubSubTrigger:
             f"--location={self.location}",
             f"--destination-run-service={self.function_name}",
             f"--destination-run-region={self.function_region}",
-            '--event-filters=type=google.cloud.pubsub.topic.v1.messagePublished',
+            "--event-filters=type=google.cloud.pubsub.topic.v1.messagePublished",
             f"--transport-topic={self.transport_topic}",
             f"--service-account={self.trigger_service_account}",
             f"--project={self.project_id}",
@@ -242,8 +249,7 @@ class EventarcPubSubTrigger:
             self._delete_orphan_subscriptions(pubsub, transport_sub)
             if not self.delete():
                 raise RuntimeError(
-                    f"Failed to delete orphaned Eventarc trigger "
-                    f"({self.trigger_name})."
+                    f"Failed to delete orphaned Eventarc trigger ({self.trigger_name})."
                 )
             recreated = True
             trigger_exists = False
@@ -269,6 +275,4 @@ class EventarcPubSubTrigger:
         if self.describe():
             self.delete()
         else:
-            logger.info(
-                f"Eventarc trigger ({self.trigger_name}) not found. Skipping."
-            )
+            logger.info(f"Eventarc trigger ({self.trigger_name}) not found. Skipping.")

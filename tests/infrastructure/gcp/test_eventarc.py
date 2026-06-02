@@ -1,6 +1,9 @@
 from unittest.mock import patch
 
-from aigear.infrastructure.gcp.eventarc import EventarcPubSubTrigger, pubsub_trigger_name
+from aigear.infrastructure.gcp.eventarc import (
+    EventarcPubSubTrigger,
+    pubsub_trigger_name,
+)
 
 
 def _make_trigger():
@@ -49,13 +52,9 @@ def test_create_matches_official_gcloud_flags(mock_run_sh):
     assert "my-fn-pubsub" in cmd
     assert "--destination-run-service=my-fn" in cmd
     assert "--destination-run-region=asia-northeast1" in cmd
-    assert (
-        '--event-filters=type=google.cloud.pubsub.topic.v1.messagePublished' in cmd
-    )
+    assert "--event-filters=type=google.cloud.pubsub.topic.v1.messagePublished" in cmd
     assert "--transport-topic=projects/my-project/topics/my-topic" in cmd
-    assert (
-        "--service-account=sa@my-project.iam.gserviceaccount.com" in cmd
-    )
+    assert "--service-account=sa@my-project.iam.gserviceaccount.com" in cmd
 
 
 @patch("aigear.infrastructure.gcp.eventarc.run_sh")
