@@ -240,8 +240,21 @@ function validateTask(current) {
  * @param {object} current  Task object from the Pub/Sub message
  * @returns {string}        Shell command fragment, or '' when step_name is absent
  */
+const SAFE_SHELL_ARG = /^[a-zA-Z0-9_-]+$/;
+
+function assertSafeShellArg(value, label) {
+  if (!value || !SAFE_SHELL_ARG.test(value)) {
+    throw new Error(
+      `Invalid ${label} "${value}": only alphanumerics, hyphens, and underscores are allowed`
+    );
+  }
+}
+
 function buildPipelineCommand(current) {
   if (!current.step_name) return '';
+
+  assertSafeShellArg(current.pipeline_version, 'pipeline_version');
+  assertSafeShellArg(current.step_name, 'step_name');
 
   const baseArgs = `--version ${current.pipeline_version} --step ${current.step_name}`;
 
@@ -249,9 +262,7 @@ function buildPipelineCommand(current) {
     return `aigear-task workflow ${baseArgs}`;
   }
 
-  if (!/^[a-zA-Z0-9_-]+$/.test(current.venv)) {
-    throw new Error(`Invalid venv name "${current.venv}": only alphanumerics, hyphens, and underscores are allowed`);
-  }
+  assertSafeShellArg(current.venv, 'venv');
 
   return `{{VENVBASEDIR}}/${current.venv}/bin/aigear-task workflow ${baseArgs}`;
 }
@@ -324,7 +335,7 @@ fatal_error() {
   const runPipeline = pipelineCommand ? `
 # ── Pipeline step ──
 docker_exit_code=0
-docker run ${gpuFlag} ${dockerEnvArgs} '${esc(dockerImage)}' ${pipelineCommand} || docker_exit_code=$?
+docker run ${gpuFlag} ${dockerEnvArgs} '${esc(dockerImage)}' sh -c '${esc(pipelineCommand)}' || docker_exit_code=$?
 if [ "$docker_exit_code" -ne 0 ]; then
   fatal_error pipeline_failed
 fi
