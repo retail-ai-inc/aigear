@@ -10,35 +10,36 @@ from aigear.service.grpc.grpc_service import grpc_service
 
 
 def run_workflow(pipeline_version: str, step_name: str) -> None:
-    logger = Logging(log_name=__name__).console_logging()
-    pipeline_config = PipelinesConfig.get_version_config(pipeline_version)
-    if pipeline_config is None:
-        logger.error(f"No config found for version: {pipeline_version}")
-        return
-    module_path = pipeline_config.get(step_name, {}).get("pipeline_step")
-    if not module_path:
-        logger.error(
-            f"No pipeline_step found for step '{step_name}' in version '{pipeline_version}'"
-        )
-        return
-
     aigear_config = AigearConfig.get_config()
     ctx = RunLogContext.install_from_env(
         gcp_logging=aigear_config.gcp.logging,
         project_id=aigear_config.gcp.gcp_project_id,
     )
-    task_logger = Logging(log_name=__name__).for_task()
+    logger = Logging(log_name=__name__).for_task()
     try:
-        if ctx:
-            emit_lifecycle_log("pipeline_step_started", ctx)
-        function_module = LoadModule(module_path).load_module()
-        function_module(pipeline_version=pipeline_version)
-        if ctx:
-            emit_lifecycle_log("pipeline_step_finished", ctx)
-    except Exception as e:
-        if ctx:
-            emit_lifecycle_log("pipeline_step_failed", ctx)
-        task_logger.error(f"Error while executing {module_path}: {e}")
+        pipeline_config = PipelinesConfig.get_version_config(pipeline_version)
+        if pipeline_config is None:
+            logger.error(f"No config found for version: {pipeline_version}")
+            return
+        module_path = pipeline_config.get(step_name, {}).get("pipeline_step")
+        if not module_path:
+            logger.error(
+                f"No pipeline_step found for step '{step_name}' "
+                f"in version '{pipeline_version}'"
+            )
+            return
+
+        try:
+            if ctx:
+                emit_lifecycle_log("pipeline_step_started", ctx)
+            function_module = LoadModule(module_path).load_module()
+            function_module(pipeline_version=pipeline_version)
+            if ctx:
+                emit_lifecycle_log("pipeline_step_finished", ctx)
+        except Exception as e:
+            if ctx:
+                emit_lifecycle_log("pipeline_step_failed", ctx)
+            logger.error(f"Error while executing {module_path}: {e}")
     finally:
         RunLogContext.clear()
 
