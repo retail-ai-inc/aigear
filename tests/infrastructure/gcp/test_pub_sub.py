@@ -129,6 +129,39 @@ def test_tune_push_subscription_updates_ack_and_retry(mock_run_sh):
     assert "--min-retry-delay=60s" in cmd
 
 
+@patch("aigear.infrastructure.gcp.pub_sub.run_sh")
+def test_find_all_healthy_subscriptions_dedupes(mock_run_sh):
+    mock_run_sh.side_effect = [
+        "projects/my-project/topics/my-topic\n",
+        "projects/my-project/topics/my-topic\n",
+    ]
+    ps = _make_pubsub()
+    sub = "projects/my-project/subscriptions/eventarc-sub"
+    healthy = ps.find_all_healthy_subscriptions([sub, sub])
+    assert healthy == [sub]
+
+
+@patch("aigear.infrastructure.gcp.pub_sub.run_sh")
+def test_ensure_push_subscription_tuned_skips_when_already_ok(mock_run_sh):
+    mock_run_sh.return_value = "300\t60s\n"
+    ps = _make_pubsub()
+    sub = "projects/my-project/subscriptions/eventarc-sub"
+    assert ps.ensure_push_subscription_tuned(sub) is True
+    assert mock_run_sh.call_count == 1
+    assert mock_run_sh.call_args[0][0][3] == "describe"
+
+
+@patch("aigear.infrastructure.gcp.pub_sub.run_sh")
+def test_ensure_push_subscription_tuned_updates_short_ack(mock_run_sh):
+    mock_run_sh.side_effect = ["10\t10s\n", ""]
+    ps = _make_pubsub()
+    sub = "projects/my-project/subscriptions/eventarc-sub"
+    assert ps.ensure_push_subscription_tuned(sub) is True
+    update_cmd = mock_run_sh.call_args[0][0]
+    assert update_cmd[3] == "update"
+    assert "--ack-deadline=300" in update_cmd
+
+
 # ── PubSub.add_permissions_to_pubsub ─────────────────────────────────────────
 
 @patch("aigear.infrastructure.gcp.pub_sub.run_sh")

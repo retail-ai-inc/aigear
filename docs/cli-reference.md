@@ -56,7 +56,7 @@ aigear-infra {--create | --update | --delete | --status}
 | 2 | Buckets, Artifact Registry, Pub/Sub topic, KMS, Cloud Build, Pre-VM Image, Kubernetes, Cloud Function (deploy only, no Pub/Sub trigger) | **Parallel** |
 | 3 | Eventarc Pub/Sub trigger | Sequential (requires Pub/Sub topic **and** Cloud Function from Phase 2) |
 
-Phase 3 runs only when **both** `gcp.pub_sub.on` and `gcp.cloud_function.on` are `true`. The trigger creates the Pub/Sub **subscription** that delivers topic messages to the function (per [Cloud Run Pub/Sub triggers](https://cloud.google.com/run/docs/triggering/pubsub-triggers#gcloud)).
+Phase 3 runs only when **both** `gcp.pub_sub.on` and `gcp.cloud_function.on` are `true`. The trigger creates the Pub/Sub **subscription** that delivers topic messages to the function (per [Cloud Run Pub/Sub triggers](https://cloud.google.com/run/docs/triggering/pubsub-triggers#gcloud)). Aigear sets the push subscription **ack deadline to 300s** and **minimum retry backoff to 60s** (Eventarc defaults are ~10s, which causes duplicate Cloud Function invocations during VM insert). **`aigear-infra --update`** re-applies these settings when the trigger already exists.
 
 **`--delete`** runs in reverse order:
 

@@ -117,16 +117,41 @@ class EventarcPubSubTrigger:
             is not None
         )
 
-    def _tune_push_subscription(self, pubsub, transport_sub: str | None):
-        healthy = pubsub.find_healthy_subscription(
+    def _tune_push_subscription(self, pubsub, transport_sub: str | None) -> bool:
+        healthy = pubsub.find_all_healthy_subscriptions(
             self._subscription_candidates(pubsub, transport_sub)
         )
-        if healthy:
-            pubsub.tune_push_subscription(
-                healthy,
+        if not healthy:
+            logger.warning(
+                f"No healthy Pub/Sub subscription on topic ({self.topic_name}) "
+                f"to tune for Eventarc trigger ({self.trigger_name})."
+            )
+            return False
+        for sub in healthy:
+            pubsub.ensure_push_subscription_tuned(
+                sub,
                 ack_deadline_sec=PUSH_ACK_DEADLINE_SEC,
                 min_retry_delay_sec=PUSH_MIN_RETRY_DELAY_SEC,
             )
+        return True
+
+    def tune_push_subscriptions(self) -> bool:
+        """
+        Re-apply push ack/retry on all healthy Eventarc subscriptions (idempotent).
+
+        Safe to run from ``aigear-infra --update`` when the trigger already exists.
+        """
+        from aigear.infrastructure.gcp.pub_sub import PubSub
+
+        pubsub = PubSub(self.topic_name, self.project_id)
+        if not self.describe():
+            logger.info(
+                f"Eventarc trigger ({self.trigger_name}) not found; "
+                f"skipping push subscription tune."
+            )
+            return True
+        _, transport_sub = self._describe_transport()
+        return self._tune_push_subscription(pubsub, transport_sub)
 
     def _delete_orphan_subscriptions(self, pubsub, transport_sub: str | None):
         candidates = self._subscription_candidates(pubsub, transport_sub)
@@ -269,7 +294,11 @@ class EventarcPubSubTrigger:
                     f"No healthy Pub/Sub subscription on topic ({self.topic_name}) "
                     f"after Eventarc trigger ({self.trigger_name}) setup."
                 )
-            self._tune_push_subscription(pubsub, None)
+            if not self._tune_push_subscription(pubsub, None):
+                raise RuntimeError(
+                    f"Failed to tune Pub/Sub push subscription on topic ({self.topic_name}) "
+                    f"for Eventarc trigger ({self.trigger_name})."
+                )
 
     def delete_if_exists(self):
         if self.describe():

@@ -738,7 +738,13 @@ class Infra:
             self._step_skip(f"Cloud Function ({cfg.cloud_function.function_name})")
 
         if self._needs_eventarc(cfg):
-            self._step_no_update(self._eventarc_title())
+            title = self._eventarc_title()
+            if self.eventarc_trigger.describe():
+                tune_title = f"{title} (push ack/retry)"
+                if not self._step(tune_title, self.eventarc_trigger.tune_push_subscriptions):
+                    failed_steps.append(tune_title)
+            else:
+                self._step_no_update(title)
         elif cfg.pub_sub.on or cfg.cloud_function.on:
             self._step_skip(self._eventarc_title())
 
