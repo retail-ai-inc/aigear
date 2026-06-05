@@ -1,6 +1,7 @@
 import argparse
 import sys
 import os
+import time
 from aigear.common.config import AigearConfig, PipelinesConfig
 from aigear.common.lifecycle_log import emit_lifecycle_log
 from aigear.common.logger import Logging
@@ -29,16 +30,36 @@ def run_workflow(pipeline_version: str, step_name: str) -> None:
             )
             return
 
+        step_started_at: float | None = None
         try:
             if ctx:
+                step_started_at = time.monotonic()
                 emit_lifecycle_log("pipeline_step_started", ctx)
             function_module = LoadModule(module_path).load_module()
             function_module(pipeline_version=pipeline_version)
             if ctx:
-                emit_lifecycle_log("pipeline_step_finished", ctx)
+                extra: dict[str, int] = {}
+                if step_started_at is not None:
+                    extra["duration_ms"] = int(
+                        (time.monotonic() - step_started_at) * 1000
+                    )
+                emit_lifecycle_log(
+                    "pipeline_step_finished",
+                    ctx,
+                    extra=extra or None,
+                )
         except Exception as e:
             if ctx:
-                emit_lifecycle_log("pipeline_step_failed", ctx)
+                extra = {
+                    "error_message": str(e),
+                    "error_type": type(e).__name__,
+                    "failure_layer": "pipeline",
+                }
+                if step_started_at is not None:
+                    extra["duration_ms"] = int(
+                        (time.monotonic() - step_started_at) * 1000
+                    )
+                emit_lifecycle_log("pipeline_step_failed", ctx, extra=extra)
             logger.error(f"Error while executing {module_path}: {e}")
     finally:
         RunLogContext.clear()

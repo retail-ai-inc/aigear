@@ -8,8 +8,11 @@ from zoneinfo import ZoneInfoNotFoundError
 
 from aigear.deploy.gcp.logs_discovery_cache import clear_discovery_cache
 from aigear.deploy.gcp.run_logs import (
+    DISCOVERY_LOG_LIMIT,
     RunSummary,
+    build_step_timeline,
     discover_runs,
+    format_step_timeline,
     query_logs_by_run_id,
     scheduler_timezone,
 )
@@ -20,10 +23,15 @@ _ALL_LOG_SOURCES = ("cloud_function", "ml_pipeline")
 def _select_run_interactively(runs: list[RunSummary]) -> RunSummary | None:
     print("Multiple runs found. Select one run_id:")
     for idx, item in enumerate(runs, start=1):
+        extra = ""
+        if item.exit_code:
+            extra += f" exit_code={item.exit_code}"
+        if item.last_event:
+            extra += f" event={item.last_event}"
         print(
             f"{idx}. run_id={item.run_id} "
             f"run_started_at_utc={item.run_started_at_utc} "
-            f"step={item.step_name}"
+            f"step={item.step_name}{extra}"
         )
     raw = input("Enter selection number: ").strip()
     try:
@@ -52,6 +60,53 @@ def _print_logs(entries: list[dict[str, Any]]) -> None:
             print(f"[{timestamp}] {text_payload}")
             continue
         print(f"[{timestamp}] {json.dumps(entry, ensure_ascii=True)}")
+
+
+def _normalize_step(step: str) -> str | None:
+    if not step or step == "all":
+        return None
+    return step
+
+
+def _collect_log_entries(
+    run_id: str,
+    step: str | None,
+    log_source: str,
+    limit: int,
+) -> list[dict[str, Any]]:
+    if log_source in ("", "all"):
+        entries: list[dict[str, Any]] = []
+        for source in _ALL_LOG_SOURCES:
+            entries.extend(
+                query_logs_by_run_id(
+                    run_id=run_id,
+                    step=step,
+                    log_source=source,
+                    limit=limit,
+                )
+            )
+        return entries
+
+    return query_logs_by_run_id(
+        run_id=run_id,
+        step=step,
+        log_source=log_source or None,
+        limit=limit,
+    )
+
+
+def _print_timeline(
+    run_id: str,
+    step: str | None,
+    log_source: str,
+    limit: int,
+    *,
+    show_hint: bool,
+) -> None:
+    entries = _collect_log_entries(run_id, step, log_source, limit)
+    rows = build_step_timeline(entries, step_filter=step)
+    for line in format_step_timeline(rows, run_id=run_id, show_hint=show_hint):
+        print(line)
 
 
 def _query_logs(run_id: str, step: str | None, log_source: str, limit: int) -> None:
@@ -88,7 +143,17 @@ def get_argument() -> argparse.Namespace:
     parser.add_argument("--version", default="", help="Pipeline version. Required for discovery.")
     parser.add_argument("--run-date", default="", help="Run date in scheduler timezone (YYYY-MM-DD).")
     parser.add_argument("--run-id", default="", help="Directly query logs by run_id.")
-    parser.add_argument("--step", default="", help="Optional step_name filter.")
+    parser.add_argument(
+        "--step",
+        default="all",
+        help="Step name filter. Default 'all' shows every step.",
+    )
+    parser.add_argument(
+        "--format",
+        choices=["full", "concise"],
+        default="full",
+        help="Output format: 'full' raw JSON logs (default), 'concise' step timeline.",
+    )
     parser.add_argument(
         "--log-source",
         default="",
@@ -100,26 +165,49 @@ def get_argument() -> argparse.Namespace:
         default="",
         help="Timezone for --run-date. Defaults to env.json scheduler.time_zone.",
     )
-    parser.add_argument("--limit", type=int, default=200, help="Max logs to return.")
-    parser.add_argument("--no-cache", action="store_true", help="Skip discovery cache.")
-    parser.add_argument("--clear-cache", action="store_true", help="Clear local discovery cache and exit.")
+    parser.add_argument(
+        "--limit", type=int, default=200, help="Max logs to return when querying by run_id."
+    )
+    parser.add_argument(
+        "--discovery-limit",
+        type=int,
+        default=DISCOVERY_LOG_LIMIT,
+        help="Max Cloud Logging entries to scan when discovering runs (default: 1000).",
+    )
+    parser.add_argument(
+        "--clear-cache",
+        action="store_true",
+        help="Clear local log query cache and exit.",
+    )
     return parser.parse_args()
 
 
 def gcp_logs() -> None:
     args = get_argument()
+
     if args.clear_cache:
         clear_discovery_cache()
-        print("Discovery cache cleared.")
+        print("Log query cache cleared.")
         return
 
+    step = _normalize_step(args.step)
+
     if args.run_id:
-        _query_logs(
-            run_id=args.run_id,
-            step=args.step or None,
-            log_source=args.log_source,
-            limit=args.limit,
-        )
+        if args.format == "concise":
+            _print_timeline(
+                run_id=args.run_id,
+                step=step,
+                log_source=args.log_source,
+                limit=args.limit,
+                show_hint=step is None,
+            )
+        else:
+            _query_logs(
+                run_id=args.run_id,
+                step=step,
+                log_source=args.log_source,
+                limit=args.limit,
+            )
         return
 
     if not args.version:
@@ -135,8 +223,7 @@ def gcp_logs() -> None:
             version=args.version,
             run_date=args.run_date,
             tz_name=tz_name,
-            limit=args.limit,
-            no_cache=args.no_cache,
+            limit=args.discovery_limit,
         )
     except ValueError:
         print("Invalid --run-date format. Expected YYYY-MM-DD.")
@@ -161,9 +248,18 @@ def gcp_logs() -> None:
         if not selected:
             return
 
-    _query_logs(
-        run_id=selected.run_id,
-        step=args.step or None,
-        log_source=args.log_source,
-        limit=args.limit,
-    )
+    if args.format == "concise":
+        _print_timeline(
+            run_id=selected.run_id,
+            step=step,
+            log_source=args.log_source,
+            limit=args.limit,
+            show_hint=step is None,
+        )
+    else:
+        _query_logs(
+            run_id=selected.run_id,
+            step=step,
+            log_source=args.log_source,
+            limit=args.limit,
+        )

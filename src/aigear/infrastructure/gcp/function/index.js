@@ -80,12 +80,16 @@ async function writeCloudFunctionLog({
   task = null,
   extra = {},
 }) {
+  const sanitizedExtra = { ...extra };
+  delete sanitizedExtra.log_source;
+  delete sanitizedExtra.event;
+  delete sanitizedExtra.message;
   const payload = {
     log_source: 'cloud_function',
     event,
     message,
     ...buildRunLogFields(task || {}),
-    ...extra,
+    ...sanitizedExtra,
   };
   try {
     await writeStructuredLog(payload, severity);
@@ -267,6 +271,45 @@ function buildPipelineCommand(current) {
   return `{{VENVBASEDIR}}/${current.venv}/bin/aigear-task workflow ${baseArgs}`;
 }
 
+/**
+ * JSON prefix for VM fatal_error Pub/Sub payloads; shell appends ,"exit_code":"<arg>".
+ */
+function buildFatalErrorMessagePrefix({
+  runId,
+  runStartedAtUtc,
+  pipelineVersion,
+  projectName,
+  stepName,
+  dockerImage,
+}) {
+  const json = JSON.stringify({
+    error: true,
+    run_id: runId || undefined,
+    run_started_at_utc: runStartedAtUtc || undefined,
+    pipeline_version: pipelineVersion || undefined,
+    step_name: stepName || undefined,
+    project_name: projectName || undefined,
+    docker_image: dockerImage || undefined,
+  });
+  return json.slice(0, -1);
+}
+
+function taskFromErrorPayload(payload) {
+  if (!payload || typeof payload !== 'object') return null;
+  const runId = payload.run_id;
+  const runStartedAtUtc = payload.run_started_at_utc;
+  if (!runId && !runStartedAtUtc && !payload.pipeline_version && !payload.step_name) {
+    return null;
+  }
+  return {
+    run_id: runId || undefined,
+    run_started_at_utc: runStartedAtUtc || undefined,
+    pipeline_version: payload.pipeline_version || undefined,
+    step_name: payload.step_name || undefined,
+    project_name: payload.project_name || undefined,
+  };
+}
+
 // ─── Startup Script ───────────────────────────────────────────────────────────
 
 /**
@@ -309,12 +352,21 @@ function buildStartupScript({
   // Single-quote-escape all values interpolated into shell to prevent injection
   const esc = s => s.replace(/'/g, "'\\''");
 
+  const fatalErrorPrefix = buildFatalErrorMessagePrefix({
+    runId,
+    runStartedAtUtc,
+    pipelineVersion,
+    projectName,
+    stepName,
+    dockerImage,
+  });
+
   // Shared handler: publish terminal error to Pub/Sub and delete this VM.
   const fatalErrorFn = `
 # Publish a terminal error and delete this VM (stops the Pub/Sub pipeline).
 fatal_error() {
   local exit_code="$1"
-  gcloud pubsub topics publish '${esc(topicName)}' --message '{"error":true,"exit_code":"'"$exit_code"'"}' || true
+  gcloud pubsub topics publish '${esc(topicName)}' --message '${esc(fatalErrorPrefix)},"exit_code":"'"$exit_code"'"}' || true
   gcp_zone=$(curl -sf -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/zone | cut -d/ -f4)
   sleep ${CONFIG.vm.sleepBeforeDelete}
   gcloud compute instances delete "$(hostname | cut -d. -f1)" --zone "$gcp_zone" --quiet
@@ -394,7 +446,6 @@ fi
 ` : '';
 
   const startupMarker = JSON.stringify({
-    log_source: 'ml_pipeline',
     event: 'vm_startup',
     run_id: runId,
     run_started_at_utc: runStartedAtUtc,
@@ -627,12 +678,13 @@ function isFatalVmError(err) {
  * Publish a terminal error so the pipeline stops and Pub/Sub does not keep
  * redelivering the same task queue (matches startup-script error handling).
  */
-async function publishPipelineError(authClient, err, forcedExitCode = null) {
+async function publishPipelineError(authClient, err, forcedExitCode = null, runContext = null) {
   const exitCode = forcedExitCode || (isFatalVmError(err) ? 'vm_image_not_found' : 'vm_create_failed');
   const payload = JSON.stringify({
     error:     true,
     exit_code: exitCode,
     detail:    String(err?.message || err).slice(0, 500),
+    ...(runContext && typeof runContext === 'object' ? runContext : {}),
   });
 
   try {
@@ -869,17 +921,19 @@ functions.cloudEvent('cronjobProcessPubSub', async cloudEvent => {
 
   // Error payload (from VM startup script or Cloud Function after VM create failure)
   if (cronjobInfo?.error) {
+    const errorTask = taskFromErrorPayload(cronjobInfo);
     await writeCloudFunctionLog({
-      event: 'pipeline_step_failed',
-      message: 'pipeline_step_failed',
+      event: 'vm_step_failed',
+      message: 'vm_step_failed',
       severity: 'ERROR',
+      task: errorTask,
       extra: {
         exit_code: cronjobInfo.exit_code || undefined,
         detail: cronjobInfo.detail || undefined,
+        docker_image: cronjobInfo.docker_image || undefined,
+        failure_layer: 'infrastructure',
       },
     });
-    const detail = cronjobInfo.detail ? `, detail: ${cronjobInfo.detail}` : '';
-    console.error(`Pipeline step failed with exit code: ${cronjobInfo.exit_code}${detail}`);
     return;
   }
 
@@ -991,7 +1045,15 @@ functions.cloudEvent('cronjobProcessPubSub', async cloudEvent => {
   });
 
   // Build startup script
-  const nextMessage   = JSON.stringify(remaining);
+  const remainingWithRun = remaining.map(task => ({
+    ...task,
+    run_id: task.run_id || current.run_id,
+    run_started_at_utc: task.run_started_at_utc || current.run_started_at_utc,
+    project_name: task.project_name || current.project_name,
+    pipeline_version: task.pipeline_version || current.pipeline_version,
+    step_name: task.step_name || resolveStepName(task),
+  }));
+  const nextMessage   = JSON.stringify(remainingWithRun);
   const startupScript = buildStartupScript({
     dockerImage:    current.docker_image,
     gpuFlag,
@@ -1047,7 +1109,14 @@ functions.cloudEvent('cronjobProcessPubSub', async cloudEvent => {
       extra: { error: err.message || String(err) },
     });
     if (authClient) {
-      await publishPipelineError(authClient, err);
+      await publishPipelineError(authClient, err, null, {
+        run_id: current.run_id,
+        run_started_at_utc: current.run_started_at_utc,
+        pipeline_version: current.pipeline_version,
+        step_name: resolveStepName(current),
+        project_name: current.project_name || undefined,
+        docker_image: current.docker_image || undefined,
+      });
     }
   }
 });

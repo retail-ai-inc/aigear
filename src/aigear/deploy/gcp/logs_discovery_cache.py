@@ -28,6 +28,56 @@ def clear_discovery_cache() -> None:
         CACHE_FILE_PATH.unlink()
 
 
+def _query_cache_key(
+    run_id: str,
+    step: str | None,
+    log_source: str | None,
+    limit: int,
+) -> str:
+    return f"{run_id}|{step or ''}|{log_source or ''}|{limit}"
+
+
+def load_logs_from_cache(
+    run_id: str,
+    step: str | None,
+    log_source: str | None,
+    limit: int,
+) -> list[dict[str, Any]] | None:
+    """Return cached log entries, or None on miss/expiry."""
+    cache = _prune_expired_cache(_load_cache())
+    key = _query_cache_key(run_id, step, log_source, limit)
+    item = cache.get("queries", {}).get(key)
+    if not isinstance(item, dict):
+        _save_cache(cache)
+        return None
+    entries = item.get("entries")
+    if not isinstance(entries, list) or not entries:
+        cache.get("queries", {}).pop(key, None)
+        _save_cache(cache)
+        return None
+    _save_cache(cache)
+    return entries
+
+
+def save_logs_to_cache(
+    run_id: str,
+    step: str | None,
+    log_source: str | None,
+    limit: int,
+    entries: list[dict[str, Any]],
+) -> None:
+    if not entries:
+        return
+    cache = _prune_expired_cache(_load_cache())
+    now = int(datetime.now(timezone.utc).timestamp())
+    key = _query_cache_key(run_id, step, log_source, limit)
+    cache.setdefault("queries", {})[key] = {
+        "entries": entries,
+        "expires_at_epoch": now + CACHE_TTL_SECONDS,
+    }
+    _save_cache(cache)
+
+
 def _prune_expired_cache(cache: dict[str, Any]) -> dict[str, Any]:
     now = int(datetime.now(timezone.utc).timestamp())
     runs = cache.get("runs", {})
@@ -43,6 +93,12 @@ def _prune_expired_cache(cache: dict[str, Any]) -> dict[str, Any]:
         if kept:
             indexes[key] = kept
     cache["indexes"] = indexes
+    queries = cache.get("queries", {})
+    cache["queries"] = {
+        key: item
+        for key, item in queries.items()
+        if isinstance(item, dict) and int(item.get("expires_at_epoch", 0)) > now
+    }
     return cache
 
 
@@ -79,7 +135,7 @@ def save_runs_to_cache(
             continue
         cache.setdefault("runs", {})[run_id] = {**item, "expires_at_epoch": expires}
     key = _cache_index_key(version, run_date, tz_name)
-    cache.setdefault("indexes", {})[key] = [
-        item["run_id"] for item in summaries if item.get("run_id")
-    ]
+    new_ids = [item["run_id"] for item in summaries if item.get("run_id")]
+    existing_ids = cache.setdefault("indexes", {}).get(key, [])
+    cache["indexes"][key] = list(dict.fromkeys(new_ids + existing_ids))
     _save_cache(cache)

@@ -60,6 +60,17 @@ class Logging:
 
         return logger
 
+    _CTX_PROTECTED_KEYS = frozenset(
+        {
+            "log_source",
+            "run_id",
+            "run_started_at_utc",
+            "pipeline_version",
+            "step_name",
+            "project_name",
+        }
+    )
+
     def _merge_payload(
         self,
         msg: str,
@@ -70,7 +81,12 @@ class Logging:
         ctx = RunLogContext.current()
         if ctx is not None:
             payload.update(ctx.as_log_fields())
-        if extra:
+            if extra:
+                for key, value in extra.items():
+                    if key in self._CTX_PROTECTED_KEYS:
+                        continue
+                    payload[key] = value
+        elif extra:
             payload.update(extra)
         return payload
 
