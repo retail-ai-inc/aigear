@@ -294,7 +294,8 @@ class EventarcPubSubTrigger:
                     f"No healthy Pub/Sub subscription on topic ({self.topic_name}) "
                     f"after Eventarc trigger ({self.trigger_name}) setup."
                 )
-            if not self._tune_push_subscription(pubsub, None):
+            _, transport_sub = self._describe_transport()
+            if not self._tune_push_subscription(pubsub, transport_sub):
                 raise RuntimeError(
                     f"Failed to tune Pub/Sub push subscription on topic ({self.topic_name}) "
                     f"for Eventarc trigger ({self.trigger_name})."

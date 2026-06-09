@@ -79,10 +79,17 @@ def test_ensure_fast_path_when_subscription_healthy(mock_run_sh):
 @patch("aigear.infrastructure.gcp.eventarc.run_sh")
 def test_ensure_creates_trigger_when_missing(mock_run_sh):
     trigger = _make_trigger()
-    with patch.object(trigger, "_tune_push_subscription", return_value=True):
+    transport_sub = "projects/my-project/subscriptions/eventarc-sub-727"
+    with patch.object(trigger, "_tune_push_subscription", return_value=True) as mock_tune:
         with patch.object(trigger, "_wait_for_ready", return_value=True):
-            with patch.object(trigger, "_describe_transport", return_value=(False, None)):
+            with patch.object(
+                trigger,
+                "_describe_transport",
+                side_effect=[(False, None), (True, transport_sub)],
+            ):
                 trigger.ensure()
+    mock_tune.assert_called_once()
+    assert mock_tune.call_args[0][1] == transport_sub
     assert mock_run_sh.call_count >= 2
 
 
