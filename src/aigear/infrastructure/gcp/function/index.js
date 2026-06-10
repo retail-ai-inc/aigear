@@ -310,6 +310,17 @@ function taskFromErrorPayload(payload) {
   };
 }
 
+function taskFromCompletionPayload(payload) {
+  if (!payload || typeof payload !== 'object') return null;
+  return {
+    run_id: payload.run_id || undefined,
+    run_started_at_utc: payload.run_started_at_utc || undefined,
+    pipeline_version: payload.pipeline_version || undefined,
+    step_name: payload.step_name || undefined,
+    project_name: payload.project_name || undefined,
+  };
+}
+
 // ─── Startup Script ───────────────────────────────────────────────────────────
 
 /**
@@ -453,6 +464,15 @@ fi
     step_name: stepName,
     project_name: projectName || undefined,
   });
+  const completionMessage = JSON.stringify({
+    done: true,
+    run_id: runId,
+    run_started_at_utc: runStartedAtUtc,
+    pipeline_version: pipelineVersion,
+    step_name: stepName,
+    project_name: projectName || undefined,
+  });
+  const publishMessage = nextMessage === MSG.EMPTY_QUEUE ? completionMessage : nextMessage;
 
   // gcloud and docker are already on PATH in the custom image — no sudo needed.
   // nextMessage is inlined as a literal string by the Cloud Function at script-generation
@@ -480,7 +500,7 @@ fi
 ${runPipeline}
 ${runDeploy}
 # ── Notify next step and self-delete ──
-gcloud pubsub topics publish '${esc(topicName)}' --message '${esc(nextMessage)}'
+gcloud pubsub topics publish '${esc(topicName)}' --message '${esc(publishMessage)}'
 gcp_zone=$(curl -sf -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/zone | cut -d/ -f4)
 sleep ${CONFIG.vm.sleepBeforeDelete}
 gcloud compute instances delete "$(hostname | cut -d. -f1)" --zone "$gcp_zone" --quiet
@@ -933,6 +953,15 @@ functions.cloudEvent('cronjobProcessPubSub', async cloudEvent => {
         docker_image: cronjobInfo.docker_image || undefined,
         failure_layer: 'infrastructure',
       },
+    });
+    return;
+  }
+
+  if (cronjobInfo?.done) {
+    await writeCloudFunctionLog({
+      event: 'pipeline_completed',
+      message: 'pipeline_completed',
+      task: taskFromCompletionPayload(cronjobInfo),
     });
     return;
   }

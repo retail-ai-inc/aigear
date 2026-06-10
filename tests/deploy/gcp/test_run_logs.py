@@ -541,6 +541,36 @@ def test_build_step_timeline_vm_step_failed_without_start():
     assert rows[0].detail == "docker_image_not_found (demo:latest)"
 
 
+def test_build_step_timeline_model_service_completed_from_cloud_function():
+    entries = [
+        _entry(
+            "2026-06-03T06:40:00Z",
+            {
+                "log_source": "cloud_function",
+                "event": "run_context_initialized",
+                "run_id": "run-abc",
+                "step_name": "model_service",
+            },
+        ),
+        _entry(
+            "2026-06-03T06:40:30Z",
+            {
+                "log_source": "cloud_function",
+                "event": "pipeline_completed",
+                "run_id": "run-abc",
+                "step_name": "model_service",
+            },
+        ),
+    ]
+
+    rows = build_step_timeline(entries)
+
+    assert len(rows) == 1
+    assert rows[0].step_name == "model_service"
+    assert rows[0].status == "OK"
+    assert rows[0].finished_at == "2026-06-03T06:40:30Z"
+
+
 def test_build_step_timeline_legacy_cf_pipeline_step_failed():
     entries = [
         _entry(
@@ -795,7 +825,7 @@ def test_build_step_timeline_full_pipeline_with_infra_failure():
     assert rows[3].detail == "docker_image_not_found (demo:latest)"
     assert "=== Step timeline (run_id=26fe3e695ca7d8c6) ===" in lines[0]
     assert any("model_service" in line and "FAILED" in line for line in lines)
-    assert "Hint: default shows all step logs" in lines[-1]
+    assert "Hint: use --step <name>" in lines[-1]
 
 
 def test_build_step_timeline_sorts_out_of_order_entries():
@@ -852,3 +882,31 @@ def test_format_step_timeline_derives_duration_from_timestamps():
     lines = format_step_timeline(rows, run_id="run-dur", show_hint=False)
 
     assert "5s" in lines[2]
+
+
+def test_format_step_timeline_aligns_long_timestamps():
+    rows = [
+        run_logs.StepTimelineRow(
+            step_name="fetch_data",
+            status="OK",
+            started_at="2026-06-10T06:01:57.602870783Z",
+            finished_at="2026-06-10T06:02:03.306379868Z",
+            duration_ms=5703,
+            detail="None",
+        ),
+        run_logs.StepTimelineRow(
+            step_name="model_service",
+            status="OK",
+            finished_at="2026-06-10T06:06:54.293999910Z",
+            detail="None",
+        ),
+    ]
+
+    lines = format_step_timeline(rows, run_id="run-align", show_hint=False)
+    header, first_row, second_row = lines[1], lines[2], lines[3]
+
+    assert first_row.index("2026-06-10T06:01:57.602870783Z") == header.index("STARTED (UTC)")
+    assert second_row.index("—") == header.index("STARTED (UTC)")
+    assert first_row.index("2026-06-10T06:02:03.306379868Z") == header.index("FINISHED (UTC)")
+    assert second_row.index("2026-06-10T06:06:54.293999910Z") == header.index("FINISHED (UTC)")
+    assert first_row.index("5s") == header.index("DURATION")

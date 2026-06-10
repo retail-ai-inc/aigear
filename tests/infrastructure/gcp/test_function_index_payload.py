@@ -28,6 +28,25 @@ def test_startup_marker_omits_log_source():
     assert "log_source" not in marker_block
 
 
+def test_final_pubsub_message_preserves_run_context():
+    text = _INDEX_JS.read_text(encoding="utf-8")
+    completion_start = text.index("const completionMessage = JSON.stringify({")
+    completion_block = text[completion_start : completion_start + 500]
+    assert "done: true" in completion_block
+    assert "run_id: runId" in completion_block
+    assert "step_name: stepName" in completion_block
+    assert "const publishMessage = nextMessage === MSG.EMPTY_QUEUE ? completionMessage : nextMessage;" in text
+    assert "--message '${esc(publishMessage)}'" in text
+
+
+def test_completion_payload_writes_queryable_pipeline_completed_log():
+    text = _INDEX_JS.read_text(encoding="utf-8")
+    completion_start = text.index("if (cronjobInfo?.done) {")
+    completion_block = text[completion_start : completion_start + 400]
+    assert "event: 'pipeline_completed'" in completion_block
+    assert "task: taskFromCompletionPayload(cronjobInfo)" in completion_block
+
+
 def test_write_cloud_function_log_payload_contract():
     text = _INDEX_JS.read_text(encoding="utf-8")
     fn_start = text.index("async function writeCloudFunctionLog(")

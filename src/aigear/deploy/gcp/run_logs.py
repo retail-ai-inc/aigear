@@ -384,6 +384,10 @@ def build_step_timeline(
             duration_ms = payload.get("duration_ms")
             if isinstance(duration_ms, int):
                 row.duration_ms = duration_ms
+        elif event == "pipeline_completed":
+            if timestamp:
+                row.finished_at = timestamp
+            row.status = "OK"
         elif event == "pipeline_step_result":
             row.result = _format_result_value(payload.get("result"))
         elif event in ("pipeline_step_failed", "vm_step_failed", "vm_creation_failed"):
@@ -418,23 +422,38 @@ def format_step_timeline(
         return ["No step timeline entries found."]
 
     lines = [f"=== Step timeline (run_id={run_id}) ==="]
-    header = (
-        f"{'STEP':<15} {'STATUS':<8} {'STARTED (UTC)':<26} "
-        f"{'FINISHED (UTC)':<26} {'DURATION':<9} DETAIL"
-    )
-    lines.append(header)
-
+    display_rows = []
     for row in rows:
         started = row.started_at or "—"
         finished = row.finished_at or "—"
         duration = _format_duration_cell(row.duration_ms, row.started_at, row.finished_at)
         detail = row.detail or (row.result if row.status == "OK" else "—")
+        display_rows.append((row.step_name, row.status, started, finished, duration, detail))
+
+    step_width = max(15, len("STEP"), *(len(item[0]) for item in display_rows))
+    status_width = max(8, len("STATUS"), *(len(item[1]) for item in display_rows))
+    started_width = max(len("STARTED (UTC)"), *(len(item[2]) for item in display_rows))
+    finished_width = max(len("FINISHED (UTC)"), *(len(item[3]) for item in display_rows))
+    duration_width = max(9, len("DURATION"), *(len(item[4]) for item in display_rows))
+
+    header = (
+        f"{'STEP':<{step_width}} {'STATUS':<{status_width}} "
+        f"{'STARTED (UTC)':<{started_width}} "
+        f"{'FINISHED (UTC)':<{finished_width}} "
+        f"{'DURATION':<{duration_width}} DETAIL"
+    )
+    lines.append(header)
+
+    for step_name, status, started, finished, duration, detail in display_rows:
         lines.append(
-            f"{row.step_name:<15} {row.status:<8} {started:<26} "
-            f"{finished:<26} {duration:<9} {detail}"
+            f"{step_name:<{step_width}} {status:<{status_width}} "
+            f"{started:<{started_width}} {finished:<{finished_width}} "
+            f"{duration:<{duration_width}} {detail}"
         )
 
     if show_hint:
         lines.append("")
-        lines.append("Hint: default shows all step logs; use --step <name> to filter one step.")
+        lines.append(
+            "Hint: use --step <name> to filter one step; use --format full for raw JSON logs."
+        )
     return lines
