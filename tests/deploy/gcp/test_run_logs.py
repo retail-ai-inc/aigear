@@ -32,6 +32,18 @@ def test_run_summary_cache_roundtrip():
     assert restored == summary
 
 
+def test_run_summary_does_not_fabricate_missing_step_name():
+    restored = RunSummary.from_cache_dict(
+        {
+            "run_id": "abc123",
+            "run_started_at_utc": "2026-05-21T00:00:00Z",
+            "pipeline_version": "v1",
+        }
+    )
+
+    assert restored.step_name is None
+
+
 def test_query_logs_by_run_id_supports_labels_run_id(monkeypatch):
     monkeypatch.setattr(
         run_logs.AigearConfig,
@@ -150,6 +162,35 @@ def test_discover_runs_ignores_discovery_cache(monkeypatch):
     runs = discover_runs("v1", "2026-06-03", "Etc/UTC", limit=50)
 
     assert [item.run_id for item in runs] == ["fresh-run"]
+
+
+def test_discover_runs_keeps_missing_step_name_empty(monkeypatch):
+    monkeypatch.setattr(
+        run_logs.AigearConfig,
+        "get_config",
+        lambda: SimpleNamespace(gcp=SimpleNamespace(gcp_project_id="demo-project")),
+    )
+
+    def _fake_read_logs(filter_expr: str, project_id: str, limit: int):
+        if "vm_step_failed" in filter_expr:
+            return []
+        return [
+            {
+                "jsonPayload": {
+                    "run_id": "no-step-run",
+                    "run_started_at_utc": "2026-06-03T03:00:00.000Z",
+                    "pipeline_version": "v1",
+                }
+            }
+        ]
+
+    monkeypatch.setattr(run_logs, "read_logs", _fake_read_logs)
+
+    runs = discover_runs("v1", "2026-06-03", "Etc/UTC", limit=50)
+
+    assert len(runs) == 1
+    assert runs[0].run_id == "no-step-run"
+    assert runs[0].step_name is None
 
 
 def test_query_logs_by_run_id_uses_cache_before_gcp(monkeypatch):

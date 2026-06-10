@@ -31,7 +31,7 @@ def _select_run_interactively(runs: list[RunSummary]) -> RunSummary | None:
         print(
             f"{idx}. run_id={item.run_id} "
             f"run_started_at_utc={item.run_started_at_utc} "
-            f"step={item.step_name}{extra}"
+            f"step={item.step_name or '—'}{extra}"
         )
     raw = input("Enter selection number: ").strip()
     try:

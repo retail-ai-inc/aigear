@@ -28,7 +28,7 @@ class RunSummary:
     run_id: str
     run_started_at_utc: str
     pipeline_version: str
-    step_name: str
+    step_name: str | None
     project_name: str | None = None
     exit_code: str | None = None
     last_event: str | None = None
@@ -53,7 +53,7 @@ class RunSummary:
             run_id=item["run_id"],
             run_started_at_utc=item["run_started_at_utc"],
             pipeline_version=item["pipeline_version"],
-            step_name=item.get("step_name") or "model_service",
+            step_name=item.get("step_name"),
             project_name=item.get("project_name"),
             exit_code=item.get("exit_code"),
             last_event=item.get("last_event"),
@@ -120,7 +120,7 @@ def _summary_from_payload(
         run_id=run_id,
         run_started_at_utc=run_started_at_utc,
         pipeline_version=payload.get("pipeline_version", version),
-        step_name=payload.get("step_name", "model_service"),
+        step_name=payload.get("step_name"),
         project_name=payload.get("project_name"),
         exit_code=exit_code if isinstance(exit_code, str) else None,
         last_event=event if isinstance(event, str) else None,
