@@ -13,7 +13,7 @@ def test_get_argument_step_defaults_to_all(monkeypatch):
     args = gcp_logs_cli.get_argument()
 
     assert args.step == "all"
-    assert args.format == "full"
+    assert args.format == "concise"
 
 
 def test_get_argument_accepts_all_log_source(monkeypatch):
@@ -166,7 +166,7 @@ def test_gcp_logs_format_concise_shows_timeline(monkeypatch, capsys):
     assert "model_service" in output
     assert "FAILED" in output
     assert "docker_image_not_found" in output
-    assert "Hint: default shows all step logs" in output
+    assert "Hint: use --step <name>" in output
 
 
 def test_gcp_logs_format_concise_single_step_hides_hint(monkeypatch, capsys):
@@ -214,7 +214,7 @@ def test_gcp_logs_format_concise_single_step_hides_hint(monkeypatch, capsys):
     output = capsys.readouterr().out
     assert "training" in output
     assert "OK" in output
-    assert "Hint: default shows all step logs" not in output
+    assert "Hint: use --step <name>" not in output
 
 
 def test_gcp_logs_with_run_id_all_queries_both_sources(monkeypatch, capsys):
@@ -235,6 +235,8 @@ def test_gcp_logs_with_run_id_all_queries_both_sources(monkeypatch, capsys):
             "aigear-logs",
             "--run-id",
             "run-123",
+            "--format",
+            "full",
             "--log-source",
             "all",
             "--limit",
@@ -266,6 +268,8 @@ def test_gcp_logs_discover_path_all_queries_both_sources(monkeypatch, capsys):
             "v1",
             "--run-date",
             "2026-05-21",
+            "--format",
+            "full",
             "--log-source",
             "all",
         ],
@@ -342,6 +346,8 @@ def test_gcp_logs_format_full_prints_json_logs(monkeypatch, capsys):
             "aigear-logs",
             "--run-id",
             "run-json",
+            "--format",
+            "full",
             "--log-source",
             "ml_pipeline",
         ],

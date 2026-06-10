@@ -338,7 +338,7 @@ aigear-logs [--version VERSION --run-date YYYY-MM-DD]
 | `--run-date` | — | Date interpreted in scheduler timezone, then converted to UTC for querying |
 | `--run-id` | — | Direct query mode; skips discovery |
 | `--step` | `all` | Step scope: omit or `all` = every step; a name (e.g. `training`) = that step only |
-| `--format` | `full` | `full` = raw JSON log stream (default); `concise` = step timeline summary |
+| `--format` | `concise` | `concise` = step timeline summary (default); `full` = raw JSON log stream |
 | `--log-source` | *(none)* | Narrow by layer: `cloud_function`, `ml_pipeline`, or `all` (both sections). Omitted = one combined query with no source filter |
 | `--time-zone` | scheduler `time_zone` from `env.json` | Override timezone used to interpret `--run-date` |
 | `--limit` | `200` | Max logs returned per query (use `500` when tracing failures) |
@@ -349,11 +349,11 @@ aigear-logs [--version VERSION --run-date YYYY-MM-DD]
 
 | Command | Output |
 |---|---|
-| `aigear-logs --run-id <id>` | All steps, raw JSON (`--format full`, default) |
+| `aigear-logs --run-id <id>` | Step timeline for the full pipeline (default `--format concise`) |
 | `aigear-logs --run-id <id> --step all` | Same as above (explicit) |
-| `aigear-logs --run-id <id> --step training` | Raw JSON for the `training` step only |
-| `aigear-logs --run-id <id> --format concise` | Step timeline for the full pipeline (OK / FAILED / duration / detail) |
-| `aigear-logs --run-id <id> --format concise --step training` | One-line timeline for `training` |
+| `aigear-logs --run-id <id> --step training` | One-line timeline for `training` (default concise) |
+| `aigear-logs --run-id <id> --format full` | Raw JSON for all steps |
+| `aigear-logs --run-id <id> --format full --step training` | Raw JSON for the `training` step only |
 
 `--format concise` merges `cloud_function` and `ml_pipeline` lifecycle events into one table. Infrastructure failures (`vm_step_failed`, `vm_creation_failed`, legacy CF `pipeline_step_failed`) and container failures (`pipeline_step_failed` on `ml_pipeline`) appear in the **DETAIL** column. When a step calls `emit_step_result()`, structured metrics show in **DETAIL** for successful steps.
 
@@ -371,18 +371,18 @@ model_service   FAILED   —                          —                       
 **Examples**
 
 ```bash
-# Default: all steps, raw JSON
-aigear-logs --run-id <run_id> --limit 500
+# Default: step timeline for all steps
+aigear-logs --run-id <run_id>
 
-# Quick pass/fail across the pipeline (no JSON)
-aigear-logs --run-id <run_id> --format concise
+# Raw JSON for all steps
+aigear-logs --run-id <run_id> --format full --limit 500
 
-# Single step — raw logs or timeline
-aigear-logs --run-id <run_id> --step training --limit 500
-aigear-logs --run-id <run_id> --format concise --step training
+# Single step — timeline (default) or raw JSON
+aigear-logs --run-id <run_id> --step training
+aigear-logs --run-id <run_id> --format full --step training --limit 500
 
-# Split infra vs container sections
-aigear-logs --run-id <run_id> --log-source all --limit 500
+# Split infra vs container sections (requires --format full)
+aigear-logs --run-id <run_id> --format full --log-source all --limit 500
 ```
 
 **Logging contract (`log_source` + `event`)**
@@ -406,12 +406,12 @@ See **[Troubleshooting pipeline logs](troubleshooting-logs.md)** for the full gu
 | Symptom | Command |
 |---------|---------|
 | Find runs for a day | `aigear-logs --version <v> --run-date <YYYY-MM-DD> [--discovery-limit 2000]` |
-| Quick step pass/fail | `aigear-logs --run-id <id> --format concise` |
-| All step logs (default) | `aigear-logs --run-id <id> --limit 500` |
-| One step only | `aigear-logs --run-id <id> --step <name> --limit 500` |
-| Infra / Docker failure | `aigear-logs --run-id <id> --log-source cloud_function --limit 500` |
-| Step code failure | `aigear-logs --run-id <id> --log-source ml_pipeline --limit 500` |
-| Unsure / both layers | `aigear-logs --run-id <id> --log-source all --limit 500` |
+| Quick step pass/fail (default) | `aigear-logs --run-id <id>` |
+| All step logs (raw JSON) | `aigear-logs --run-id <id> --format full --limit 500` |
+| One step only | `aigear-logs --run-id <id> --step <name>` or add `--format full` for JSON |
+| Infra / Docker failure | `aigear-logs --run-id <id> --format full --log-source cloud_function --limit 500` |
+| Step code failure | `aigear-logs --run-id <id> --format full --log-source ml_pipeline --limit 500` |
+| Unsure / both layers | `aigear-logs --run-id <id> --format full --log-source all --limit 500` |
 | Queried mid-run, need fresh logs | `aigear-logs --clear-cache` then re-query |
 
 Empty query results are **not** cached. After a run finishes, logs are stable for 3 hours in the local cache.
@@ -435,7 +435,7 @@ Optional **`emit_step_result(ctx, result)`** (from `aigear.common.lifecycle_log`
    - 0: exit with "no runs"
    - 1: auto-select and query (or timeline)
    - N: interactive selection, then query (or timeline)
-3. `--step` filters scope; default `all` does not filter. `--format full` (default) prints raw JSON; `--format concise` prints the merged step timeline.
+3. `--step` filters scope; default `all` does not filter. `--format concise` (default) prints the merged step timeline; `--format full` prints raw JSON.
 
 **Verification Checklist (post-deploy)**
 

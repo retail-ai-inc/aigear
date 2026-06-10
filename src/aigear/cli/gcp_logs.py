@@ -151,8 +151,8 @@ def get_argument() -> argparse.Namespace:
     parser.add_argument(
         "--format",
         choices=["full", "concise"],
-        default="full",
-        help="Output format: 'full' raw JSON logs (default), 'concise' step timeline.",
+        default="concise",
+        help="Output format: 'concise' step timeline (default), 'full' raw JSON logs.",
     )
     parser.add_argument(
         "--log-source",

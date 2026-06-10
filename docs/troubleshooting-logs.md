@@ -68,30 +68,30 @@ aigear-logs --version <pipeline_version> --run-date <YYYY-MM-DD> --discovery-lim
 **Query by `run_id`**
 
 ```bash
-# Quick step pass/fail (timeline; merges cloud_function + ml_pipeline)
-aigear-logs --run-id <run_id> --format concise
+# Quick step pass/fail (default: timeline; merges cloud_function + ml_pipeline)
+aigear-logs --run-id <run_id>
 
-# All steps, raw JSON (default --format full, --step all)
-aigear-logs --run-id <run_id> --limit 500
+# All steps, raw JSON
+aigear-logs --run-id <run_id> --format full --limit 500
 
-# Single step — raw logs or one-line timeline
-aigear-logs --run-id <run_id> --step training --limit 500
-aigear-logs --run-id <run_id> --format concise --step training
+# Single step — timeline (default) or raw JSON
+aigear-logs --run-id <run_id> --step training
+aigear-logs --run-id <run_id> --format full --step training --limit 500
 
-# Infrastructure / Docker / VM / startup
-aigear-logs --run-id <run_id> --log-source cloud_function --limit 500
+# Infrastructure / Docker / VM / startup (raw JSON)
+aigear-logs --run-id <run_id> --format full --log-source cloud_function --limit 500
 
-# Container step code
-aigear-logs --run-id <run_id> --log-source ml_pipeline --limit 500
+# Container step code (raw JSON)
+aigear-logs --run-id <run_id> --format full --log-source ml_pipeline --limit 500
 
-# Both sections in one invocation (labeled cloud_function, then ml_pipeline)
-aigear-logs --run-id <run_id> --log-source all --limit 500
+# Both sections in one invocation (requires --format full)
+aigear-logs --run-id <run_id> --format full --log-source all --limit 500
 ```
 
 | What you need | Command |
 |---------------|---------|
-| Which steps succeeded or failed | `--format concise` |
-| Full JSON for every step | default (`--step all`, `--format full`) |
+| Which steps succeeded or failed | default (`--format concise`) |
+| Full JSON for every step | `--format full --step all` |
 | Logs for one step only | `--step <name>` |
 | Infra vs container split | `--log-source cloud_function` or `ml_pipeline` |
 | Business `logger.info` in Cloud Logging | `--step <name> --log-source ml_pipeline` after `gcp.logging=true` |
