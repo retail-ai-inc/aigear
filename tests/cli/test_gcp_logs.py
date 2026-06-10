@@ -169,6 +169,34 @@ def test_gcp_logs_format_concise_shows_timeline(monkeypatch, capsys):
     assert "Hint: use --step <name>" in output
 
 
+def test_gcp_logs_format_concise_default_uses_single_combined_query(monkeypatch, capsys):
+    calls: list[str | None] = []
+
+    def _fake_query(run_id: str, step: str | None, log_source: str | None, limit: int):
+        calls.append(log_source)
+        return [
+            {
+                "timestamp": "2026-06-03T06:33:06Z",
+                "jsonPayload": {
+                    "run_id": run_id,
+                    "log_source": "ml_pipeline",
+                    "event": "pipeline_step_started",
+                    "step_name": "fetch_data",
+                },
+            }
+        ]
+
+    monkeypatch.setattr(
+        "sys.argv",
+        ["aigear-logs", "--run-id", "run-timeline", "--format", "concise"],
+    )
+    monkeypatch.setattr(gcp_logs_cli, "query_logs_by_run_id", _fake_query)
+
+    gcp_logs_cli.gcp_logs()
+
+    assert calls == [None]
+
+
 def test_gcp_logs_format_concise_single_step_hides_hint(monkeypatch, capsys):
     def _fake_query(run_id: str, step: str | None, log_source: str | None, limit: int):
         return [

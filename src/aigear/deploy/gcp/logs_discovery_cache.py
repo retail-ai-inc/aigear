@@ -19,8 +19,11 @@ def _load_cache() -> dict[str, Any]:
 
 
 def _save_cache(cache: dict[str, Any]) -> None:
-    CACHE_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    CACHE_FILE_PATH.write_text(json.dumps(cache, ensure_ascii=True, indent=2), encoding="utf-8")
+    try:
+        CACHE_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        CACHE_FILE_PATH.write_text(json.dumps(cache, ensure_ascii=True, indent=2), encoding="utf-8")
+    except OSError:
+        return
 
 
 def clear_discovery_cache() -> None:

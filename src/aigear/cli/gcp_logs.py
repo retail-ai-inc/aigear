@@ -74,7 +74,7 @@ def _collect_log_entries(
     log_source: str,
     limit: int,
 ) -> list[dict[str, Any]]:
-    if log_source in ("", "all"):
+    if log_source == "all":
         entries: list[dict[str, Any]] = []
         for source in _ALL_LOG_SOURCES:
             entries.extend(
