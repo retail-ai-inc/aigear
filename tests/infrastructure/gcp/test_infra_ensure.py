@@ -64,7 +64,9 @@ def test_ensure_model_bucket_creates_and_grants_permissions_when_not_exists():
     infra.model_bucket.describe.return_value = False
     infra._ensure_model_bucket()
     infra.model_bucket.create.assert_called_once()
-    infra.model_bucket.add_permissions_to_gcs.assert_called_once()
+    infra.model_bucket.add_permissions_to_gcs.assert_called_once_with(
+        sa_email=infra.service_accounts.sa_email
+    )
 
 
 def test_ensure_model_bucket_skips_when_exists():
@@ -72,6 +74,9 @@ def test_ensure_model_bucket_skips_when_exists():
     infra.model_bucket.describe.return_value = True
     infra._ensure_model_bucket()
     infra.model_bucket.create.assert_not_called()
+    infra.model_bucket.add_permissions_to_gcs.assert_called_once_with(
+        sa_email=infra.service_accounts.sa_email
+    )
 
 
 # ── _ensure_release_bucket ────────────────────────────────────────────────────
@@ -82,7 +87,9 @@ def test_ensure_release_bucket_creates_when_not_exists():
     infra.release_model_bucket.describe.return_value = False
     infra._ensure_release_bucket()
     infra.release_model_bucket.create.assert_called_once()
-    infra.release_model_bucket.add_permissions_to_gcs.assert_called_once()
+    infra.release_model_bucket.add_permissions_to_gcs.assert_called_once_with(
+        sa_email=infra.service_accounts.sa_email
+    )
 
 
 def test_ensure_release_bucket_skips_when_exists():
@@ -90,6 +97,9 @@ def test_ensure_release_bucket_skips_when_exists():
     infra.release_model_bucket.describe.return_value = True
     infra._ensure_release_bucket()
     infra.release_model_bucket.create.assert_not_called()
+    infra.release_model_bucket.add_permissions_to_gcs.assert_called_once_with(
+        sa_email=infra.service_accounts.sa_email
+    )
 
 
 # ── _ensure_artifacts ─────────────────────────────────────────────────────────

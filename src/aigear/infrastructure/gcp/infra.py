@@ -261,7 +261,7 @@ class Infra:
     def _run_parallel(self, tasks: dict, failed_steps: list):
         if not tasks:
             return
-        with ThreadPoolExecutor(max_workers=len(tasks)) as executor:
+        with ThreadPoolExecutor(max_workers=3) as executor:
             futures = {
                 executor.submit(self._step, title, fn): title
                 for title, fn in tasks.items()
@@ -442,17 +442,15 @@ class Infra:
                 f"({self.location}). Creating bucket..."
             )
             self.model_bucket.create()
-            self.model_bucket.add_permissions_to_gcs(
-                sa_email=self.service_accounts.sa_email
-            )
             logger.info(
                 f"Model bucket ({self.aigear_config.gcp.bucket.bucket_name}) created successfully."
             )
         else:
             logger.info(
                 f"Model bucket ({self.aigear_config.gcp.bucket.bucket_name}) already exists in location "
-                f"({self.location}). Skipping creation."
+                f"({self.location}). Skipping creation; re-applying IAM binding."
             )
+        self.model_bucket.add_permissions_to_gcs(sa_email=self.service_accounts.sa_email)
 
     def _ensure_release_bucket(self):
         exists = self.release_model_bucket.describe()
@@ -462,17 +460,17 @@ class Infra:
                 f"location ({self.location}). Creating bucket..."
             )
             self.release_model_bucket.create()
-            self.release_model_bucket.add_permissions_to_gcs(
-                sa_email=self.service_accounts.sa_email
-            )
             logger.info(
                 f"Release model bucket ({self.aigear_config.gcp.bucket.bucket_name_for_release}) created successfully."
             )
         else:
             logger.info(
                 f"Release model bucket ({self.aigear_config.gcp.bucket.bucket_name_for_release}) already exists in "
-                f"location ({self.location}). Skipping creation."
+                f"location ({self.location}). Skipping creation; re-applying IAM binding."
             )
+        self.release_model_bucket.add_permissions_to_gcs(
+            sa_email=self.service_accounts.sa_email
+        )
 
     def _ensure_artifacts(self):
         exists = self.artifacts.describe()
