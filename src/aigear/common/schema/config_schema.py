@@ -67,6 +67,10 @@ class Kubernetes(BaseModel):
     max_nodes: int
 
 
+class Firestore(BaseModel):
+    on: bool
+
+
 class Gcp(BaseModel):
     gcp_project_id: str
     location: str
@@ -79,6 +83,7 @@ class Gcp(BaseModel):
     pub_sub: PubSub
     artifacts: Artifacts
     kubernetes: Kubernetes
+    firestore: Firestore
     logging: bool
 
 

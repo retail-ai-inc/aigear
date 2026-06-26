@@ -59,6 +59,7 @@ gcp = [
     "google-cloud-secret-manager>=2.24.0",
     "google-cloud-storage>=3.2.0",
     "google-cloud-compute>=1.38.0",
+    "google-cloud-firestore>=2.20.0",
     "google-api-core>=2.0.0",
 ]
 mongodb = [
