@@ -97,6 +97,9 @@ class AssetRecord:
 
 
 class AssetRegistry(Protocol):
+    def ensure_run(self, run_id: str, data: dict[str, Any]) -> None:
+        ...
+
     def register(self, record: AssetRecord) -> AssetRecord:
         ...
 
@@ -113,6 +116,7 @@ class AssetRegistry(Protocol):
         run_id: str | None = None,
         step_name: str | None = None,
         status: AssetStatus | None = None,
+        limit: int | None = None,
     ) -> list[AssetRecord]:
         ...
 
@@ -136,6 +140,10 @@ class FakeAssetRegistry:
     def __init__(self) -> None:
         self._records: dict[tuple[AssetType, str, str], AssetRecord] = {}
         self._aliases: dict[tuple[AssetType, str], dict[str, str]] = {}
+        self.runs: dict[str, dict[str, Any]] = {}
+
+    def ensure_run(self, run_id: str, data: dict[str, Any]) -> None:
+        self.runs.setdefault(run_id, dict(data))
 
     def register(self, record: AssetRecord) -> AssetRecord:
         self._records[self._record_key(record.asset_type, record.name, record.version)] = record
@@ -165,6 +173,7 @@ class FakeAssetRegistry:
         run_id: str | None = None,
         step_name: str | None = None,
         status: AssetStatus | None = None,
+        limit: int | None = None,
     ) -> list[AssetRecord]:
         records = list(self._records.values())
         if asset_type is not None:
@@ -177,7 +186,7 @@ class FakeAssetRegistry:
             records = [record for record in records if record.step_name == step_name]
         if status is not None:
             records = [record for record in records if record.status == status]
-        return sorted(
+        records = sorted(
             records,
             key=lambda record: (
                 record.asset_type,
@@ -186,6 +195,9 @@ class FakeAssetRegistry:
                 record.version,
             ),
         )
+        if limit is not None:
+            return records[:limit]
+        return records
 
     def lineage(self, asset_type: AssetType, name: str, version: str) -> list[AssetRecord]:
         result: list[AssetRecord] = []
@@ -251,6 +263,13 @@ class FirestoreAssetRegistry:
                 server_timestamp = firestore.SERVER_TIMESTAMP
         self.client = client
         self.server_timestamp = server_timestamp
+
+    def ensure_run(self, run_id: str, data: dict[str, Any]) -> None:
+        payload = dict(data)
+        payload.setdefault("project_name", self.project_name)
+        payload.setdefault("pipeline_version", self.pipeline_version)
+        payload.setdefault("started_at", self._server_timestamp())
+        self._runs_collection().document(run_id).set(payload, merge=True)
 
     def register(self, record: AssetRecord) -> AssetRecord:
         data = record.to_dict()
@@ -350,6 +369,9 @@ class FirestoreAssetRegistry:
 
     def _aliases_collection(self) -> Any:
         return self._pipeline_doc().collection("aliases")
+
+    def _runs_collection(self) -> Any:
+        return self._pipeline_doc().collection("runs")
 
     def _pipeline_doc(self) -> Any:
         return (
