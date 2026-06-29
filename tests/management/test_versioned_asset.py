@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from aigear.common.run_log_context import RunLogContext
+from aigear.db.bucket import LocalGCSMock
 from aigear.management.registry import AssetRecord, AssetRef, FakeAssetRegistry
 from aigear.management.versioned_asset import VersionedAssetManagement
 
@@ -51,6 +52,52 @@ def test_get_run_asset_path_uses_unified_layout(tmp_path):
         "_aigear_runs/aigear_sklearn_pipeline/logistic_regression/"
         "run-1/model/logistic_regression/model.pkl"
     )
+
+
+def test_get_local_path_creates_versioned_local_directory(tmp_path):
+    manager = _manager(tmp_path)
+
+    local_path = manager.get_local_path("model", "logistic_regression", "model.pkl")
+
+    assert local_path == (
+        tmp_path
+        / "asset"
+        / "logistic_regression"
+        / "model"
+        / "logistic_regression"
+        / "model.pkl"
+    )
+    assert local_path.parent.exists()
+
+
+def test_upload_version_resolves_file_from_managed_local_path(tmp_path, monkeypatch):
+    registry = FakeAssetRegistry()
+    bucket = FakeBucketClient()
+    monkeypatch.setattr(RunLogContext, "current", classmethod(lambda cls: None))
+    manager = _manager(tmp_path, registry=registry, bucket=bucket)
+    local_path = manager.get_local_path("model", "logistic_regression", "model.pkl")
+    local_path.write_text("model", encoding="utf-8")
+
+    record = manager.upload_version("model.pkl", asset_type="model")
+
+    assert record.file_name == "model.pkl"
+    assert bucket.uploads[0][0] == local_path
+
+
+def test_local_gcs_mock_is_created_under_local_asset_path(tmp_path):
+    manager = VersionedAssetManagement(
+        pipeline_version="logistic_regression",
+        project_name="aigear_sklearn_pipeline",
+        project_id="project-id",
+        bucket_name="local-bucket",
+        bucket_on=False,
+        registry=FakeAssetRegistry(),
+        local_asset_path=tmp_path / "asset",
+        clock=lambda: datetime(2026, 6, 29, 1, 2, 3, tzinfo=timezone.utc),
+    )
+
+    assert isinstance(manager.bucket_client, LocalGCSMock)
+    assert manager.bucket_client.bucket_path == tmp_path / "asset" / "local-bucket"
 
 
 def test_upload_version_uses_run_context_and_registers_auto_record(tmp_path, monkeypatch):

@@ -7,7 +7,7 @@ from typing import Any
 
 from aigear.common.config import get_project_name
 from aigear.common.run_log_context import RunLogContext
-from aigear.db.bucket import bucket_client
+from aigear.db.bucket import LocalGCSMock, bucket_client
 from aigear.management.registry import (
     AssetRef,
     AssetRecord,
@@ -36,7 +36,11 @@ class VersionedAssetManagement:
         self.bucket_name = bucket_name
         self.project_dir = Path.cwd()
         self.local_asset_path = local_asset_path or self.project_dir / "asset"
-        self.bucket_client = bucket or bucket_client(project_id, bucket_name, bucket_on)
+        self.bucket_client = bucket or self._create_bucket_client(
+            project_id=project_id,
+            bucket_name=bucket_name,
+            bucket_on=bucket_on,
+        )
         self.registry = registry or FirestoreAssetRegistry(
             project_name=self.project_name,
             pipeline_version=pipeline_version,
@@ -55,9 +59,13 @@ class VersionedAssetManagement:
         step_name: str | None = None,
     ) -> AssetRecord:
         self._validate_asset_type(asset_type)
-        local_path = self._resolve_local_file(file_name)
         resolved = self._resolve_context(run_id=run_id, step_name=step_name)
         resolved_asset_name = asset_name or self._default_asset_name(asset_type)
+        local_path = self._resolve_local_file(
+            file_name,
+            asset_type=asset_type,
+            asset_name=resolved_asset_name,
+        )
         resolved_version = version or self._hash_file(local_path)
         blob_path = self.get_run_asset_path(
             resolved["run_id"],
@@ -162,6 +170,34 @@ class VersionedAssetManagement:
             f"{run_id}/{asset_type}/{asset_name}/{file_name}"
         )
 
+    def get_local_path(
+        self,
+        asset_type: AssetType,
+        asset_name: str,
+        file_name: str,
+    ) -> Path:
+        self._validate_asset_type(asset_type)
+        path = (
+            self.local_asset_path
+            / self.pipeline_version
+            / asset_type
+            / asset_name
+            / file_name
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def _create_bucket_client(
+        self,
+        project_id: str | None,
+        bucket_name: str | None,
+        bucket_on: bool,
+    ):
+        if bucket_on:
+            return bucket_client(project_id, bucket_name, bucket_on=True)
+        local_bucket_name = bucket_name or "gcs_mock"
+        return LocalGCSMock(project_id, self.local_asset_path / local_bucket_name)
+
     def _resolve_context(
         self,
         run_id: str | None = None,
@@ -213,13 +249,29 @@ class VersionedAssetManagement:
             return self.pipeline_version
         raise ValueError(f"asset_name is required for asset_type={asset_type}")
 
-    def _resolve_local_file(self, file_name: str) -> Path:
+    def _resolve_local_file(
+        self,
+        file_name: str,
+        asset_type: AssetType,
+        asset_name: str,
+    ) -> Path:
         local_path = Path(file_name)
-        if not local_path.is_absolute():
-            local_path = Path.cwd() / local_path
-        if not local_path.exists():
+        if local_path.is_absolute():
+            if local_path.exists():
+                return local_path
             raise FileNotFoundError(f"Local asset file not found: {local_path}")
-        return local_path
+
+        cwd_path = Path.cwd() / local_path
+        if cwd_path.exists():
+            return cwd_path
+
+        managed_path = self.get_local_path(asset_type, asset_name, file_name)
+        if managed_path.exists():
+            return managed_path
+
+        raise FileNotFoundError(
+            f"Local asset file not found: {cwd_path} or {managed_path}"
+        )
 
     def _metadata_uri(self, blob_path: str) -> str:
         if self.bucket_name:
