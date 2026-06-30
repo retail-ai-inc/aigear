@@ -129,6 +129,9 @@ The key sections in `env.json` for this demo:
                 "num_nodes": 1,
                 "min_nodes": 1,
                 "max_nodes": 5
+            },
+            "firestore": {
+                "on": true
             }
         },
         "slack": { "on": false, "webhook_url": "" }
@@ -565,6 +568,40 @@ request = grpc_pb2.MLRequest(request=payload)
 response = stub.Predict(request)
 print("Model prediction results:", response)
 ```
+
+---
+
+## 7.1 Verify Versioned Asset Lifecycle
+
+The demo still writes files through the legacy `AssetManagement` path, then registers versioned records through `VersionedAssetManagement`. Asset files live under `_aigear_runs/<project>/<pipeline>/<run_id>/...`; metadata, aliases, and lineage live in Firestore.
+
+After running `fetch_data`, `preprocessing`, and `training`, inspect the registry:
+
+```bash
+# Dataset version registered by fetch_data
+aigear-asset latest --pipeline-version logistic_regression --type dataset --name breast_cancer
+
+# Feature records registered by preprocessing
+aigear-asset list --pipeline-version logistic_regression --type feature
+
+# Model name defaults to the pipeline version
+aigear-asset latest --pipeline-version logistic_regression --type model
+
+# Full lineage: model -> feature -> dataset
+aigear-asset lineage --pipeline-version logistic_regression --type model
+```
+
+After deploying or updating the service, inspect service version aliases:
+
+```bash
+aigear-asset alias --pipeline-version logistic_regression --type service \
+  --name aigear-sklearn-pipeline-logistic-regression-service --alias champion
+
+aigear-model --version logistic_regression --staging --rollback
+aigear-model --version logistic_regression --staging --rollback --service-version service-v2
+```
+
+`--rollback` uses the service record in Firestore as the source of truth and regenerates Kubernetes YAML; it does not require the historical YAML artifact to still exist.
 
 ---
 

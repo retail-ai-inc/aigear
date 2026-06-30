@@ -149,7 +149,8 @@ aigear-scheduler --status --version v1
 - **Infrastructure Automation**: Automatically create GCS buckets, Pub/Sub topics, Cloud Scheduler jobs, Service Accounts, and more.
 - **Containerized Reproducible Runs**: Execute tasks inside predictable container environments to ensure reproducibility.
 - **Scheduling & Auto-Retraining**: Support cron schedules, dependency steps, and automated retraining pipelines.
-- **Versioning & Secrets**: Model versioning and configuration management with support for GCP Secret Manager.
+- **Asset Lifecycle Tracking**: Register and query dataset, feature, model, and service versions with Firestore-backed lineage.
+- **Versioning & Secrets**: Model service version tracking, rollback support, and configuration management with support for GCP Secret Manager.
 - **Ephemeral Compute**: Launch short-lived VMs or Cloud Functions to run tasks and tear them down after completion.
 - **gRPC Model Serving**: Deploy ML models as gRPC microservices locally or on GCP.
 
@@ -194,7 +195,8 @@ See the full [CLI Reference](docs/cli-reference.md) for all commands and argumen
 | `aigear-task` | Run a pipeline step (`workflow`) or start a gRPC model server (`grpc`) |
 | `aigear-scheduler` | Manage Cloud Scheduler jobs (create / update / delete / run / pause / resume) |
 | `aigear-image` | Build and/or push Docker images to Artifact Registry |
-| `aigear-model` | Generate YAML and manage the full lifecycle of a gRPC model service (deploy, update, delete, status) |
+| `aigear-model` | Generate YAML and manage the full lifecycle of a gRPC model service (deploy, update, rollback, delete, status) |
+| `aigear-asset` | Query and register versioned dataset, feature, model, and service assets |
 | `aigear-env-schema` | Generate, delete, or show the Pydantic schema derived from `env.json` |
 | `aigear-kms-env` | Encrypt or decrypt `env.json` using Cloud KMS |
 
@@ -209,7 +211,7 @@ See the full [CLI Reference](docs/cli-reference.md) for all commands and argumen
 
 **Known limitations:**
 - Some commands only support creation — update operations are not yet available for all resources
-- Resource management is incomplete — version tracking and lifecycle management are missing
+- Asset lifecycle management uses Firestore `(default)` as the metadata backend; projects must enable Firestore before using `aigear-asset`
 - Pipeline orchestration is step-based only — no DAG/dependency analysis yet
 
 **Planned:**
