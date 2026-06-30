@@ -87,6 +87,12 @@ def run_model_cli(
         registry = registry or _create_registry(args.version)
         helm_path = _prepare_rollback_yaml(args, env, registry)
     elif args.yaml or args.deploy or args.update:
+        service_version = None
+        if args.deploy or args.update:
+            registry = registry or _create_registry(args.version)
+            service_version = _next_service_version(
+                registry.latest("service", _service_name(args.version))
+            )
         force = args.yaml or any(
             x is not None for x in [args.service_ports, args.replicas, args.port]
         )
@@ -97,6 +103,7 @@ def run_model_cli(
             port=args.port,
             env=env,
             force=force,
+            service_version=service_version,
         )
         if args.yaml:
             return
@@ -138,8 +145,7 @@ def run_model_cli(
 
     ops[op](helm_path)
     if args.deploy or args.update:
-        registry = registry or _create_registry(args.version)
-        _register_service_asset(args, env, helm_path, registry)
+        _register_service_asset(args, env, helm_path, registry, service_version)
 
 
 def _create_registry(pipeline_version: str) -> AssetRegistry:
@@ -154,10 +160,11 @@ def _register_service_asset(
     env: str,
     helm_path: Path,
     registry: AssetRegistry,
+    version: str | None = None,
 ) -> AssetRecord:
     service_name = _service_name(args.version)
     model = registry.latest("model", args.version)
-    version = _next_service_version(registry.latest("service", service_name))
+    version = version or _next_service_version(registry.latest("service", service_name))
     metadata = _service_metadata(args, env, helm_path, service_name)
     record = AssetRecord(
         asset_type="service",
@@ -199,6 +206,7 @@ def _prepare_rollback_yaml(
         port=str(metadata.get("port") or DEFAULT_GRPC_PORT),
         env=env,
         force=True,
+        service_version=target_version,
     )
 
 

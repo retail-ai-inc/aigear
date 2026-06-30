@@ -86,6 +86,11 @@ def get_argument() -> argparse.Namespace:
 
     grpc_parser = subparsers.add_parser("grpc", help="Run a gRPC model service")
     grpc_parser.add_argument("--version", default="", help="Version of the pipeline")
+    grpc_parser.add_argument(
+        "--service-version",
+        default=None,
+        help="Version of the service asset to load.",
+    )
 
     return parser.parse_args()
 
@@ -99,10 +104,16 @@ def task_run() -> None:
     if args.subcommand == "workflow":
         run_workflow(args.version, args.step)
     elif args.subcommand == "grpc":
+        if args.service_version:
+            os.environ["AIGEAR_SERVICE_VERSION"] = args.service_version
         pipeline_config = PipelinesConfig.get_version_config(args.version)
         model_class_path = (
             pipeline_config.get("model_service", {}).get("model_class_path")
             if pipeline_config
             else None
         )
-        grpc_service(args.version, model_class_path)
+        grpc_service(
+            args.version,
+            model_class_path,
+            service_version=args.service_version,
+        )

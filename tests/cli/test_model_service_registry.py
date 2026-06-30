@@ -120,6 +120,7 @@ def test_rollback_uses_previous_service_record_to_recreate_yaml(tmp_path):
         port="50051",
         env="local",
         force=True,
+        service_version="service-v1",
     )
     update_local_grpc.assert_called_once_with(helm_path)
 
