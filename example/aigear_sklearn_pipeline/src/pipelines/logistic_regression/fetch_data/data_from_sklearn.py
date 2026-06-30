@@ -3,6 +3,7 @@ from sklearn.datasets import load_breast_cancer
 import pickle
 from aigear.common.logger import Logging
 from aigear.management.asset import AssetManagement
+from aigear.management.versioned_asset import VersionedAssetManagement
 from aigear.common.config import EnvConfig
 from config_schema.env_schema import EnvSchema
 from src.pipelines.common.constant import gcs_switch
@@ -32,6 +33,22 @@ def fetch_data(pipeline_version: str) -> None:
     save_path = asset_management.get_local_path(local_file_name=data_file_name)
     get_data(save_path)
     asset_management.upload(data_file_name)
+
+    versioned_assets = VersionedAssetManagement(
+        pipeline_version=pipeline_version,
+        project_id=env_config.aigear.gcp.gcp_project_id,
+        bucket_name=env_config.aigear.gcp.bucket.bucket_name,
+        bucket_on=gcs_switch,
+    )
+    versioned_assets.upload_version(
+        file_name=str(save_path),
+        asset_type="dataset",
+        asset_name="breast_cancer",
+        metadata={
+            "source_type": "sklearn",
+            "source_uri": "sklearn.datasets.load_breast_cancer",
+        },
+    )
     logger.info("-----fetch data completed-----")
 
 
