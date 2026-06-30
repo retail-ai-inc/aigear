@@ -74,6 +74,7 @@ class ServiceAccounts:
             "roles/artifactregistry.reader",
             "roles/container.developer",
             "roles/logging.logWriter",
+            "roles/datastore.user",
         ]
 
         # Project-level bindings share the same IAM policy ETag, so they must

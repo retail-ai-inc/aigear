@@ -384,6 +384,12 @@ class Infra:
             self._ensure_cloud_build,
         )
         self._phase2_add(
+            phase2_tasks,
+            cfg.firestore.on,
+            "Firestore ((default))",
+            self._ensure_firestore,
+        )
+        self._phase2_add(
             phase2_tasks, cfg.pre_vm_image.on, "Pre-VM Image (pre_vm_image)", self._ensure_pre_vm_image
         )
         self._phase2_add(
@@ -565,6 +571,55 @@ class Infra:
                 f"({self.location}). Skipping creation."
             )
 
+    def _ensure_firestore(self):
+        api_output = run_sh(
+            [
+                "gcloud",
+                "services",
+                "list",
+                "--enabled",
+                f"--project={self.project_id}",
+                "--filter=config.name:firestore.googleapis.com",
+                "--format=value(config.name)",
+            ],
+            check=True,
+        )
+        if "firestore.googleapis.com" not in api_output:
+            logger.info("Firestore API is not enabled. Enabling firestore.googleapis.com...")
+            run_sh(
+                [
+                    "gcloud",
+                    "services",
+                    "enable",
+                    "firestore.googleapis.com",
+                    f"--project={self.project_id}",
+                ],
+                check=True,
+            )
+        else:
+            logger.info("Firestore API is already enabled.")
+
+        try:
+            run_sh(
+                [
+                    "gcloud",
+                    "firestore",
+                    "databases",
+                    "describe",
+                    "--database=(default)",
+                    f"--project={self.project_id}",
+                    "--format=json",
+                ],
+                check=True,
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                "Firestore default database '(default)' is not accessible. "
+                "Create or enable the default Firestore database for this project, "
+                "then run aigear-infra --create again."
+            ) from exc
+        logger.info("Firestore default database '(default)' is accessible.")
+
     def _update_cloud_build(self):
         exists = self.cloud_build.describe()
         if not exists:
@@ -715,6 +770,11 @@ class Infra:
             self._step_no_update(f"Pub/Sub Topic ({cfg.pub_sub.topic_name})")
         else:
             self._step_skip(f"Pub/Sub Topic ({cfg.pub_sub.topic_name})")
+
+        if cfg.firestore.on:
+            self._step_no_update("Firestore ((default))")
+        else:
+            self._step_skip("Firestore ((default))")
 
         if cfg.kms.on:
             self._step_no_update(
@@ -1037,6 +1097,11 @@ class Infra:
                 cfg.cloud_build.on,
                 self.cloud_build.describe,
             ),
+            (
+                "Firestore ((default))",
+                cfg.firestore.on,
+                self._status_firestore,
+            ),
             ("Pre-VM Image", cfg.pre_vm_image.on, self._status_pre_vm),
             (
                 f"Kubernetes Cluster ({cfg.kubernetes.cluster_name})",
@@ -1125,6 +1190,21 @@ class Infra:
             return "EXISTS [keyring ✅  key ❌]"
         ver = "ENABLED" if self.cloud_kms.describe_enabled_key_version() else "DISABLED"
         return f"EXISTS [keyring ✅  key ✅  version {ver}]"
+
+    def _status_firestore(self) -> bool:
+        output = run_sh(
+            [
+                "gcloud",
+                "firestore",
+                "databases",
+                "describe",
+                "--database=(default)",
+                f"--project={self.project_id}",
+                "--format=value(name)",
+            ],
+            check=True,
+        )
+        return "(default)" in output or "/databases/(default)" in output
 
     def _status_pre_vm(self) -> str:
         from aigear.infrastructure.gcp.pre_vm_image import PreVMImage
