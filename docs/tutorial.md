@@ -220,8 +220,8 @@ aigear-infra --create
 Resources are created in three phases:
 
 1. **Service Account** — created first; IAM bindings wait for propagation automatically
-2. **Buckets, Artifact Registry, Pub/Sub, KMS, Cloud Build, Pre-VM Image, Kubernetes** — run in **parallel**
-3. **Cloud Function** — created last (depends on the Pub/Sub topic from Phase 2)
+2. **Buckets, Artifact Registry, Pub/Sub, KMS, Cloud Build, Pre-VM Image, Kubernetes, Cloud Function** — run in **parallel**
+3. **Eventarc Pub/Sub trigger** — created last
 
 Each step is idempotent — re-running the command safely skips already-existing resources. The log output uses structured JSON and shows only meaningful status per step.
 

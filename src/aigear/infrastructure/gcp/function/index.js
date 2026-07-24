@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { google } from 'googleapis';
 import functions from '@google-cloud/functions-framework';
 
@@ -55,9 +56,26 @@ const EXHAUSTED_CODES = [
   'acceleratorTypes',   // GPU type absent from a zone (404)
 ];
 
+// Non-retryable VM errors — retrying other zones or redelivering the message cannot help
+const FATAL_VM_ERROR_CODES = [
+  'NOT_FOUND',
+  'INVALID_ARGUMENT',
+  'INVALID_ARG_VALUE',
+];
+
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
+const INSERT_OPERATION_WAIT_MS = 20000;
+
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+/**
+ * Stable id for the current Pub/Sub payload so redeliveries reuse the same VM name
+ * instead of spawning duplicates with Date.now().
+ */
+function taskKeyFromMessage(message) {
+  return crypto.createHash('sha256').update(message).digest('hex').slice(0, 12);
+}
 
 /**
  * Converts a Python import path to the absolute yaml path inside the container.
@@ -161,23 +179,32 @@ function buildStartupScript({ dockerImage, gpuFlag, pipelineCommand, yamlPathInI
   // Single-quote-escape all values interpolated into shell to prevent injection
   const esc = s => s.replace(/'/g, "'\\''");
 
+  // Shared handler: publish terminal error to Pub/Sub and delete this VM.
+  const fatalErrorFn = `
+# Publish a terminal error and delete this VM (stops the Pub/Sub pipeline).
+fatal_error() {
+  local exit_code="$1"
+  gcloud pubsub topics publish '${esc(topicName)}' --message '{"error":true,"exit_code":"'"$exit_code"'"}' || true
+  gcp_zone=$(curl -sf -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/zone | cut -d/ -f4)
+  sleep ${CONFIG.vm.sleepBeforeDelete}
+  gcloud compute instances delete "$(hostname | cut -d. -f1)" --zone "$gcp_zone" --quiet
+  exit 1
+}
+`;
+
   // ── Pipeline step ────────────────────────────────────────────────────────────
   // A pipeline failure is fatal: publish an error message, then delete the VM.
   const runPipeline = pipelineCommand ? `
 # ── Pipeline step ──
-docker run ${gpuFlag} '${esc(dockerImage)}' ${pipelineCommand}
-docker_exit_code=$?
+docker_exit_code=0
+docker run ${gpuFlag} '${esc(dockerImage)}' ${pipelineCommand} || docker_exit_code=$?
 if [ "$docker_exit_code" -ne 0 ]; then
-  gcloud pubsub topics publish '${esc(topicName)}' --message '{"error":true,"exit_code":"'"$docker_exit_code"'"}'
-  gcp_zone=$(curl -sf -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/zone | cut -d/ -f4)
-  sleep 10
-  gcloud compute instances delete "$(hostname | cut -d. -f1)" --zone "$gcp_zone" --quiet
-  exit 1
+  fatal_error pipeline_failed
 fi
 ` : '';
 
   // ── Deploy step ──────────────────────────────────────────────────────────────
-  // A deploy failure is non-fatal: log it and continue the pipeline.
+  // A deploy failure is fatal: publish an error message, then delete the VM.
   //
   // gcloud + kubectl are pre-installed in the custom VM image, so no installation needed.
   //
@@ -187,21 +214,35 @@ fi
   //      GKE_CLUSTER / GKE_ZONE / GKE_PROJECT must be set as VM metadata or env vars
   //   3. kubectl apply                                     — deploy to the cluster
   //
-  // "cmd || deploy_exit_code=$?" captures a non-zero exit without triggering set -e.
+  // "cmd || step_exit_code=$?" captures a non-zero exit without triggering set -e.
   const runDeploy = yamlPathInImage ? `
 # ── Deploy step (VM-native kubectl) ──
 # 1. Extract yaml from image without starting a container
-DEPLOY_CID=$(docker create '${esc(dockerImage)}')
-docker cp "$DEPLOY_CID":'${esc(yamlPathInImage)}' /tmp/grpc_deployment.yaml
-docker rm "$DEPLOY_CID"
+create_exit_code=0
+DEPLOY_CID=$(docker create '${esc(dockerImage)}') || create_exit_code=$?
+if [ "$create_exit_code" -ne 0 ]; then
+  fatal_error docker_image_not_found
+fi
+cp_exit_code=0
+docker cp "$DEPLOY_CID":'${esc(yamlPathInImage)}' /tmp/grpc_deployment.yaml || cp_exit_code=$?
+docker rm "$DEPLOY_CID" || true
+if [ "$cp_exit_code" -ne 0 ]; then
+  fatal_error deploy_failed
+fi
 
 # 2. Fetch GKE credentials (gcloud pre-installed in the custom VM image)
 # gkeCluster / gkeZone are inlined at script-generation time by the Cloud Function
 # Explicitly set KUBECONFIG so both gcloud and kubectl use the same file,
 # regardless of which user/HOME the metadata script runner uses.
 export KUBECONFIG=/tmp/gke-kubeconfig
+credentials_exit_code=0
 gcloud container clusters get-credentials '${esc(gkeCluster)}' \
-  --region '${esc(gkeZone)}' --project '${esc(CONFIG.projectId)}'
+  --region '${esc(gkeZone)}' --project '${esc(CONFIG.projectId)}' || credentials_exit_code=$?
+if [ "$credentials_exit_code" -ne 0 ]; then
+  rm -f /tmp/gke-kubeconfig
+  rm -f /tmp/grpc_deployment.yaml
+  fatal_error deploy_failed
+fi
 
 # 3. Apply (capture exit code without aborting under set -e)
 deploy_exit_code=0
@@ -210,9 +251,7 @@ rm -f /tmp/gke-kubeconfig
 rm -f /tmp/grpc_deployment.yaml
 
 if [ "$deploy_exit_code" -ne 0 ]; then
-  echo "Model deployment failed with exit code $deploy_exit_code"
-else
-  echo "Model deployed successfully"
+  fatal_error deploy_failed
 fi
 ` : '';
 
@@ -221,13 +260,21 @@ fi
   // time — the esc() function ensures single-quote safety for shell injection.
   return `#!/bin/bash
 set -euo pipefail
-
+${fatalErrorFn}
 # Authenticate Docker to Artifact Registry (gcloud pre-installed in custom image)
 # Extract registry hostname from the image path (e.g. asia-northeast1-docker.pkg.dev)
 REGISTRY=$(echo '${esc(dockerImage)}' | cut -d/ -f1)
-gcloud auth configure-docker "$REGISTRY" --quiet
+auth_exit_code=0
+gcloud auth configure-docker "$REGISTRY" --quiet || auth_exit_code=$?
+if [ "$auth_exit_code" -ne 0 ]; then
+  fatal_error registry_auth_failed
+fi
 
-docker pull '${esc(dockerImage)}'
+pull_exit_code=0
+docker pull '${esc(dockerImage)}' || pull_exit_code=$?
+if [ "$pull_exit_code" -ne 0 ]; then
+  fatal_error docker_image_not_found
+fi
 ${runPipeline}
 ${runDeploy}
 # ── Notify next step and self-delete ──
@@ -359,9 +406,130 @@ function buildVmConfig({ current, vmName, startupScript, zone, serviceAccount })
 
 // ─── Zone Fallback ────────────────────────────────────────────────────────────
 
+function errorText(err) {
+  return typeof err === 'string' ? err : JSON.stringify(err.message || err);
+}
+
 function isExhaustedError(err) {
-  const msg = typeof err === 'string' ? err : JSON.stringify(err.message || err);
-  return EXHAUSTED_CODES.some(code => msg.includes(code));
+  return EXHAUSTED_CODES.some(code => errorText(err).includes(code));
+}
+
+function isAlreadyExistsError(err) {
+  const msg = errorText(err);
+  return msg.includes('alreadyExists') || msg.includes('ALREADY_EXISTS');
+}
+
+function isNotFoundError(err) {
+  const status = err?.response?.status ?? err?.code;
+  if (status === 404) return true;
+  const reasons = err?.response?.data?.error?.errors;
+  if (Array.isArray(reasons) && reasons.some(e => e.reason === 'notFound')) {
+    return true;
+  }
+  const msg = errorText(err);
+  return /not.?found/i.test(msg) || msg.includes('NOT_FOUND');
+}
+
+async function vmExistsInZone(compute, zone, vmName) {
+  try {
+    await compute.instances.get({
+      project:  CONFIG.projectId,
+      zone,
+      instance: vmName,
+    });
+    return true;
+  } catch (err) {
+    if (isNotFoundError(err)) return false;
+    throw err;
+  }
+}
+
+/**
+ * Return the zone where a VM with this name already exists, or null.
+ */
+async function findExistingVmZone(compute, vmName) {
+  for (const z of CONFIG.fallbackZones) {
+    if (await vmExistsInZone(compute, z, vmName)) return z;
+  }
+  return null;
+}
+
+/**
+ * True when VM creation cannot succeed by switching zones or redelivering Pub/Sub
+ * (e.g. custom source image missing from the project).
+ */
+function isFatalVmError(err) {
+  const msg = errorText(err);
+  if (isExhaustedError(err)) return false;
+  if (/global\/images\//i.test(msg) && /not found|NOT_FOUND/i.test(msg)) return true;
+  if (!FATAL_VM_ERROR_CODES.some(code => msg.includes(code))) return false;
+  // NOT_FOUND for a zone-local accelerator is zone exhaustion, not fatal
+  if (msg.includes('acceleratorTypes')) return false;
+  return /global\/images\//i.test(msg) || /sourceImage|source image/i.test(msg);
+}
+
+/**
+ * Publish a terminal error so the pipeline stops and Pub/Sub does not keep
+ * redelivering the same task queue (matches startup-script error handling).
+ */
+async function publishPipelineError(authClient, err, forcedExitCode = null) {
+  const exitCode = forcedExitCode || (isFatalVmError(err) ? 'vm_image_not_found' : 'vm_create_failed');
+  const payload = JSON.stringify({
+    error:     true,
+    exit_code: exitCode,
+    detail:    String(err?.message || err).slice(0, 500),
+  });
+
+  try {
+    const pubsub = google.pubsub({ version: 'v1', auth: authClient });
+    await pubsub.projects.topics.publish({
+      topic: `projects/${CONFIG.projectId}/topics/${CONFIG.topicName}`,
+      requestBody: {
+        messages: [{ data: Buffer.from(payload).toString('base64') }],
+      },
+    });
+    console.log(`Published pipeline error to ${CONFIG.topicName}: ${payload}`);
+  } catch (pubErr) {
+    console.error(`Failed to publish pipeline error: ${pubErr.message}`);
+  }
+}
+
+/**
+ * Poll the insert operation briefly so fatal errors (e.g. missing custom image)
+ * are caught before acking Pub/Sub, without waiting for the full VM boot.
+ *
+ * @returns {{ exhausted?: true, pending?: true }}
+ */
+async function waitForInsertOperation(compute, zone, operation) {
+  const deadline = Date.now() + INSERT_OPERATION_WAIT_MS;
+
+  while (operation.status !== 'DONE' && Date.now() < deadline) {
+    await sleep(2000);
+    const opRes = await compute.zoneOperations.get({
+      project:   CONFIG.projectId,
+      zone,
+      operation: operation.name,
+    });
+    operation = opRes.data;
+  }
+
+  if (operation.status === 'DONE' && operation.error) {
+    const opErr = JSON.stringify(operation.error);
+    if (isFatalVmError(opErr)) {
+      throw new Error(`Fatal VM error (non-retryable): ${opErr}`);
+    }
+    if (isExhaustedError(opErr)) {
+      return { exhausted: true };
+    }
+    throw new Error(`VM operation failed: ${opErr}`);
+  }
+
+  if (operation.status !== 'DONE') {
+    console.log(`VM insert still running in zone ${zone}, acking Pub/Sub early.`);
+    return { pending: true };
+  }
+
+  return {};
 }
 
 /**
@@ -370,12 +538,19 @@ function isExhaustedError(err) {
  *
  * @param {object}   authClient
  * @param {Function} configFactory  (zone, serviceAccount) => vmConfig
+ * @param {string}   vmName
  * @returns {Promise<string>}  the zone where the VM was successfully created
  */
-async function createVMWithFallback(authClient, configFactory) {
+async function createVMWithFallback(authClient, configFactory, vmName) {
   const compute        = google.compute({ version: 'v1', auth: authClient });
   const serviceAccount = await getRuntimeServiceAccount();
   console.log(`Using service account: ${serviceAccount}`);
+
+  const existingZone = await findExistingVmZone(compute, vmName);
+  if (existingZone) {
+    console.log(`VM ${vmName} already exists in zone ${existingZone}, skipping insert.`);
+    return existingZone;
+  }
 
   for (const z of CONFIG.fallbackZones) {
     console.log(`Trying zone: ${z}`);
@@ -388,33 +563,26 @@ async function createVMWithFallback(authClient, configFactory) {
         requestBody: zonedConfig,
       });
 
-      let operation = response.data;
-      console.log(`VM creation started in zone ${z}, operation: ${operation.name}`);
-
-      while (operation.status !== 'DONE') {
-        await sleep(3000);
-        const opRes = await compute.zoneOperations.get({
-          project:   CONFIG.projectId,
-          zone:      z,
-          operation: operation.name,
-        });
-        operation = opRes.data;
-        console.log(`Operation status: ${operation.status}`);
+      const operation = response.data;
+      const waitResult = await waitForInsertOperation(compute, z, operation);
+      if (waitResult.exhausted) {
+        console.warn(`Zone ${z} exhausted (operation error), trying next...`);
+        continue;
       }
 
-      if (operation.error) {
-        const code = operation.error.errors?.[0]?.code || '';
-        if (EXHAUSTED_CODES.some(c => code.includes(c))) {
-          console.warn(`Zone ${z} exhausted (operation error), trying next...`);
-          continue;
-        }
-        throw new Error(`VM operation failed: ${JSON.stringify(operation.error)}`);
-      }
-
-      console.log(`VM created in zone: ${z}, name: ${zonedConfig.name}`);
+      console.log(
+        `VM creation ${waitResult.pending ? 'started' : 'completed'} in zone ${z}, name: ${zonedConfig.name}, operation: ${operation.name}`,
+      );
       return z;
 
     } catch (err) {
+      if (isAlreadyExistsError(err)) {
+        console.log(`VM ${zonedConfig.name} already exists in zone ${z}, treating as success.`);
+        return z;
+      }
+      if (isFatalVmError(err)) {
+        throw err;
+      }
       if (isExhaustedError(err)) {
         console.warn(`Zone ${z} exhausted, trying next...`);
         continue;
@@ -431,6 +599,15 @@ async function createVMWithFallback(authClient, configFactory) {
 functions.cloudEvent('cronjobProcessPubSub', async cloudEvent => {
   const message = Buffer.from(cloudEvent.data.message.data, 'base64').toString().trim();
   console.log(`Received message: ${message}`);
+  let authClient;
+  const getAuthClient = async () => {
+    if (authClient) return authClient;
+    const auth = new google.auth.GoogleAuth({
+      scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+    });
+    authClient = await auth.getClient();
+    return authClient;
+  };
 
   // Terminal message checks
   if (message.startsWith('Exit code:')) {
@@ -446,14 +623,21 @@ functions.cloudEvent('cronjobProcessPubSub', async cloudEvent => {
   let cronjobInfo;
   try {
     cronjobInfo = JSON.parse(message);
-  } catch {
+  } catch (err) {
     console.error(`Invalid JSON message: ${message}`);
+    try {
+      const client = await getAuthClient();
+      await publishPipelineError(client, err, 'task_invalid');
+    } catch (publishErr) {
+      console.error(`Failed to publish validation error: ${publishErr.message}`);
+    }
     return;
   }
 
-  // Error payload
+  // Error payload (from VM startup script or Cloud Function after VM create failure)
   if (cronjobInfo?.error) {
-    console.error(`Pipeline step failed with exit code: ${cronjobInfo.exit_code}`);
+    const detail = cronjobInfo.detail ? `, detail: ${cronjobInfo.detail}` : '';
+    console.error(`Pipeline step failed with exit code: ${cronjobInfo.exit_code}${detail}`);
     return;
   }
 
@@ -470,6 +654,12 @@ functions.cloudEvent('cronjobProcessPubSub', async cloudEvent => {
     validateTask(current);
   } catch (err) {
     console.error(`Task validation failed: ${err.message}`);
+    try {
+      const client = await getAuthClient();
+      await publishPipelineError(client, err, 'task_invalid');
+    } catch (publishErr) {
+      console.error(`Failed to publish validation error: ${publishErr.message}`);
+    }
     return;
   }
 
@@ -483,6 +673,12 @@ functions.cloudEvent('cronjobProcessPubSub', async cloudEvent => {
     pipelineCommand = buildPipelineCommand(current);
   } catch (err) {
     console.error(`Failed to build pipeline command: ${err.message}`);
+    try {
+      const client = await getAuthClient();
+      await publishPipelineError(client, err, 'task_invalid');
+    } catch (publishErr) {
+      console.error(`Failed to publish validation error: ${publishErr.message}`);
+    }
     return;
   }
 
@@ -509,21 +705,24 @@ functions.cloudEvent('cronjobProcessPubSub', async cloudEvent => {
     gkeZone:        current.gke_zone    || '',
   });
 
-  const vmName = `${current.vm_name}-${Date.now()}`;
+  const vmName = `${current.vm_name}-${taskKeyFromMessage(message)}`;
 
   // Create VM
   try {
-    const auth = new google.auth.GoogleAuth({
-      scopes: ['https://www.googleapis.com/auth/cloud-platform'],
-    });
-    const authClient = await auth.getClient();
+    authClient = await getAuthClient();
 
     await createVMWithFallback(
       authClient,
       (zone, serviceAccount) => buildVmConfig({ current, vmName, startupScript, zone, serviceAccount }),
+      vmName,
     );
 
   } catch (err) {
     console.error('Failed to create VM in all zones:', err);
+    // Ack the current message by returning, but publish a terminal error first so
+    // (1) the pipeline does not appear stuck and (2) redelivery does not spawn more VMs.
+    if (authClient) {
+      await publishPipelineError(authClient, err);
+    }
   }
 });

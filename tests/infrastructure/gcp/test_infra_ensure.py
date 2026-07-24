@@ -31,11 +31,14 @@ def _make_infra():
     infra.cloud_kms = MagicMock()
     infra.cloud_build = MagicMock()
     infra.cloud_function = MagicMock()
+    infra.eventarc_trigger = MagicMock()
+    infra.eventarc_trigger.trigger_name = "my-function-pubsub"
     infra.kubernetes_cluster = MagicMock()
     return infra
 
 
 # ── _ensure_service_account ───────────────────────────────────────────────────
+
 
 def test_ensure_service_account_creates_when_not_exists():
     infra = _make_infra()
@@ -55,6 +58,7 @@ def test_ensure_service_account_skips_create_when_exists():
 
 # ── _ensure_model_bucket ──────────────────────────────────────────────────────
 
+
 def test_ensure_model_bucket_creates_and_grants_permissions_when_not_exists():
     infra = _make_infra()
     infra.model_bucket.describe.return_value = False
@@ -71,6 +75,7 @@ def test_ensure_model_bucket_skips_when_exists():
 
 
 # ── _ensure_release_bucket ────────────────────────────────────────────────────
+
 
 def test_ensure_release_bucket_creates_when_not_exists():
     infra = _make_infra()
@@ -89,6 +94,7 @@ def test_ensure_release_bucket_skips_when_exists():
 
 # ── _ensure_artifacts ─────────────────────────────────────────────────────────
 
+
 def test_ensure_artifacts_creates_when_not_exists():
     infra = _make_infra()
     infra.artifacts.describe.return_value = False
@@ -104,6 +110,7 @@ def test_ensure_artifacts_skips_when_exists():
 
 
 # ── _ensure_pubsub ────────────────────────────────────────────────────────────
+
 
 def test_ensure_pubsub_creates_and_grants_permissions_when_not_exists():
     infra = _make_infra()
@@ -122,6 +129,7 @@ def test_ensure_pubsub_skips_when_exists():
 
 # ── _ensure_cloud_build ───────────────────────────────────────────────────────
 
+
 def test_ensure_cloud_build_creates_when_not_exists():
     infra = _make_infra()
     infra.cloud_build.describe.return_value = False
@@ -138,6 +146,7 @@ def test_ensure_cloud_build_skips_when_exists():
 
 # ── _ensure_kubernetes_cluster ────────────────────────────────────────────────
 
+
 def test_ensure_kubernetes_creates_when_not_exists():
     infra = _make_infra()
     infra.kubernetes_cluster.describe.return_value = False
@@ -153,6 +162,7 @@ def test_ensure_kubernetes_skips_when_exists():
 
 
 # ── _ensure_kms ───────────────────────────────────────────────────────────────
+
 
 def test_ensure_kms_creates_keyring_and_key_when_neither_exists():
     infra = _make_infra()
@@ -187,6 +197,7 @@ def test_ensure_kms_skips_all_when_everything_exists():
 
 
 # ── _delete_* methods ─────────────────────────────────────────────────────────
+
 
 def test_delete_model_bucket_calls_delete_when_exists():
     infra = _make_infra()
@@ -274,6 +285,7 @@ def test_delete_pubsub_skips_when_not_exists():
 
 # ── _status_check ─────────────────────────────────────────────────────────────
 
+
 def test_status_check_returns_exists_when_check_fn_returns_true():
     infra = _make_infra()
     _, config_on, status = infra._status_check("My Resource", True, lambda: True)
@@ -312,6 +324,7 @@ def test_status_check_passes_through_string_result():
 
 # ── _status_kms ───────────────────────────────────────────────────────────────
 
+
 def test_status_kms_returns_not_found_when_no_keyring():
     infra = _make_infra()
     infra.cloud_kms.describe_keyring.return_value = False
@@ -348,9 +361,12 @@ def test_status_kms_returns_disabled_when_no_enabled_version():
 
 # ── _build_substitutions ──────────────────────────────────────────────────────
 
+
 def test_build_substitutions_contains_expected_keys():
     infra = _make_infra()
-    with patch("aigear.infrastructure.gcp.infra.get_image_name", return_value="my-image"):
+    with patch(
+        "aigear.infrastructure.gcp.infra.get_image_name", return_value="my-image"
+    ):
         result = infra._build_substitutions()
     assert "_ENVIRONMENT=staging" in result
     assert "_KMS_KEYRING=my-keyring" in result
