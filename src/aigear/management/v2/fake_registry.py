@@ -38,6 +38,9 @@ must enforce, at the granularity spec sections 7-10 actually require:
 - Lineage/Component/Attachment edges: create-once by their own ID, ignoring
   ``created_at`` (the only field not folded into the ID) so idempotent
   replays of an identical edge do not spuriously conflict.
+- Read-only list helpers (``iter_asset_versions``/``iter_occurrences_by_run``):
+  unfiltered, unsorted iterators for ``query.py`` (T27) to build bounded,
+  paginated list queries on top of; they never create or mutate a record.
 
 This is a test/dev double, not a Firestore client: there is no transaction
 isolation, no CAS/optimistic-concurrency semantics beyond what is described
@@ -47,7 +50,7 @@ above, and no persistence across process restarts.
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Dict, Optional, Tuple
+from typing import Dict, Iterator, Optional, Tuple
 
 from aigear.management.v2.identifiers import TypedId
 from aigear.management.v2.records.asset_version import AssetVersionRecord
@@ -412,3 +415,15 @@ class FakeRegistryV2:
 
     def get_attachment_edge(self, attachment_edge_id: TypedId) -> Optional[AttachmentEdge]:
         return self._attachment_edges.get(attachment_edge_id)
+
+    # ── read-only list helpers (T27: bounded query) ─────────────────────
+    #
+    # Unlike every method above, these never create/mutate a record; they
+    # only hand ``query.py`` an iterator to filter, sort and paginate over,
+    # standing in for a real Firestore composite-index query.
+
+    def iter_asset_versions(self) -> Iterator[AssetVersionRecord]:
+        return iter(self._asset_versions.values())
+
+    def iter_occurrences_by_run(self, run_id: str) -> Iterator[OccurrenceRecord]:
+        return (record for record in self._occurrences.values() if record.run_id == run_id)
