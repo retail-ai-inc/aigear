@@ -47,7 +47,7 @@ from typing import Dict, Optional, Tuple
 
 from aigear.management.v2.identifiers import TypedId
 from aigear.management.v2.records.asset_version import AssetVersionRecord
-from aigear.management.v2.records.blob import BlobRecord
+from aigear.management.v2.records.blob import BlobLocationRevision, BlobRecord
 from aigear.management.v2.records.blob_claim import BlobClaim, validate_claim_transition
 from aigear.management.v2.records.label import LabelRecord
 from aigear.management.v2.records.lineage import AttachmentEdge, ComponentEdge, LineageEdge
@@ -125,6 +125,7 @@ class FakeRegistryV2:
 
     def __init__(self) -> None:
         self._blobs: Dict[TypedId, BlobRecord] = {}
+        self._blob_location_revisions: Dict[Tuple[TypedId, int], BlobLocationRevision] = {}
         self._asset_versions: Dict[TypedId, AssetVersionRecord] = {}
         self._labels: Dict[TypedId, LabelRecord] = {}
         self._occurrences: Dict[TypedId, OccurrenceRecord] = {}
@@ -155,6 +156,24 @@ class FakeRegistryV2:
 
     def get_blob(self, blob_id: TypedId) -> Optional[BlobRecord]:
         return self._blobs.get(blob_id)
+
+    def put_blob_location_revision(self, record: BlobLocationRevision) -> BlobLocationRevision:
+        """Append-only per spec 8.1: the same ``(blob_id, location_revision)``
+        may only ever be written once with the same content."""
+        key = (record.blob_id, record.location_revision)
+        existing = self._blob_location_revisions.get(key)
+        if existing is not None and existing != record:
+            raise IdentityConflict(
+                f"location_revision {record.location_revision} for blob_id "
+                f"{record.blob_id.typed!r} already exists with different content"
+            )
+        self._blob_location_revisions[key] = record
+        return record
+
+    def get_blob_location_revision(
+        self, blob_id: TypedId, location_revision: int
+    ) -> Optional[BlobLocationRevision]:
+        return self._blob_location_revisions.get((blob_id, location_revision))
 
     # ── AssetVersion ─────────────────────────────────────────────────────
 

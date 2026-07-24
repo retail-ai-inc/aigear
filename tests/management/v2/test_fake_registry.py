@@ -22,7 +22,12 @@ from aigear.management.v2.records.asset_version import (
     TrustState,
     compute_asset_version_id,
 )
-from aigear.management.v2.records.blob import AvailabilityState, BlobRecord
+from aigear.management.v2.records.blob import (
+    AvailabilityState,
+    BlobLocationRevision,
+    BlobRecord,
+    LocationOperationKind,
+)
 from aigear.management.v2.records.blob_claim import BlobClaim, ClaimState, InvalidClaimTransitionError
 from aigear.management.v2.records.label import (
     LabelRecord,
@@ -239,6 +244,55 @@ def test_put_blob_rejects_physical_identity_mismatch():
 def test_get_blob_returns_none_for_unknown_id():
     registry = FakeRegistryV2()
     assert registry.get_blob(TypedId.from_bare("00" * 32)) is None
+
+
+def _blob_location_revision(**overrides) -> BlobLocationRevision:
+    defaults = dict(
+        schema_version="2.0",
+        environment_fingerprint=_fingerprint(),
+        blob_id=TypedId.from_bare(_BLOB_HEX),
+        location_revision=1,
+        bucket="bucket",
+        object_name="proj/pipeline/registry/v2/_objects/sha256/bb/" + _BLOB_HEX,
+        generation="1",
+        sha256=_BLOB_HEX,
+        crc32c="AAAAAA==",
+        size_bytes=100,
+        location_operation_id="op-1",
+        location_operation_kind=LocationOperationKind.PIPELINE_FINALIZE,
+        location_attestation_ref=TypedId.from_bare(_ATTESTATION_HEX),
+        location_chain_head=TypedId.from_bare("44" * 32),
+        reason="pipeline finalize: first canonical location",
+    )
+    defaults.update(overrides)
+    return BlobLocationRevision(**defaults)
+
+
+def test_put_blob_location_revision_stores_and_returns_record():
+    registry = FakeRegistryV2()
+    record = _blob_location_revision()
+    assert registry.put_blob_location_revision(record) is record
+    assert registry.get_blob_location_revision(record.blob_id, 1) is record
+
+
+def test_put_blob_location_revision_is_idempotent_for_identical_content():
+    registry = FakeRegistryV2()
+    record = _blob_location_revision()
+    registry.put_blob_location_revision(record)
+    registry.put_blob_location_revision(record)
+    assert registry.get_blob_location_revision(record.blob_id, 1) == record
+
+
+def test_put_blob_location_revision_rejects_conflicting_content_at_same_revision():
+    registry = FakeRegistryV2()
+    registry.put_blob_location_revision(_blob_location_revision())
+    with pytest.raises(IdentityConflict):
+        registry.put_blob_location_revision(_blob_location_revision(generation="2"))
+
+
+def test_get_blob_location_revision_returns_none_for_unknown_revision():
+    registry = FakeRegistryV2()
+    assert registry.get_blob_location_revision(TypedId.from_bare(_BLOB_HEX), 1) is None
 
 
 # ── AssetVersion ─────────────────────────────────────────────────────────────────

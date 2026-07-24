@@ -85,11 +85,22 @@ class SeedInputBinding:
 
 @dataclass(frozen=True)
 class OutputSlotSpec:
-    """One declared, required output of a Step. All V2 outputs are required (spec 9.2)."""
+    """One declared, required output of a Step. All V2 outputs are required (spec 9.2).
+
+    ``asset_type``/``asset_name`` name the AssetVersion/Label this output's
+    winning Occurrence is finalized into (spec 10.4/8.2/8.3). Spec 9.2's
+    RunSpec field list has no dedicated naming field for this -- only
+    ``role``/``logical_name`` (a *component's* identity within a bundle, spec
+    5.3) -- so they default to ``role``/``logical_name`` when not given
+    explicitly, which is exactly right for the common case of a single-file
+    output whose one component *is* the whole asset.
+    """
 
     output_name: str
     role: str
     logical_name: str
+    asset_type: Optional[str] = None
+    asset_name: Optional[str] = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -98,6 +109,16 @@ class OutputSlotSpec:
         object.__setattr__(self, "role", validate_segment(self.role, field_name="role"))
         object.__setattr__(
             self, "logical_name", validate_segment(self.logical_name, field_name="logical_name")
+        )
+        object.__setattr__(
+            self,
+            "asset_type",
+            validate_segment(self.asset_type or self.role, field_name="asset_type"),
+        )
+        object.__setattr__(
+            self,
+            "asset_name",
+            validate_segment(self.asset_name or self.logical_name, field_name="asset_name"),
         )
 
     @property
