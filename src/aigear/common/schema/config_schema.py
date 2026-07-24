@@ -69,6 +69,23 @@ class Kubernetes(BaseModel):
 
 class Firestore(BaseModel):
     on: bool
+    # Optional Pipeline V2 addition (docs/pipeline-asset-lifecycle-management-v2.md
+    # section 2.1). Absent by default so existing env.json files keep validating
+    # unchanged; environments that opt into V2 must set it explicitly.
+    database_id: Optional[str] = None
+
+
+class RegistryV2(BaseModel):
+    """Optional Pipeline V2 identity inputs (spec section 2.1).
+
+    All fields are optional and additive: they are only required by callers
+    that compute a V2 ``environment_fingerprint`` or ``registry_binding``; a
+    project that never touches Pipeline V2 does not need this section at all.
+    """
+
+    asset_bucket_location: Optional[str] = None
+    kms_trust_domain: Optional[str] = None
+    security_journal_bucket: Optional[str] = None
 
 
 class Gcp(BaseModel):
@@ -85,6 +102,7 @@ class Gcp(BaseModel):
     kubernetes: Kubernetes
     firestore: Firestore
     logging: bool
+    registry_v2: Optional[RegistryV2] = None
 
 
 class Config(BaseModel):
