@@ -18,7 +18,11 @@ must enforce, at the granularity spec sections 7-10 actually require:
 - Occurrence: a ``committed`` Occurrence can never be overwritten with
   different content (:class:`IdempotencyConflict`, spec 8.4), and at most one
   Occurrence may hold a given ``committed_output_key`` at a time
-  (:class:`OutputAlreadyCommitted`, spec 8.4/9.1's committed-output binding).
+  (:class:`OutputAlreadyCommitted`, spec 8.4/9.1's committed-output binding);
+  the mutable ``readable_occurrence`` projection state and
+  ``projection_source_revision``/``projection_repair_epoch``/``reference_epoch``
+  counters may still be updated after commit (spec 6.3's projection consumer,
+  spec 7's reference counting).
 - Run: created once per ``run_id``; status only moves along the T9 state
   machine (:class:`~aigear.management.v2.records.run.
   InvalidRunStatusTransitionError` propagates unchanged).
@@ -212,11 +216,23 @@ class FakeRegistryV2:
         existing = self._occurrences.get(record.occurrence_id)
         if existing is not None and existing != record:
             if existing.status == OccurrenceStatus.COMMITTED:
-                raise IdempotencyConflict(
-                    f"occurrence_id {record.occurrence_id.typed!r} is already committed "
-                    "and cannot be overwritten with different content"
+                # Everything except the projection-delivery-state fields is
+                # frozen once committed; adopt those from `record` before
+                # comparing so the projection consumer (T26) and reference
+                # counting (spec 7) can still update them post-commit.
+                existing_with_mutables_adopted = replace(
+                    existing,
+                    readable_occurrence=record.readable_occurrence,
+                    projection_source_revision=record.projection_source_revision,
+                    projection_repair_epoch=record.projection_repair_epoch,
+                    reference_epoch=record.reference_epoch,
                 )
-            if record.status != existing.status:
+                if existing_with_mutables_adopted != record:
+                    raise IdempotencyConflict(
+                        f"occurrence_id {record.occurrence_id.typed!r} is already committed "
+                        "and cannot be overwritten with different content"
+                    )
+            elif record.status != existing.status:
                 validate_occurrence_status_transition(existing.status, record.status)
 
         if record.status == OccurrenceStatus.COMMITTED:

@@ -69,7 +69,7 @@ class FakeGcsClient:
     def __init__(self) -> None:
         self._live: Dict[str, GcsObjectSnapshot] = {}
         self._by_generation: Dict[Tuple[str, str], GcsObjectSnapshot] = {}
-        self._generation_counter = 0
+        self._generation_counters: Dict[str, int] = {}
 
     def put_object(
         self, object_name: str, data: bytes, *, if_generation_match: Optional[int] = None
@@ -85,10 +85,15 @@ class FakeGcsClient:
                 f"generation {current_generation} for {object_name!r}"
             )
 
-        self._generation_counter += 1
+        # One counter per object name (real GCS semantics), not a bucket-wide
+        # counter -- otherwise an unrelated object's write would visibly skip
+        # generations for every other object, breaking any caller that
+        # reasons about "this object's Nth generation".
+        next_generation = self._generation_counters.get(object_name, 0) + 1
+        self._generation_counters[object_name] = next_generation
         snapshot = GcsObjectSnapshot(
             object_name=object_name,
-            generation=str(self._generation_counter),
+            generation=str(next_generation),
             data=bytes(data),
             sha256=hashlib.sha256(data).hexdigest(),
             crc32c=_fake_crc32c(data),
