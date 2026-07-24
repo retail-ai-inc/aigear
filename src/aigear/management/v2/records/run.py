@@ -1,9 +1,14 @@
-"""Run / Step / Attempt state machine skeleton (spec section 9.1).
+"""Run / Step / Attempt records (spec sections 9.1/9.2/10.3).
 
-This is intentionally a minimal skeleton: identity + status only. The full
-``RunSpec`` (trigger principal, graph/code/config digests, seed inputs, output
-slot declarations, retry/cancel policy -- spec 9.2) and the lease/fencing
-machinery (spec 10.3) are Phase B scope and are not modeled here.
+T9 (Phase A) modeled only identity + status. This module additionally
+carries the RunSpec linkage and lease/fencing fields spec 9.2/10.3 require
+once a Run actually executes: ``RunRecord.run_spec_digest``/
+``remaining_required_steps``/``parent_run_id``/``backfill_of``;
+``StepRecord.resolved_inputs_digest``/``resolved_at``/``source_step_revision``
+(``current_attempt_no`` already existed); ``AttemptRecord.owner_principal``/
+``lease_expires_at``/``heartbeat_at`` (``fencing_token`` already existed).
+All of the new fields default to ``None`` so existing T9 construction sites
+keep working unchanged.
 
 Transition sets below are a literal reading of the ASCII state diagrams in
 spec 9.1. The Step and Attempt diagrams use a "joined vertical bar" drawing
@@ -21,6 +26,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
+from aigear.management.v2.identifiers import TypedId
 from aigear.management.v2.naming import validate_segment
 
 __all__ = [
@@ -161,25 +167,46 @@ def _require_non_negative_int(field_name: str, value: object) -> None:
 
 @dataclass(frozen=True)
 class RunRecord:
-    """Minimal Run identity + status (full RunSpec is Phase B scope)."""
+    """Run identity + status, plus its RunSpec linkage (spec 9.2)."""
 
     run_id: str
     status: RunStatus
+    run_spec_digest: Optional[TypedId] = None
+    remaining_required_steps: Optional[int] = None
+    parent_run_id: Optional[str] = None
+    backfill_of: Optional[str] = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "run_id", validate_segment(self.run_id, field_name="run_id"))
         if not isinstance(self.status, RunStatus):
             raise InvalidRunRecordError(f"status must be a RunStatus, got {self.status!r}")
+        if self.run_spec_digest is not None and not isinstance(self.run_spec_digest, TypedId):
+            raise InvalidRunRecordError(
+                f"run_spec_digest must be a TypedId or None, got {type(self.run_spec_digest)!r}"
+            )
+        if self.remaining_required_steps is not None:
+            _require_non_negative_int("remaining_required_steps", self.remaining_required_steps)
+        if self.parent_run_id is not None:
+            object.__setattr__(
+                self, "parent_run_id", validate_segment(self.parent_run_id, field_name="parent_run_id")
+            )
+        if self.backfill_of is not None:
+            object.__setattr__(
+                self, "backfill_of", validate_segment(self.backfill_of, field_name="backfill_of")
+            )
 
 
 @dataclass(frozen=True)
 class StepRecord:
-    """Minimal Step identity + status + current attempt pointer."""
+    """Step identity + status + current attempt pointer + resolved inputs (spec 9.2)."""
 
     run_id: str
     step_name: str
     status: StepStatus
     current_attempt_no: Optional[int] = None
+    resolved_inputs_digest: Optional[TypedId] = None
+    resolved_at: Optional[str] = None
+    source_step_revision: Optional[int] = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "run_id", validate_segment(self.run_id, field_name="run_id"))
@@ -190,17 +217,29 @@ class StepRecord:
             raise InvalidRunRecordError(f"status must be a StepStatus, got {self.status!r}")
         if self.current_attempt_no is not None:
             _require_positive_int("current_attempt_no", self.current_attempt_no)
+        if self.resolved_inputs_digest is not None and not isinstance(
+            self.resolved_inputs_digest, TypedId
+        ):
+            raise InvalidRunRecordError(
+                "resolved_inputs_digest must be a TypedId or None, got "
+                f"{type(self.resolved_inputs_digest)!r}"
+            )
+        if self.source_step_revision is not None:
+            _require_positive_int("source_step_revision", self.source_step_revision)
 
 
 @dataclass(frozen=True)
 class AttemptRecord:
-    """Minimal Attempt identity + status + fencing token."""
+    """Attempt identity + status + fencing token + lease bookkeeping (spec 10.3)."""
 
     run_id: str
     step_name: str
     attempt_no: int
     status: AttemptStatus
     fencing_token: int
+    owner_principal: Optional[str] = None
+    lease_expires_at: Optional[str] = None
+    heartbeat_at: Optional[str] = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "run_id", validate_segment(self.run_id, field_name="run_id"))
@@ -211,3 +250,9 @@ class AttemptRecord:
         if not isinstance(self.status, AttemptStatus):
             raise InvalidRunRecordError(f"status must be an AttemptStatus, got {self.status!r}")
         _require_non_negative_int("fencing_token", self.fencing_token)
+        if self.owner_principal is not None and (
+            not isinstance(self.owner_principal, str) or not self.owner_principal
+        ):
+            raise InvalidRunRecordError(
+                f"owner_principal must be a non-empty str or None, got {self.owner_principal!r}"
+            )

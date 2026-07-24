@@ -400,3 +400,21 @@ def test_update_run_status_rejects_unknown_run_id():
     registry = FakeRegistryV2()
     with pytest.raises(KeyError):
         registry.update_run_status("missing-run", RunStatus.RUNNING)
+
+
+def test_update_run_status_preserves_other_fields():
+    registry = FakeRegistryV2()
+    run_spec_digest = TypedId.from_bare("aa" * 32)
+    registry.create_run(
+        RunRecord(
+            run_id="run-1",
+            status=RunStatus.PENDING,
+            run_spec_digest=run_spec_digest,
+            remaining_required_steps=2,
+            parent_run_id="run-0",
+        )
+    )
+    updated = registry.update_run_status("run-1", RunStatus.RUNNING)
+    assert updated.run_spec_digest == run_spec_digest
+    assert updated.remaining_required_steps == 2
+    assert updated.parent_run_id == "run-0"

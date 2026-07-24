@@ -30,6 +30,7 @@ above, and no persistence across process restarts.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Dict, Optional
 
 from aigear.management.v2.identifiers import TypedId
@@ -198,6 +199,6 @@ class FakeRegistryV2:
         if existing is None:
             raise KeyError(f"no Run registered for run_id {run_id!r}")
         validate_run_status_transition(existing.status, target_status)
-        updated = RunRecord(run_id=existing.run_id, status=target_status)
+        updated = replace(existing, status=target_status)
         self._runs[run_id] = updated
         return updated
