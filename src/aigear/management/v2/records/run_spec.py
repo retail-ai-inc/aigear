@@ -27,6 +27,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Tuple
 
+from aigear.management.v2.canonical import digest_sha256_of_jcs
 from aigear.management.v2.identifiers import TypedId
 from aigear.management.v2.naming import ensure_no_collisions, validate_segment
 from aigear.management.v2.records.asset_version import compute_component_key
@@ -37,6 +38,7 @@ __all__ = [
     "OutputSlotSpec",
     "StepSpec",
     "RunSpec",
+    "compute_run_spec_digest",
 ]
 
 
@@ -82,6 +84,14 @@ class SeedInputBinding:
         if self.source_label_id is not None:
             _require_typed_id("source_label_id", self.source_label_id)
 
+    def to_digest_dict(self) -> dict:
+        return {
+            "binding_name": self.binding_name,
+            "asset_version_id": self.asset_version_id.typed,
+            "occurrence_id": self.occurrence_id.typed if self.occurrence_id is not None else None,
+            "source_label_id": self.source_label_id.typed if self.source_label_id is not None else None,
+        }
+
 
 @dataclass(frozen=True)
 class OutputSlotSpec:
@@ -125,6 +135,15 @@ class OutputSlotSpec:
     def component_key(self) -> TypedId:
         """Deterministic component key derived from ``(role, logical_name)`` (spec 5.3)."""
         return compute_component_key(self.role, self.logical_name)
+
+    def to_digest_dict(self) -> dict:
+        return {
+            "output_name": self.output_name,
+            "role": self.role,
+            "logical_name": self.logical_name,
+            "asset_type": self.asset_type,
+            "asset_name": self.asset_name,
+        }
 
 
 @dataclass(frozen=True)
@@ -178,6 +197,13 @@ class StepSpec:
                 field_name=f"step {self.step_name!r} role {role!r} logical_name",
             )
 
+    def to_digest_dict(self) -> dict:
+        return {
+            "step_name": self.step_name,
+            "dependencies": list(self.dependencies),
+            "outputs": [output.to_digest_dict() for output in self.outputs],
+        }
+
 
 @dataclass(frozen=True)
 class RunSpec:
@@ -227,3 +253,28 @@ class RunSpec:
             raise InvalidRunSpecError(
                 f"cancel_policy must be a dict, got {type(self.cancel_policy)!r}"
             )
+
+    def to_digest_dict(self) -> dict:
+        return {
+            "trigger_principal": self.trigger_principal,
+            "trigger_source": self.trigger_source,
+            "graph_digest": self.graph_digest.typed,
+            "code_digest": self.code_digest.typed,
+            "config_digest": self.config_digest.typed,
+            "producer_image_digest": self.producer_image_digest.typed,
+            "steps": [step.to_digest_dict() for step in self.steps],
+            "seed_inputs": [binding.to_digest_dict() for binding in self.seed_inputs],
+            "scheduled_for": self.scheduled_for,
+            "retry_policy": self.retry_policy,
+            "cancel_policy": self.cancel_policy,
+        }
+
+
+def compute_run_spec_digest(run_spec: RunSpec) -> TypedId:
+    """A stable digest of every field a Run fixes at creation time (spec 9.2's
+    field list), for ``RunRecord.run_spec_digest`` and as the ``begin_run``
+    idempotency ``request_fingerprint`` (T28): a replayed ``idempotency_key``
+    with a different ``RunSpec`` must be a conflict, not a silent no-op.
+    Requires ``retry_policy``/``cancel_policy`` to only contain values
+    :func:`~aigear.management.v2.canonical.canonicalize_json` supports."""
+    return TypedId.from_bare(digest_sha256_of_jcs(["aigear.run-spec.v2", run_spec.to_digest_dict()]))

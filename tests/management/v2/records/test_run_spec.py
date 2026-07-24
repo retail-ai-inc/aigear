@@ -11,6 +11,7 @@ from aigear.management.v2.records.run_spec import (
     RunSpec,
     SeedInputBinding,
     StepSpec,
+    compute_run_spec_digest,
 )
 
 _DIGEST = TypedId.from_bare("aa" * 32)
@@ -167,3 +168,24 @@ def test_run_spec_scheduled_for_defaults_to_none():
 def test_run_spec_accepts_explicit_scheduled_for():
     spec = _run_spec(scheduled_for="2026-07-24T00:00:00Z")
     assert spec.scheduled_for == "2026-07-24T00:00:00Z"
+
+
+# ── compute_run_spec_digest ────────────────────────────────────────────────────
+
+
+def test_compute_run_spec_digest_is_deterministic():
+    spec_a = _run_spec()
+    spec_b = _run_spec()
+    assert compute_run_spec_digest(spec_a) == compute_run_spec_digest(spec_b)
+
+
+def test_compute_run_spec_digest_changes_with_steps():
+    base = _run_spec()
+    changed = _run_spec(steps=(_step(step_name="different"),))
+    assert compute_run_spec_digest(base) != compute_run_spec_digest(changed)
+
+
+def test_compute_run_spec_digest_changes_with_retry_policy():
+    base = _run_spec()
+    changed = _run_spec(retry_policy={"max_attempts": 3})
+    assert compute_run_spec_digest(base) != compute_run_spec_digest(changed)

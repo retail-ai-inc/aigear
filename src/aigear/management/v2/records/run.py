@@ -7,8 +7,17 @@ once a Run actually executes: ``RunRecord.run_spec_digest``/
 ``StepRecord.resolved_inputs_digest``/``resolved_at``/``source_step_revision``
 (``current_attempt_no`` already existed); ``AttemptRecord.owner_principal``/
 ``lease_expires_at``/``heartbeat_at`` (``fencing_token`` already existed).
-All of the new fields default to ``None`` so existing T9 construction sites
-keep working unchanged.
+All of the new fields default to ``None``/``()`` so existing T9 construction
+sites keep working unchanged.
+
+T28 (spec 24.1's ``resolve_inputs``) adds ``StepRecord.resolved_inputs``: spec
+9.2 says a Step's symbolic dependency resolution must save both
+``resolved_inputs`` and ``resolved_inputs_digest``, but only the digest was
+modeled here originally -- the actual sealed
+:class:`~aigear.management.v2.records.occurrence.ResolvedInputBinding` tuple
+is needed later, unchanged, as the input to ``acquire_step_lease`` (T20) and
+the eventual committed Occurrence (T22), so it must be retrievable from the
+Step record rather than recomputed.
 
 Transition sets below are a literal reading of the ASCII state diagrams in
 spec 9.1. The Step and Attempt diagrams use a "joined vertical bar" drawing
@@ -45,16 +54,30 @@ both: it is only ever set transiently inside a single synchronous
 ``finalize_step_outputs`` call (T22), which always advances it further to
 ``succeeded`` before returning, so it is never observed at rest by a
 concurrent cancel.
+
+T28's ``fail_attempt`` wiring (spec 24.1) found one more instance of the
+same pattern: today nothing in this package ever moves an Attempt from
+``leased`` to ``running`` (``finalize_step_outputs`` already treats
+``leased``/``running``/``committing`` as equally "still owns execution",
+spec 10.4), so a worker that dies before finalizing is stuck ``leased``
+forever unless ``leased -> failed`` also exists directly -- the diagram's
+literal ``running``/``committing -> failed`` edge alone is unreachable in
+that (common) case. ``leased -> failed`` is therefore added to
+``_VALID_ATTEMPT_TRANSITIONS``, mirroring the existing ``leased ->
+expired``/``leased -> cancelled`` edges it sits next to. The Step side
+needs the matching ``leased -> failed``/``leased -> retry_wait`` (today
+only reachable from ``running``) for the same reason.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
+from typing import Optional, Tuple
 
 from aigear.management.v2.identifiers import TypedId
 from aigear.management.v2.naming import validate_segment
+from aigear.management.v2.records.occurrence import ResolvedInputBinding
 
 __all__ = [
     "InvalidRunRecordError",
@@ -134,7 +157,9 @@ _VALID_RUN_TRANSITIONS = {
 _VALID_STEP_TRANSITIONS = {
     StepStatus.BLOCKED: frozenset({StepStatus.READY, StepStatus.CANCELLED}),
     StepStatus.READY: frozenset({StepStatus.LEASED, StepStatus.CANCELLED}),
-    StepStatus.LEASED: frozenset({StepStatus.RUNNING, StepStatus.CANCELLED}),
+    StepStatus.LEASED: frozenset(
+        {StepStatus.RUNNING, StepStatus.RETRY_WAIT, StepStatus.FAILED, StepStatus.CANCELLED}
+    ),
     StepStatus.RUNNING: frozenset(
         {
             StepStatus.COMMITTING,
@@ -153,7 +178,7 @@ _VALID_STEP_TRANSITIONS = {
 
 _VALID_ATTEMPT_TRANSITIONS = {
     AttemptStatus.LEASED: frozenset(
-        {AttemptStatus.RUNNING, AttemptStatus.EXPIRED, AttemptStatus.CANCELLED}
+        {AttemptStatus.RUNNING, AttemptStatus.FAILED, AttemptStatus.EXPIRED, AttemptStatus.CANCELLED}
     ),
     AttemptStatus.RUNNING: frozenset(
         {
@@ -244,6 +269,7 @@ class StepRecord:
     step_name: str
     status: StepStatus
     current_attempt_no: Optional[int] = None
+    resolved_inputs: Tuple[ResolvedInputBinding, ...] = ()
     resolved_inputs_digest: Optional[TypedId] = None
     resolved_at: Optional[str] = None
     source_step_revision: Optional[int] = None
@@ -257,6 +283,10 @@ class StepRecord:
             raise InvalidRunRecordError(f"status must be a StepStatus, got {self.status!r}")
         if self.current_attempt_no is not None:
             _require_positive_int("current_attempt_no", self.current_attempt_no)
+        if isinstance(self.resolved_inputs, list):
+            object.__setattr__(self, "resolved_inputs", tuple(self.resolved_inputs))
+        if not all(isinstance(binding, ResolvedInputBinding) for binding in self.resolved_inputs):
+            raise InvalidRunRecordError("resolved_inputs must be a sequence of ResolvedInputBinding")
         if self.resolved_inputs_digest is not None and not isinstance(
             self.resolved_inputs_digest, TypedId
         ):
