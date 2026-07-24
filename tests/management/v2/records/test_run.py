@@ -167,8 +167,11 @@ def test_step_record_rejects_non_positive_source_step_revision():
     "current,target",
     [
         (StepStatus.BLOCKED, StepStatus.READY),
+        (StepStatus.BLOCKED, StepStatus.CANCELLED),
         (StepStatus.READY, StepStatus.LEASED),
+        (StepStatus.READY, StepStatus.CANCELLED),
         (StepStatus.LEASED, StepStatus.RUNNING),
+        (StepStatus.LEASED, StepStatus.CANCELLED),
         (StepStatus.RUNNING, StepStatus.COMMITTING),
         (StepStatus.RUNNING, StepStatus.RETRY_WAIT),
         (StepStatus.RUNNING, StepStatus.FAILED),
@@ -177,6 +180,7 @@ def test_step_record_rejects_non_positive_source_step_revision():
         (StepStatus.COMMITTING, StepStatus.SUCCEEDED),
         (StepStatus.COMMITTING, StepStatus.RETRY_WAIT),
         (StepStatus.RETRY_WAIT, StepStatus.READY),
+        (StepStatus.RETRY_WAIT, StepStatus.CANCELLED),
     ],
 )
 def test_valid_step_transitions_are_accepted(current, target):
@@ -188,7 +192,6 @@ def test_valid_step_transitions_are_accepted(current, target):
     [
         (StepStatus.BLOCKED, StepStatus.LEASED),
         (StepStatus.LEASED, StepStatus.FAILED),
-        (StepStatus.LEASED, StepStatus.CANCELLED),
         (StepStatus.COMMITTING, StepStatus.FAILED),
         (StepStatus.COMMITTING, StepStatus.CANCELLED),
         (StepStatus.SUCCEEDED, StepStatus.READY),
@@ -281,6 +284,7 @@ def test_attempt_record_rejects_empty_owner_principal():
         (AttemptStatus.RUNNING, AttemptStatus.COMMITTING),
         (AttemptStatus.RUNNING, AttemptStatus.FAILED),
         (AttemptStatus.RUNNING, AttemptStatus.EXPIRED),
+        (AttemptStatus.RUNNING, AttemptStatus.CANCELLED),
         (AttemptStatus.COMMITTING, AttemptStatus.SUCCEEDED),
         (AttemptStatus.COMMITTING, AttemptStatus.FAILED),
     ],
@@ -292,7 +296,6 @@ def test_valid_attempt_transitions_are_accepted(current, target):
 @pytest.mark.parametrize(
     "current,target",
     [
-        (AttemptStatus.RUNNING, AttemptStatus.CANCELLED),
         (AttemptStatus.COMMITTING, AttemptStatus.EXPIRED),
         (AttemptStatus.COMMITTING, AttemptStatus.CANCELLED),
         (AttemptStatus.SUCCEEDED, AttemptStatus.RUNNING),

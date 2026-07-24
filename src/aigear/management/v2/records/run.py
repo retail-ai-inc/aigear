@@ -30,6 +30,21 @@ and directly describes this operational requirement. The same reasoning adds
 ``running -> leased`` to ``_VALID_STEP_TRANSITIONS``: taking over a
 ``running`` Step's lease creates a fresh Attempt that starts at ``leased``,
 so the Step must be able to move back there too.
+
+Run cancellation (T23, spec 10.5) found the same kind of gap again: the
+diagram only draws ``running -> cancelled`` for Step and
+``leased -> cancelled`` for Attempt, but 10.5's cancel flow must terminate
+every Step of a Run, and most Steps in a real DAG are still
+``blocked``/``ready``/``retry_wait`` (never leased) when a cancel request
+arrives. ``cancelled`` is therefore added as a valid target from
+``blocked``/``ready``/``leased``/``retry_wait`` in
+``_VALID_STEP_TRANSITIONS``, and from ``running`` in
+``_VALID_ATTEMPT_TRANSITIONS`` (mirroring the existing
+``leased -> cancelled`` edge). ``committing`` is deliberately left out of
+both: it is only ever set transiently inside a single synchronous
+``finalize_step_outputs`` call (T22), which always advances it further to
+``succeeded`` before returning, so it is never observed at rest by a
+concurrent cancel.
 """
 
 from __future__ import annotations
@@ -117,9 +132,9 @@ _VALID_RUN_TRANSITIONS = {
 }
 
 _VALID_STEP_TRANSITIONS = {
-    StepStatus.BLOCKED: frozenset({StepStatus.READY}),
-    StepStatus.READY: frozenset({StepStatus.LEASED}),
-    StepStatus.LEASED: frozenset({StepStatus.RUNNING}),
+    StepStatus.BLOCKED: frozenset({StepStatus.READY, StepStatus.CANCELLED}),
+    StepStatus.READY: frozenset({StepStatus.LEASED, StepStatus.CANCELLED}),
+    StepStatus.LEASED: frozenset({StepStatus.RUNNING, StepStatus.CANCELLED}),
     StepStatus.RUNNING: frozenset(
         {
             StepStatus.COMMITTING,
@@ -130,7 +145,7 @@ _VALID_STEP_TRANSITIONS = {
         }
     ),
     StepStatus.COMMITTING: frozenset({StepStatus.SUCCEEDED, StepStatus.RETRY_WAIT}),
-    StepStatus.RETRY_WAIT: frozenset({StepStatus.READY}),
+    StepStatus.RETRY_WAIT: frozenset({StepStatus.READY, StepStatus.CANCELLED}),
     StepStatus.SUCCEEDED: frozenset(),
     StepStatus.FAILED: frozenset(),
     StepStatus.CANCELLED: frozenset(),
@@ -141,7 +156,12 @@ _VALID_ATTEMPT_TRANSITIONS = {
         {AttemptStatus.RUNNING, AttemptStatus.EXPIRED, AttemptStatus.CANCELLED}
     ),
     AttemptStatus.RUNNING: frozenset(
-        {AttemptStatus.COMMITTING, AttemptStatus.FAILED, AttemptStatus.EXPIRED}
+        {
+            AttemptStatus.COMMITTING,
+            AttemptStatus.FAILED,
+            AttemptStatus.EXPIRED,
+            AttemptStatus.CANCELLED,
+        }
     ),
     AttemptStatus.COMMITTING: frozenset({AttemptStatus.SUCCEEDED, AttemptStatus.FAILED}),
     AttemptStatus.SUCCEEDED: frozenset(),
