@@ -81,6 +81,7 @@ aigear-asset = "aigear.cli.asset:asset_cli"
 aigear-task = "aigear.cli.task_running:task_run"
 aigear-kms-env = "aigear.cli.kms_cli:kms_env"
 aigear-logs = "aigear.cli.gcp_logs:gcp_logs"
+aigear-doctor = "aigear.cli.doctor:doctor_cli"
 
 
 [tool.setuptools.packages.find]
