@@ -22,6 +22,18 @@ must enforce, at the granularity spec sections 7-10 actually require:
 - Run: created once per ``run_id``; status only moves along the T9 state
   machine (:class:`~aigear.management.v2.records.run.
   InvalidRunStatusTransitionError` propagates unchanged).
+- Step/Attempt: created once per ``(run_id, step_name)``/
+  ``(run_id, step_name, attempt_no)``; status only moves along their T9 state
+  machines.
+- Operation: same ``idempotency_key_hash`` with a different
+  ``request_fingerprint`` is an :class:`OperationConflict` (spec 10.1/10.2);
+  ``phase`` only moves along the T9 state machine.
+- BlobClaim: keyed by ``blob_id``; ``state`` only moves along the T18 state
+  machine, which already enforces the ``adopting``/``delete_intent`` mutual
+  exclusion described in spec section 7.
+- Lineage/Component/Attachment edges: create-once by their own ID, ignoring
+  ``created_at`` (the only field not folded into the ID) so idempotent
+  replays of an identical edge do not spuriously conflict.
 
 This is a test/dev double, not a Firestore client: there is no transaction
 isolation, no CAS/optimistic-concurrency semantics beyond what is described
@@ -31,18 +43,31 @@ above, and no persistence across process restarts.
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 from aigear.management.v2.identifiers import TypedId
 from aigear.management.v2.records.asset_version import AssetVersionRecord
 from aigear.management.v2.records.blob import BlobRecord
+from aigear.management.v2.records.blob_claim import BlobClaim, validate_claim_transition
 from aigear.management.v2.records.label import LabelRecord
+from aigear.management.v2.records.lineage import AttachmentEdge, ComponentEdge, LineageEdge
 from aigear.management.v2.records.occurrence import (
     OccurrenceRecord,
     OccurrenceStatus,
     validate_occurrence_status_transition,
 )
-from aigear.management.v2.records.run import RunRecord, RunStatus, validate_run_status_transition
+from aigear.management.v2.records.operation import OperationRecord, validate_operation_phase_transition
+from aigear.management.v2.records.run import (
+    AttemptRecord,
+    AttemptStatus,
+    RunRecord,
+    RunStatus,
+    StepRecord,
+    StepStatus,
+    validate_attempt_status_transition,
+    validate_run_status_transition,
+    validate_step_status_transition,
+)
 
 __all__ = [
     "FakeRegistryConflictError",
@@ -51,6 +76,7 @@ __all__ = [
     "LabelRebindConflict",
     "IdempotencyConflict",
     "OutputAlreadyCommitted",
+    "OperationConflict",
     "FakeRegistryV2",
 ]
 
@@ -64,7 +90,8 @@ class IntegrityConflict(FakeRegistryConflictError):
 
 
 class IdentityConflict(FakeRegistryConflictError):
-    """Same ``asset_version_id`` but a different canonical manifest (spec 8.2)."""
+    """Same identity but different content (spec 8.2 AssetVersion; also used here for
+    lineage/component/attachment edges, spec 11)."""
 
 
 class LabelRebindConflict(FakeRegistryConflictError):
@@ -79,8 +106,18 @@ class OutputAlreadyCommitted(FakeRegistryConflictError):
     """Another Occurrence already holds this ``committed_output_key`` (spec 8.4/9.1)."""
 
 
+class OperationConflict(FakeRegistryConflictError):
+    """Same ``idempotency_key_hash`` but a different ``request_fingerprint`` (spec 10.1/10.2)."""
+
+
 def _blob_physical_identity(record: BlobRecord) -> tuple:
     return (record.sha256, record.size_bytes, record.crc32c)
+
+
+def _equal_ignoring_created_at(a, b) -> bool:
+    """Edge equality that ignores ``created_at`` (the only field spec 11's edge IDs do
+    not fold in), so an idempotent replay with a fresh timestamp is not a conflict."""
+    return replace(a, created_at=None) == replace(b, created_at=None)
 
 
 class FakeRegistryV2:
@@ -93,6 +130,13 @@ class FakeRegistryV2:
         self._occurrences: Dict[TypedId, OccurrenceRecord] = {}
         self._committed_output_index: Dict[TypedId, TypedId] = {}
         self._runs: Dict[str, RunRecord] = {}
+        self._steps: Dict[Tuple[str, str], StepRecord] = {}
+        self._attempts: Dict[Tuple[str, str, int], AttemptRecord] = {}
+        self._operations: Dict[str, OperationRecord] = {}
+        self._blob_claims: Dict[TypedId, BlobClaim] = {}
+        self._lineage_edges: Dict[TypedId, LineageEdge] = {}
+        self._component_edges: Dict[TypedId, ComponentEdge] = {}
+        self._attachment_edges: Dict[TypedId, AttachmentEdge] = {}
 
     # ── Blob ─────────────────────────────────────────────────────────────
 
@@ -194,11 +238,142 @@ class FakeRegistryV2:
     def get_run(self, run_id: str) -> Optional[RunRecord]:
         return self._runs.get(run_id)
 
-    def update_run_status(self, run_id: str, target_status: RunStatus) -> RunRecord:
+    def update_run_status(self, run_id: str, target_status: RunStatus, **field_updates) -> RunRecord:
         existing = self._runs.get(run_id)
         if existing is None:
             raise KeyError(f"no Run registered for run_id {run_id!r}")
-        validate_run_status_transition(existing.status, target_status)
-        updated = replace(existing, status=target_status)
+        if target_status != existing.status:
+            validate_run_status_transition(existing.status, target_status)
+        updated = replace(existing, status=target_status, **field_updates)
         self._runs[run_id] = updated
         return updated
+
+    # ── Step ─────────────────────────────────────────────────────────────
+
+    def create_step(self, record: StepRecord) -> StepRecord:
+        key = (record.run_id, record.step_name)
+        if key in self._steps:
+            raise FakeRegistryConflictError(
+                f"step {key!r} already exists; use update_step_status to change its status"
+            )
+        self._steps[key] = record
+        return record
+
+    def get_step(self, run_id: str, step_name: str) -> Optional[StepRecord]:
+        return self._steps.get((run_id, step_name))
+
+    def update_step_status(
+        self, run_id: str, step_name: str, target_status: StepStatus, **field_updates
+    ) -> StepRecord:
+        key = (run_id, step_name)
+        existing = self._steps.get(key)
+        if existing is None:
+            raise KeyError(f"no Step registered for {key!r}")
+        if target_status != existing.status:
+            validate_step_status_transition(existing.status, target_status)
+        updated = replace(existing, status=target_status, **field_updates)
+        self._steps[key] = updated
+        return updated
+
+    # ── Attempt ──────────────────────────────────────────────────────────
+
+    def create_attempt(self, record: AttemptRecord) -> AttemptRecord:
+        key = (record.run_id, record.step_name, record.attempt_no)
+        if key in self._attempts:
+            raise FakeRegistryConflictError(
+                f"attempt {key!r} already exists; use update_attempt_status to change its status"
+            )
+        self._attempts[key] = record
+        return record
+
+    def get_attempt(self, run_id: str, step_name: str, attempt_no: int) -> Optional[AttemptRecord]:
+        return self._attempts.get((run_id, step_name, attempt_no))
+
+    def update_attempt_status(
+        self, run_id: str, step_name: str, attempt_no: int, target_status: AttemptStatus, **field_updates
+    ) -> AttemptRecord:
+        key = (run_id, step_name, attempt_no)
+        existing = self._attempts.get(key)
+        if existing is None:
+            raise KeyError(f"no Attempt registered for {key!r}")
+        if target_status != existing.status:
+            validate_attempt_status_transition(existing.status, target_status)
+        updated = replace(existing, status=target_status, **field_updates)
+        self._attempts[key] = updated
+        return updated
+
+    # ── Operation (also satisfies run_trigger.OperationStore) ──────────────
+
+    def put_operation(self, record: OperationRecord) -> OperationRecord:
+        existing = self._operations.get(record.idempotency_key_hash)
+        if existing is not None:
+            if existing.request_fingerprint != record.request_fingerprint:
+                raise OperationConflict(
+                    f"idempotency_key_hash {record.idempotency_key_hash!r} is already reserved "
+                    "with a different request_fingerprint"
+                )
+            if existing.phase != record.phase:
+                validate_operation_phase_transition(existing.phase, record.phase)
+        self._operations[record.idempotency_key_hash] = record
+        return record
+
+    def get_operation(self, idempotency_key_hash: str) -> Optional[OperationRecord]:
+        return self._operations.get(idempotency_key_hash)
+
+    # ── BlobClaim ────────────────────────────────────────────────────────
+
+    def put_blob_claim(self, record: BlobClaim) -> BlobClaim:
+        existing = self._blob_claims.get(record.blob_id)
+        if existing is not None and existing.state != record.state:
+            validate_claim_transition(existing.state, record.state)
+        self._blob_claims[record.blob_id] = record
+        return record
+
+    def get_blob_claim(self, blob_id: TypedId) -> Optional[BlobClaim]:
+        return self._blob_claims.get(blob_id)
+
+    # ── Lineage / Component / Attachment edges ──────────────────────────
+
+    def put_lineage_edge(self, record: LineageEdge) -> LineageEdge:
+        existing = self._lineage_edges.get(record.edge_id)
+        if existing is not None:
+            if not _equal_ignoring_created_at(existing, record):
+                raise IdentityConflict(
+                    f"lineage edge_id {record.edge_id.typed!r} already exists with different content"
+                )
+            return existing
+        self._lineage_edges[record.edge_id] = record
+        return record
+
+    def get_lineage_edge(self, edge_id: TypedId) -> Optional[LineageEdge]:
+        return self._lineage_edges.get(edge_id)
+
+    def put_component_edge(self, record: ComponentEdge) -> ComponentEdge:
+        existing = self._component_edges.get(record.component_edge_id)
+        if existing is not None:
+            if not _equal_ignoring_created_at(existing, record):
+                raise IdentityConflict(
+                    f"component_edge_id {record.component_edge_id.typed!r} already exists with "
+                    "different content"
+                )
+            return existing
+        self._component_edges[record.component_edge_id] = record
+        return record
+
+    def get_component_edge(self, component_edge_id: TypedId) -> Optional[ComponentEdge]:
+        return self._component_edges.get(component_edge_id)
+
+    def put_attachment_edge(self, record: AttachmentEdge) -> AttachmentEdge:
+        existing = self._attachment_edges.get(record.attachment_edge_id)
+        if existing is not None:
+            if not _equal_ignoring_created_at(existing, record):
+                raise IdentityConflict(
+                    f"attachment_edge_id {record.attachment_edge_id.typed!r} already exists with "
+                    "different content"
+                )
+            return existing
+        self._attachment_edges[record.attachment_edge_id] = record
+        return record
+
+    def get_attachment_edge(self, attachment_edge_id: TypedId) -> Optional[AttachmentEdge]:
+        return self._attachment_edges.get(attachment_edge_id)

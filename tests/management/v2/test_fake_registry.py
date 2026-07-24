@@ -9,6 +9,7 @@ from aigear.management.v2.fake_registry import (
     IdentityConflict,
     IntegrityConflict,
     LabelRebindConflict,
+    OperationConflict,
     OutputAlreadyCommitted,
 )
 from aigear.management.v2.identifiers import TypedId
@@ -22,10 +23,20 @@ from aigear.management.v2.records.asset_version import (
     compute_asset_version_id,
 )
 from aigear.management.v2.records.blob import AvailabilityState, BlobRecord
+from aigear.management.v2.records.blob_claim import BlobClaim, ClaimState, InvalidClaimTransitionError
 from aigear.management.v2.records.label import (
     LabelRecord,
     ReadableManifestProjection,
     compute_label_id,
+)
+from aigear.management.v2.records.lineage import (
+    AttachmentEdge,
+    ComponentEdge,
+    LineageEdge,
+    OwnerKind,
+    compute_attachment_edge_id,
+    compute_component_edge_id,
+    compute_lineage_edge_id,
 )
 from aigear.management.v2.records.occurrence import (
     InvalidOccurrenceStatusTransitionError,
@@ -36,10 +47,21 @@ from aigear.management.v2.records.occurrence import (
     compute_occurrence_id,
     compute_resolved_inputs_digest,
 )
+from aigear.management.v2.records.operation import (
+    InvalidOperationPhaseTransitionError,
+    OperationPhase,
+    OperationRecord,
+)
 from aigear.management.v2.records.run import (
+    AttemptRecord,
+    AttemptStatus,
+    InvalidAttemptStatusTransitionError,
     InvalidRunStatusTransitionError,
+    InvalidStepStatusTransitionError,
     RunRecord,
     RunStatus,
+    StepRecord,
+    StepStatus,
 )
 
 _FINGERPRINT_HEX = "aa" * 32
@@ -418,3 +440,291 @@ def test_update_run_status_preserves_other_fields():
     assert updated.run_spec_digest == run_spec_digest
     assert updated.remaining_required_steps == 2
     assert updated.parent_run_id == "run-0"
+
+
+def test_update_run_status_accepts_extra_field_updates():
+    registry = FakeRegistryV2()
+    registry.create_run(
+        RunRecord(run_id="run-1", status=RunStatus.RUNNING, remaining_required_steps=2)
+    )
+    updated = registry.update_run_status("run-1", RunStatus.RUNNING, remaining_required_steps=1)
+    assert updated.remaining_required_steps == 1
+
+
+# ── Step ─────────────────────────────────────────────────────────────────────
+
+
+def test_create_step_and_get_step():
+    registry = FakeRegistryV2()
+    record = StepRecord(run_id="run-1", step_name="train", status=StepStatus.BLOCKED)
+    registry.create_step(record)
+    assert registry.get_step("run-1", "train") is record
+
+
+def test_create_step_rejects_duplicate_key():
+    registry = FakeRegistryV2()
+    registry.create_step(StepRecord(run_id="run-1", step_name="train", status=StepStatus.BLOCKED))
+    with pytest.raises(FakeRegistryConflictError):
+        registry.create_step(StepRecord(run_id="run-1", step_name="train", status=StepStatus.BLOCKED))
+
+
+def test_update_step_status_follows_state_machine():
+    registry = FakeRegistryV2()
+    registry.create_step(StepRecord(run_id="run-1", step_name="train", status=StepStatus.BLOCKED))
+    updated = registry.update_step_status("run-1", "train", StepStatus.READY)
+    assert updated.status == StepStatus.READY
+
+
+def test_update_step_status_rejects_illegal_transition():
+    registry = FakeRegistryV2()
+    registry.create_step(StepRecord(run_id="run-1", step_name="train", status=StepStatus.BLOCKED))
+    with pytest.raises(InvalidStepStatusTransitionError):
+        registry.update_step_status("run-1", "train", StepStatus.LEASED)
+
+
+def test_update_step_status_accepts_extra_field_updates():
+    registry = FakeRegistryV2()
+    registry.create_step(StepRecord(run_id="run-1", step_name="train", status=StepStatus.READY))
+    updated = registry.update_step_status("run-1", "train", StepStatus.LEASED, current_attempt_no=1)
+    assert updated.current_attempt_no == 1
+
+
+def test_update_step_status_rejects_unknown_key():
+    registry = FakeRegistryV2()
+    with pytest.raises(KeyError):
+        registry.update_step_status("run-1", "missing", StepStatus.READY)
+
+
+# ── Attempt ──────────────────────────────────────────────────────────────────
+
+
+def test_create_attempt_and_get_attempt():
+    registry = FakeRegistryV2()
+    record = AttemptRecord(
+        run_id="run-1", step_name="train", attempt_no=1, status=AttemptStatus.LEASED, fencing_token=1
+    )
+    registry.create_attempt(record)
+    assert registry.get_attempt("run-1", "train", 1) is record
+
+
+def test_create_attempt_rejects_duplicate_key():
+    registry = FakeRegistryV2()
+    registry.create_attempt(
+        AttemptRecord(
+            run_id="run-1", step_name="train", attempt_no=1, status=AttemptStatus.LEASED, fencing_token=1
+        )
+    )
+    with pytest.raises(FakeRegistryConflictError):
+        registry.create_attempt(
+            AttemptRecord(
+                run_id="run-1", step_name="train", attempt_no=1, status=AttemptStatus.LEASED, fencing_token=1
+            )
+        )
+
+
+def test_update_attempt_status_follows_state_machine():
+    registry = FakeRegistryV2()
+    registry.create_attempt(
+        AttemptRecord(
+            run_id="run-1", step_name="train", attempt_no=1, status=AttemptStatus.LEASED, fencing_token=1
+        )
+    )
+    updated = registry.update_attempt_status("run-1", "train", 1, AttemptStatus.RUNNING)
+    assert updated.status == AttemptStatus.RUNNING
+
+
+def test_update_attempt_status_rejects_illegal_transition():
+    registry = FakeRegistryV2()
+    registry.create_attempt(
+        AttemptRecord(
+            run_id="run-1", step_name="train", attempt_no=1, status=AttemptStatus.LEASED, fencing_token=1
+        )
+    )
+    with pytest.raises(InvalidAttemptStatusTransitionError):
+        registry.update_attempt_status("run-1", "train", 1, AttemptStatus.SUCCEEDED)
+
+
+# ── Operation ────────────────────────────────────────────────────────────────
+
+
+def _operation(**overrides) -> OperationRecord:
+    defaults = dict(
+        idempotency_key_hash="aa" * 32,
+        request_fingerprint="fp-1",
+        operation_type="run_trigger",
+        owner_principal="controller@aigear",
+        write_epoch=1,
+        fencing_token=0,
+        phase=OperationPhase.RESERVED,
+        revision=1,
+    )
+    defaults.update(overrides)
+    return OperationRecord(**defaults)
+
+
+def test_put_operation_and_get_operation():
+    registry = FakeRegistryV2()
+    record = _operation()
+    registry.put_operation(record)
+    assert registry.get_operation("aa" * 32) is record
+
+
+def test_put_operation_replay_with_same_fingerprint_succeeds():
+    registry = FakeRegistryV2()
+    registry.put_operation(_operation())
+    updated = registry.put_operation(_operation(phase=OperationPhase.STAGING))
+    assert updated.phase == OperationPhase.STAGING
+
+
+def test_put_operation_rejects_different_fingerprint():
+    registry = FakeRegistryV2()
+    registry.put_operation(_operation())
+    with pytest.raises(OperationConflict):
+        registry.put_operation(_operation(request_fingerprint="fp-2"))
+
+
+def test_put_operation_rejects_illegal_phase_transition():
+    registry = FakeRegistryV2()
+    registry.put_operation(_operation())
+    with pytest.raises(InvalidOperationPhaseTransitionError):
+        registry.put_operation(_operation(phase=OperationPhase.SUCCEEDED))
+
+
+def test_fake_registry_satisfies_operation_store_protocol_for_run_trigger():
+    from aigear.management.v2.run_trigger import begin_run_trigger, compute_run_idempotency_key
+
+    registry = FakeRegistryV2()
+    key = compute_run_idempotency_key(
+        "pipeline-x", "2026-07-24T00:00:00Z", "cloud_scheduler", TypedId.from_bare("aa" * 32)
+    )
+    operation = begin_run_trigger(
+        registry,
+        idempotency_key=key,
+        request_fingerprint="fp-1",
+        owner_principal="controller@aigear",
+        create_run=lambda: "run-1",
+    )
+    assert operation.run_id == "run-1"
+    assert registry.get_operation(key.bare) is operation
+
+
+# ── BlobClaim ────────────────────────────────────────────────────────────────
+
+
+def _blob_claim(**overrides) -> BlobClaim:
+    defaults = dict(
+        blob_id=TypedId.from_bare(_BLOB_HEX),
+        claim_epoch=0,
+        fencing_token=1,
+        operation_id="op-1",
+        expected_object_name="registry/v2/_objects/sha256/bb/bbbb...",
+        request_digest=TypedId.from_bare("dd" * 32),
+        state=ClaimState.ADOPTING,
+    )
+    defaults.update(overrides)
+    return BlobClaim(**defaults)
+
+
+def test_put_blob_claim_and_get_blob_claim():
+    registry = FakeRegistryV2()
+    record = _blob_claim()
+    registry.put_blob_claim(record)
+    assert registry.get_blob_claim(TypedId.from_bare(_BLOB_HEX)) is record
+
+
+def test_put_blob_claim_follows_state_machine():
+    registry = FakeRegistryV2()
+    registry.put_blob_claim(_blob_claim(state=ClaimState.ADOPTING))
+    updated = registry.put_blob_claim(_blob_claim(state=ClaimState.CONSUMED))
+    assert updated.state == ClaimState.CONSUMED
+
+
+def test_put_blob_claim_rejects_illegal_transition():
+    registry = FakeRegistryV2()
+    registry.put_blob_claim(_blob_claim(state=ClaimState.ADOPTING))
+    registry.put_blob_claim(_blob_claim(state=ClaimState.CONSUMED))
+    with pytest.raises(InvalidClaimTransitionError):
+        registry.put_blob_claim(_blob_claim(state=ClaimState.DELETE_INTENT))
+
+
+# ── Lineage / Component / Attachment edges ────────────────────────────────────
+
+
+def test_put_lineage_edge_and_get_lineage_edge():
+    registry = FakeRegistryV2()
+    output_occ = TypedId.from_bare("11" * 32)
+    input_occ = TypedId.from_bare("22" * 32)
+    edge_id = compute_lineage_edge_id(output_occ, "training_features", input_occ)
+    record = LineageEdge(
+        schema_version="2.0",
+        environment_fingerprint=_fingerprint(),
+        edge_id=edge_id,
+        output_occurrence_id=output_occ,
+        input_occurrence_id=input_occ,
+        binding_name="training_features",
+        run_id="run-1",
+    )
+    registry.put_lineage_edge(record)
+    assert registry.get_lineage_edge(edge_id) == record
+
+
+def test_put_lineage_edge_is_idempotent_across_created_at():
+    registry = FakeRegistryV2()
+    output_occ = TypedId.from_bare("11" * 32)
+    input_occ = TypedId.from_bare("22" * 32)
+    edge_id = compute_lineage_edge_id(output_occ, "training_features", input_occ)
+
+    def _edge(created_at):
+        return LineageEdge(
+            schema_version="2.0",
+            environment_fingerprint=_fingerprint(),
+            edge_id=edge_id,
+            output_occurrence_id=output_occ,
+            input_occurrence_id=input_occ,
+            binding_name="training_features",
+            run_id="run-1",
+            created_at=created_at,
+        )
+
+    first = registry.put_lineage_edge(_edge("2026-07-24T00:00:00Z"))
+    second = registry.put_lineage_edge(_edge("2026-07-24T00:00:01Z"))
+    assert first is second
+    assert registry.get_lineage_edge(edge_id).created_at == "2026-07-24T00:00:00Z"
+
+
+def test_put_component_edge_and_get_component_edge():
+    registry = FakeRegistryV2()
+    asset_version_id = TypedId.from_bare("33" * 32)
+    blob_id = TypedId.from_bare("44" * 32)
+    edge_id = compute_component_edge_id(asset_version_id, "model", "model.onnx", blob_id)
+    record = ComponentEdge(
+        schema_version="2.0",
+        environment_fingerprint=_fingerprint(),
+        component_edge_id=edge_id,
+        asset_version_id=asset_version_id,
+        blob_id=blob_id,
+        role="model",
+        logical_name="model.onnx",
+    )
+    registry.put_component_edge(record)
+    assert registry.get_component_edge(edge_id) == record
+
+
+def test_put_attachment_edge_and_get_attachment_edge():
+    registry = FakeRegistryV2()
+    owner_id = TypedId.from_bare("55" * 32).typed
+    blob_id = TypedId.from_bare("66" * 32)
+    edge_id = compute_attachment_edge_id(OwnerKind.OCCURRENCE, owner_id, "metrics", "evaluation.json", blob_id)
+    record = AttachmentEdge(
+        schema_version="2.0",
+        environment_fingerprint=_fingerprint(),
+        attachment_edge_id=edge_id,
+        owner_kind=OwnerKind.OCCURRENCE,
+        owner_id=owner_id,
+        attachment_kind="metrics",
+        logical_name="evaluation.json",
+        blob_id=blob_id,
+        media_type="application/json",
+    )
+    registry.put_attachment_edge(record)
+    assert registry.get_attachment_edge(edge_id) == record
