@@ -173,6 +173,7 @@ def test_step_record_rejects_non_positive_source_step_revision():
         (StepStatus.RUNNING, StepStatus.RETRY_WAIT),
         (StepStatus.RUNNING, StepStatus.FAILED),
         (StepStatus.RUNNING, StepStatus.CANCELLED),
+        (StepStatus.RUNNING, StepStatus.LEASED),
         (StepStatus.COMMITTING, StepStatus.SUCCEEDED),
         (StepStatus.COMMITTING, StepStatus.RETRY_WAIT),
         (StepStatus.RETRY_WAIT, StepStatus.READY),
@@ -279,6 +280,7 @@ def test_attempt_record_rejects_empty_owner_principal():
         (AttemptStatus.LEASED, AttemptStatus.CANCELLED),
         (AttemptStatus.RUNNING, AttemptStatus.COMMITTING),
         (AttemptStatus.RUNNING, AttemptStatus.FAILED),
+        (AttemptStatus.RUNNING, AttemptStatus.EXPIRED),
         (AttemptStatus.COMMITTING, AttemptStatus.SUCCEEDED),
         (AttemptStatus.COMMITTING, AttemptStatus.FAILED),
     ],
@@ -290,7 +292,6 @@ def test_valid_attempt_transitions_are_accepted(current, target):
 @pytest.mark.parametrize(
     "current,target",
     [
-        (AttemptStatus.RUNNING, AttemptStatus.EXPIRED),
         (AttemptStatus.RUNNING, AttemptStatus.CANCELLED),
         (AttemptStatus.COMMITTING, AttemptStatus.EXPIRED),
         (AttemptStatus.COMMITTING, AttemptStatus.CANCELLED),

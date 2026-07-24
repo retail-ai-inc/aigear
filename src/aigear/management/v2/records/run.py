@@ -18,6 +18,18 @@ show that either predecessor state can feed into the same successor; the
 column alignment was read carefully but is a shared/ambiguous ASCII
 convention, so double-check against spec 9.1 directly before relying on any
 edge here for Phase B's real lease/fencing implementation.
+
+Phase B's real lease/fencing implementation (T20, spec 10.3 step 4) found
+exactly the gap that note warned about: the diagram only literally draws
+``leased -> expired``, but 10.3's prose is unambiguous that *any* takeover --
+including one that supersedes an Attempt already ``running`` -- must set the
+superseded Attempt to ``expired`` in the same transaction. ``running ->
+expired`` is therefore added to ``_VALID_ATTEMPT_TRANSITIONS`` on top of the
+diagram's literal edges, since the prose is more specific than the diagram
+and directly describes this operational requirement. The same reasoning adds
+``running -> leased`` to ``_VALID_STEP_TRANSITIONS``: taking over a
+``running`` Step's lease creates a fresh Attempt that starts at ``leased``,
+so the Step must be able to move back there too.
 """
 
 from __future__ import annotations
@@ -109,7 +121,13 @@ _VALID_STEP_TRANSITIONS = {
     StepStatus.READY: frozenset({StepStatus.LEASED}),
     StepStatus.LEASED: frozenset({StepStatus.RUNNING}),
     StepStatus.RUNNING: frozenset(
-        {StepStatus.COMMITTING, StepStatus.RETRY_WAIT, StepStatus.FAILED, StepStatus.CANCELLED}
+        {
+            StepStatus.COMMITTING,
+            StepStatus.RETRY_WAIT,
+            StepStatus.FAILED,
+            StepStatus.CANCELLED,
+            StepStatus.LEASED,
+        }
     ),
     StepStatus.COMMITTING: frozenset({StepStatus.SUCCEEDED, StepStatus.RETRY_WAIT}),
     StepStatus.RETRY_WAIT: frozenset({StepStatus.READY}),
@@ -122,7 +140,9 @@ _VALID_ATTEMPT_TRANSITIONS = {
     AttemptStatus.LEASED: frozenset(
         {AttemptStatus.RUNNING, AttemptStatus.EXPIRED, AttemptStatus.CANCELLED}
     ),
-    AttemptStatus.RUNNING: frozenset({AttemptStatus.COMMITTING, AttemptStatus.FAILED}),
+    AttemptStatus.RUNNING: frozenset(
+        {AttemptStatus.COMMITTING, AttemptStatus.FAILED, AttemptStatus.EXPIRED}
+    ),
     AttemptStatus.COMMITTING: frozenset({AttemptStatus.SUCCEEDED, AttemptStatus.FAILED}),
     AttemptStatus.SUCCEEDED: frozenset(),
     AttemptStatus.FAILED: frozenset(),
