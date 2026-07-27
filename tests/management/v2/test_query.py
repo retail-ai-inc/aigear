@@ -101,6 +101,47 @@ def _ts(seconds: int) -> str:
     return datetime(2026, 1, 1, 0, 0, seconds, tzinfo=timezone.utc).isoformat()
 
 
+def test_list_assets_pushes_limit_cutoff_and_cursor_to_bounded_backend():
+    records = (
+        _asset_version("01" * 32, created_at=_ts(1)),
+        _asset_version("02" * 32, created_at=_ts(2)),
+    )
+
+    class Backend:
+        def __init__(self):
+            self.calls = []
+
+        def query_asset_versions(self, **kwargs):
+            self.calls.append(kwargs)
+            return records if kwargs["cursor"] is None else records[1:]
+
+    backend = Backend()
+    first = list_assets(
+        backend,
+        schema_version="2.0",
+        asset_type="model",
+        name="weights",
+        page_size=1,
+        now=datetime(2026, 1, 1, 0, 1, tzinfo=timezone.utc),
+    )
+    assert len(first.items) == 1
+    assert backend.calls[0]["limit"] == 2
+    assert backend.calls[0]["cursor"] is None
+    assert backend.calls[0]["page_cutoff"].startswith("2026-01-01T00:01")
+
+    list_assets(
+        backend,
+        schema_version="2.0",
+        asset_type="model",
+        name="weights",
+        page_size=1,
+        page_token=first.next_page_token,
+        now=datetime(2026, 1, 2, tzinfo=timezone.utc),
+    )
+    assert backend.calls[1]["cursor"][0] == records[0].created_at
+    assert backend.calls[1]["cursor"][1] == records[0].asset_version_id.typed
+
+
 # ── list_assets ───────────────────────────────────────────────────────────────
 
 

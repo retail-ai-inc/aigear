@@ -175,6 +175,61 @@ class QueryPage:
     next_page_token: Optional[str]
 
 
+def _backend_page_request(
+    *,
+    schema_version: str,
+    filter_digest: str,
+    order: str,
+    database_id: str,
+    page_size: int,
+    page_token: Optional[str],
+    now: datetime,
+):
+    page_size = _require_valid_page_size(page_size)
+    if page_token is None:
+        return page_size, now.isoformat(), None
+    decoded = PageToken.decode(page_token)
+    decoded.check_matches_request(
+        schema_version=schema_version,
+        filter_digest=filter_digest,
+        order=order,
+        database_id=database_id,
+    )
+    return page_size, decoded.page_cutoff, decoded.cursor
+
+
+def _backend_query_page(
+    records,
+    *,
+    sort_field: str,
+    id_field: str,
+    schema_version: str,
+    filter_digest: str,
+    order: str,
+    database_id: str,
+    page_size: int,
+    page_cutoff: str,
+) -> QueryPage:
+    records = tuple(records)
+    page_records = records[:page_size]
+    next_token = None
+    if len(records) > page_size:
+        last = page_records[-1]
+        sort_value = getattr(last, sort_field)
+        identity = getattr(last, id_field).typed
+        if sort_value is None:
+            raise QueryError(f"backend returned a record without {sort_field}")
+        next_token = PageToken(
+            schema_version=schema_version,
+            filter_digest=filter_digest,
+            order=order,
+            database_id=database_id,
+            page_cutoff=page_cutoff,
+            cursor=(sort_value, identity),
+        ).encode()
+    return QueryPage(items=page_records, next_page_token=next_token)
+
+
 def _paginate(
     entries: Sequence[Tuple[Optional[str], str, object]],
     *,
@@ -270,6 +325,38 @@ def list_assets(
         ]
     )
 
+    backend_query = getattr(registry, "query_asset_versions", None)
+    if backend_query is not None:
+        page_size, page_cutoff, cursor = _backend_page_request(
+            schema_version=schema_version,
+            filter_digest=filter_digest,
+            order=_ASSET_LIST_ORDER,
+            database_id=database_id,
+            page_size=page_size,
+            page_token=page_token,
+            now=now,
+        )
+        records = backend_query(
+            asset_type=asset_type,
+            name=name,
+            lifecycle_state=lifecycle_state,
+            trust_state=trust_state,
+            page_cutoff=page_cutoff,
+            cursor=cursor,
+            limit=page_size + 1,
+        )
+        return _backend_query_page(
+            records,
+            sort_field="created_at",
+            id_field="asset_version_id",
+            schema_version=schema_version,
+            filter_digest=filter_digest,
+            order=_ASSET_LIST_ORDER,
+            database_id=database_id,
+            page_size=page_size,
+            page_cutoff=page_cutoff,
+        )
+
     entries = [
         (record.created_at, record.asset_version_id.typed, record)
         for record in registry.iter_asset_versions()
@@ -312,6 +399,36 @@ def list_run_outputs(
         _require_non_empty_str("step_name", step_name)
 
     filter_digest = digest_sha256_of_jcs(["aigear.query.run-output-list.v1", run_id, step_name])
+
+    backend_query = getattr(registry, "query_run_outputs", None)
+    if backend_query is not None:
+        page_size, page_cutoff, cursor = _backend_page_request(
+            schema_version=schema_version,
+            filter_digest=filter_digest,
+            order=_RUN_OUTPUT_LIST_ORDER,
+            database_id=database_id,
+            page_size=page_size,
+            page_token=page_token,
+            now=now,
+        )
+        records = backend_query(
+            run_id=run_id,
+            step_name=step_name,
+            page_cutoff=page_cutoff,
+            cursor=cursor,
+            limit=page_size + 1,
+        )
+        return _backend_query_page(
+            records,
+            sort_field="committed_at",
+            id_field="occurrence_id",
+            schema_version=schema_version,
+            filter_digest=filter_digest,
+            order=_RUN_OUTPUT_LIST_ORDER,
+            database_id=database_id,
+            page_size=page_size,
+            page_cutoff=page_cutoff,
+        )
 
     entries = [
         (record.committed_at, record.occurrence_id.typed, record)

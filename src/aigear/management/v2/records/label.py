@@ -76,11 +76,9 @@ def _require_optional_non_negative_int(field_name: str, value: Optional[int]) ->
 class ReadableManifestProjection:
     """The GCS ``manifest.json`` projection delivery state for one label.
 
-    ``status`` is intentionally left as a validated non-empty string rather
-    than a closed enum: spec 6/8.3 only names ``pending`` (the required
-    initial value, see :meth:`initial`) and ``ready`` explicitly; the rest of
-    the projection-repair state space is defined by the projection
-    consumer/repair task, out of scope for Phase A.
+    ``status`` is a closed delivery lattice. ``applying`` owns a mutation
+    lease/fence; ``stale`` preserves a valid write superseded before ACK;
+    ``failed`` is retryable and ``conflict`` requires operator intervention.
     """
 
     uri: str
@@ -93,11 +91,18 @@ class ReadableManifestProjection:
     observed_repair_epoch: Optional[int] = None
     applied_source_revision: Optional[int] = None
     applied_repair_epoch: Optional[int] = None
+    mutation_owner_principal: Optional[str] = None
+    mutation_lease_expires_at: Optional[str] = None
+    last_error: Optional[str] = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.uri, str) or not self.uri.startswith("gs://"):
             raise InvalidLabelRecordError(f"uri must be a gs:// URI, got {self.uri!r}")
-        _require_non_empty_str("status", self.status)
+        allowed_statuses = {"pending", "applying", "ready", "stale", "failed", "conflict"}
+        if self.status not in allowed_statuses:
+            raise InvalidLabelRecordError(
+                f"status must be one of {sorted(allowed_statuses)!r}, got {self.status!r}"
+            )
         _require_non_negative_int("projection_mutation_fence", self.projection_mutation_fence)
         parse_schema_version(self.projection_schema_version)
         _require_optional_non_negative_int(
@@ -108,6 +113,17 @@ class ReadableManifestProjection:
             "applied_source_revision", self.applied_source_revision
         )
         _require_optional_non_negative_int("applied_repair_epoch", self.applied_repair_epoch)
+        lease_values = (self.mutation_owner_principal, self.mutation_lease_expires_at)
+        if any(value is not None for value in lease_values) and any(
+            value is None for value in lease_values
+        ):
+            raise InvalidLabelRecordError(
+                "mutation_owner_principal and mutation_lease_expires_at must be set together"
+            )
+        if self.status == "applying" and self.mutation_owner_principal is None:
+            raise InvalidLabelRecordError("applying projection requires a mutation lease")
+        if self.status != "applying" and self.mutation_owner_principal is not None:
+            raise InvalidLabelRecordError("only applying projection may hold a mutation lease")
 
     @classmethod
     def initial(cls, uri: str, *, projection_schema_version: str = "1.0") -> "ReadableManifestProjection":

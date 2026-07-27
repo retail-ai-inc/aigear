@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -11,15 +11,22 @@ from aigear.management.v2.fake_registry import FakeRegistryV2
 from aigear.management.v2.finalizer import FinalizeContext, finalize_step_outputs
 from aigear.management.v2.gcs_layout import GcsLayoutV2
 from aigear.management.v2.identifiers import TypedId
+from aigear.management.v2.outbox_worker import drain_projection_outbox
 from aigear.management.v2.projection_consumer import (
     ProjectionConsumerError,
     ProjectionEvent,
     ProjectionKind,
+    acknowledge_projection_task,
+    acquire_projection_task,
     compute_projection_event_id,
     consume_projection_event,
+    render_projection_task,
+    request_projection_repair,
+    verify_projection_completion,
 )
 from aigear.management.v2.records.run import RunRecord, RunStatus, StepRecord, StepStatus
 from aigear.management.v2.records.run_spec import OutputSlotSpec, RunSpec, StepSpec
+from aigear.management.v2.records.outbox import OutboxEventRecord, OutboxStatus
 from aigear.management.v2.staging_upload import StagingOutputDescriptor, StepCompletionMessage
 from aigear.management.v2.step_lease import acquire_step_lease, compute_attempt_finalize_operation_id
 
@@ -138,6 +145,129 @@ def test_consume_asset_manifest_event_is_idempotent_on_replay():
     assert gcs.get_live_object(object_name).generation == "1"
 
 
+def test_projection_ack_loss_allows_fenced_lease_takeover():
+    registry, gcs, layout = FakeRegistryV2(), FakeGcsClient(), _layout()
+    output = _produce_committed_output(registry, gcs, layout)
+    event = ProjectionEvent(
+        kind=ProjectionKind.ASSET_MANIFEST,
+        subject_id=output.label.label_id,
+        projection_schema_version="1.0",
+        projection_source_revision=1,
+    )
+    first = registry.run_atomic(
+        lambda tx: acquire_projection_task(
+            tx,
+            layout,
+            event,
+            worker_principal="writer-1@example.com",
+            now=_NOW,
+            lease_ttl=timedelta(minutes=1),
+        )
+    )
+    first_evidence = render_projection_task(registry, gcs, layout, first)
+
+    second = registry.run_atomic(
+        lambda tx: acquire_projection_task(
+            tx,
+            layout,
+            event,
+            worker_principal="writer-2@example.com",
+            now=_NOW + timedelta(minutes=2),
+        )
+    )
+    assert second.delivery_fencing_token > first.delivery_fencing_token
+    with pytest.raises(ProjectionConsumerError, match="stale or unauthorized"):
+        registry.run_atomic(
+            lambda tx: acknowledge_projection_task(
+                tx,
+                layout,
+                first,
+                first_evidence,
+                now=_NOW + timedelta(minutes=2),
+            )
+        )
+
+    second_evidence = render_projection_task(registry, gcs, layout, second)
+    projection = registry.run_atomic(
+        lambda tx: acknowledge_projection_task(
+            tx,
+            layout,
+            second,
+            second_evidence,
+            now=_NOW + timedelta(minutes=2),
+        )
+    )
+    assert projection.status == "ready"
+    outbox = registry.get_outbox_event(event.event_id)
+    assert outbox.status.value == "delivered"
+    assert outbox.delivery_attempts == 2
+
+
+def test_projection_completion_must_match_registry_path_and_exact_generation():
+    registry, gcs, layout = FakeRegistryV2(), FakeGcsClient(), _layout()
+    output = _produce_committed_output(registry, gcs, layout)
+    event = ProjectionEvent(
+        kind=ProjectionKind.ASSET_MANIFEST,
+        subject_id=output.label.label_id,
+        projection_schema_version="1.0",
+        projection_source_revision=1,
+    )
+    task = registry.run_atomic(
+        lambda tx: acquire_projection_task(
+            tx, layout, event, worker_principal="writer-1", now=_NOW
+        )
+    )
+    evidence = render_projection_task(registry, gcs, layout, task)
+
+    with pytest.raises(ProjectionConsumerError, match="Registry-derived path"):
+        verify_projection_completion(
+            registry,
+            gcs,
+            layout,
+            task,
+            replace(evidence, object_name="unrelated/projection.json"),
+        )
+    with pytest.raises(ProjectionConsumerError, match="digest"):
+        verify_projection_completion(
+            registry,
+            gcs,
+            layout,
+            task,
+            replace(evidence, content_sha256="0" * 64),
+        )
+
+    verify_projection_completion(registry, gcs, layout, task, evidence)
+
+
+def test_bounded_outbox_worker_isolates_poison_event_and_continues_batch():
+    registry, gcs, layout = FakeRegistryV2(), FakeGcsClient(), _layout()
+    output = _produce_committed_output(registry, gcs, layout)
+    asset_object = layout.asset_projection("model", "weights", "run-1")
+    gcs.put_object(asset_object, b"foreign-content", if_generation_match=0)
+
+    result = drain_projection_outbox(
+        registry,
+        gcs,
+        layout,
+        worker_principal="projection-writer",
+        now=_NOW,
+        batch_size=10,
+    )
+
+    assert result.scanned == 2
+    assert result.succeeded == 1
+    assert len(result.failed_event_ids) == 1
+    failed = registry.get_outbox_event(TypedId.from_typed(result.failed_event_ids[0]))
+    assert failed.status == OutboxStatus.DEAD_LETTER
+    run_event = ProjectionEvent(
+        kind=ProjectionKind.COMMITTED_RUN_OUTPUT,
+        subject_id=output.occurrence.committed_output_key,
+        projection_schema_version="1.0",
+        projection_source_revision=1,
+    )
+    assert registry.get_outbox_event(run_event.event_id).status == OutboxStatus.DELIVERED
+
+
 def test_consume_asset_manifest_event_cas_updates_on_new_desired_revision():
     registry, gcs, layout = FakeRegistryV2(), FakeGcsClient(), _layout()
     output = _produce_committed_output(registry, gcs, layout)
@@ -152,6 +282,15 @@ def test_consume_asset_manifest_event_cas_updates_on_new_desired_revision():
     second_event = ProjectionEvent(
         kind=ProjectionKind.ASSET_MANIFEST, subject_id=output.label.label_id,
         projection_schema_version="1.0", projection_source_revision=2,
+    )
+    registry.put_outbox_event(
+        OutboxEventRecord.pending(
+            schema_version="2.0",
+            kind=second_event.kind,
+            subject_id=second_event.subject_id,
+            projection_schema_version=second_event.projection_schema_version,
+            projection_source_revision=second_event.projection_source_revision,
+        )
     )
     projection = consume_projection_event(registry, gcs, layout, second_event)
 
@@ -249,6 +388,76 @@ def test_consume_committed_run_output_event_rejects_content_conflict():
     )
     with pytest.raises(ProjectionConsumerError, match="consistency conflict"):
         consume_projection_event(registry, gcs, layout, event)
+    assert registry.get_outbox_event(event.event_id).status == OutboxStatus.DEAD_LETTER
+    occurrence = registry.get_occurrence(output.occurrence.occurrence_id)
+    assert occurrence.readable_occurrence.status == "conflict"
+
+
+def test_projection_repair_epoch_recreates_deleted_asset_projection():
+    registry, gcs, layout = FakeRegistryV2(), FakeGcsClient(), _layout()
+    output = _produce_committed_output(registry, gcs, layout)
+    original = ProjectionEvent(
+        kind=ProjectionKind.ASSET_MANIFEST,
+        subject_id=output.label.label_id,
+        projection_schema_version="1.0",
+        projection_source_revision=1,
+    )
+    first = consume_projection_event(registry, gcs, layout, original, now=_NOW)
+    object_name = layout.asset_projection("model", "weights", "run-1")
+    gcs._live.pop(object_name)
+
+    repair = registry.run_atomic(
+        lambda tx: request_projection_repair(
+            tx,
+            layout,
+            kind=ProjectionKind.ASSET_MANIFEST,
+            subject_id=output.label.label_id,
+            expected_source_revision=1,
+            expected_repair_epoch=0,
+            requested_by="reconciler@test",
+            reason="ready object is missing",
+            now=_NOW + timedelta(minutes=1),
+        )
+    )
+    repaired = consume_projection_event(
+        registry, gcs, layout, repair, now=_NOW + timedelta(minutes=1)
+    )
+
+    assert repair.projection_repair_epoch == 1
+    assert repaired.status == "ready"
+    assert repaired.applied_repair_epoch == 1
+    assert repaired.observed_generation != first.observed_generation
+
+
+def test_immutable_run_projection_repair_refuses_to_overwrite_live_content():
+    registry, gcs, layout = FakeRegistryV2(), FakeGcsClient(), _layout()
+    output = _produce_committed_output(registry, gcs, layout)
+    original = ProjectionEvent(
+        kind=ProjectionKind.COMMITTED_RUN_OUTPUT,
+        subject_id=output.occurrence.committed_output_key,
+        projection_schema_version="1.0",
+        projection_source_revision=1,
+    )
+    consume_projection_event(registry, gcs, layout, original, now=_NOW)
+    repair = registry.run_atomic(
+        lambda tx: request_projection_repair(
+            tx,
+            layout,
+            kind=ProjectionKind.COMMITTED_RUN_OUTPUT,
+            subject_id=output.occurrence.committed_output_key,
+            expected_source_revision=1,
+            expected_repair_epoch=0,
+            requested_by="operator@test",
+            reason="forced verification",
+            now=_NOW + timedelta(minutes=1),
+        )
+    )
+
+    with pytest.raises(ProjectionConsumerError, match="consistency conflict"):
+        consume_projection_event(
+            registry, gcs, layout, repair, now=_NOW + timedelta(minutes=1)
+        )
+    assert registry.get_outbox_event(repair.event_id).status == OutboxStatus.DEAD_LETTER
 
 
 def test_consume_committed_run_output_event_rejects_unknown_output_key():

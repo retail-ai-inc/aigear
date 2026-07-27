@@ -41,7 +41,21 @@ def test_composite_index_rejects_empty_field_path():
 
 def test_default_index_definitions_cover_blobs_labels_occurrences_runs():
     groups = {i.collection_group for i in RegistryV2FirestoreIndexes.default_index_definitions()}
-    assert groups == {"blobs", "labels", "occurrences", "runs"}
+    assert groups == {
+        "asset_versions",
+        "blobs",
+        "labels",
+        "occurrences",
+        "outbox",
+        "runs",
+    }
+    outbox_fields = [
+        tuple(field for field, _order in index.fields)
+        for index in RegistryV2FirestoreIndexes.default_index_definitions()
+        if index.collection_group == "outbox"
+    ]
+    assert ("status", "next_attempt_at", "created_at", "event_id") in outbox_fields
+    assert ("status", "lease_expires_at", "created_at", "event_id") in outbox_fields
 
 
 @patch(f"{_MODULE}.run_sh")

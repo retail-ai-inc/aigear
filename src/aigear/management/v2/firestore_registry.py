@@ -35,6 +35,7 @@ from aigear.management.v2.records.occurrence import (
     validate_occurrence_status_transition,
 )
 from aigear.management.v2.records.operation import OperationRecord, validate_operation_phase_transition
+from aigear.management.v2.records.outbox import OutboxEventRecord, OutboxStatus
 from aigear.management.v2.records.run import (
     AttemptRecord,
     AttemptStatus,
@@ -393,7 +394,113 @@ class FirestoreRegistryV2:
     def get_attachment_edge(self, edge_id: TypedId) -> Optional[AttachmentEdge]:
         return self._get(self.paths.attachment_edge_document(edge_id.bare), AttachmentEdge)
 
+    # ── transactional outbox ───────────────────────────────────────────
+
+    def put_outbox_event(self, record: OutboxEventRecord) -> OutboxEventRecord:
+        path = self.paths.outbox_document(record.event_id.bare)
+        existing = self._get(path, OutboxEventRecord)
+        if existing is not None and existing.immutable_identity != record.immutable_identity:
+            raise IdentityConflict("outbox event identity conflict")
+        if existing is not None and record.status.value == "pending":
+            return existing
+        return self._put(path, record, create_only=existing is None)
+
+    def get_outbox_event(self, event_id: TypedId) -> Optional[OutboxEventRecord]:
+        return self._get(self.paths.outbox_document(event_id.bare), OutboxEventRecord)
+
+    def query_due_outbox_events(self, *, now: str, limit: int):
+        """Return a bounded batch of retryable or lease-expired projection work."""
+        collection = self.client.collection(self.paths._under_root("outbox"))
+        retryable = (
+            collection.where(
+                "status",
+                "in",
+                [OutboxStatus.PENDING.value, OutboxStatus.FAILED.value],
+            )
+            .where("next_attempt_at", "<=", now)
+            .order_by("next_attempt_at")
+            .order_by("created_at")
+            .order_by("event_id")
+            .limit(limit)
+        )
+        expired = (
+            collection.where("status", "==", OutboxStatus.DELIVERING.value)
+            .where("lease_expires_at", "<=", now)
+            .order_by("lease_expires_at")
+            .order_by("created_at")
+            .order_by("event_id")
+            .limit(limit)
+        )
+        records = [
+            decode_record(OutboxEventRecord, snapshot.to_dict())
+            for query in (retryable, expired)
+            for snapshot in query.stream()
+        ]
+        records.sort(
+            key=lambda record: (
+                record.next_attempt_at or record.lease_expires_at or record.created_at or "",
+                record.event_id.typed,
+            )
+        )
+        return tuple(records[:limit])
+
     # ── bounded query helpers ────────────────────────────────────────────
+
+    def query_asset_versions(
+        self,
+        *,
+        asset_type: str,
+        name: str,
+        lifecycle_state=None,
+        trust_state=None,
+        page_cutoff: str,
+        cursor,
+        limit: int,
+    ):
+        query = self.client.collection(self.paths._under_root("asset_versions"))
+        query = query.where("asset_type", "==", asset_type).where("name", "==", name)
+        if lifecycle_state is not None:
+            query = query.where("lifecycle_state", "==", lifecycle_state.value)
+        if trust_state is not None:
+            query = query.where("trust_state", "==", trust_state.value)
+        query = (
+            query.where("created_at", "<=", page_cutoff)
+            .order_by("created_at")
+            .order_by("asset_version_id")
+        )
+        if cursor is not None:
+            query = query.start_after(
+                {"created_at": cursor[0], "asset_version_id": cursor[1]}
+            )
+        for snapshot in query.limit(limit).stream():
+            yield decode_record(AssetVersionRecord, snapshot.to_dict())
+
+    def query_run_outputs(
+        self,
+        *,
+        run_id: str,
+        step_name: Optional[str],
+        page_cutoff: str,
+        cursor,
+        limit: int,
+    ):
+        query = self.client.collection(self.paths._under_root("occurrences"))
+        query = query.where("run_id", "==", run_id).where(
+            "status", "==", OccurrenceStatus.COMMITTED.value
+        )
+        if step_name is not None:
+            query = query.where("step_name", "==", step_name)
+        query = (
+            query.where("committed_at", "<=", page_cutoff)
+            .order_by("committed_at")
+            .order_by("occurrence_id")
+        )
+        if cursor is not None:
+            query = query.start_after(
+                {"committed_at": cursor[0], "occurrence_id": cursor[1]}
+            )
+        for snapshot in query.limit(limit).stream():
+            yield decode_record(OccurrenceRecord, snapshot.to_dict())
 
     def iter_asset_versions(self) -> Iterator[AssetVersionRecord]:
         for snapshot in self.client.collection(self.paths._under_root("asset_versions")).stream():

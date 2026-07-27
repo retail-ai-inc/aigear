@@ -100,11 +100,62 @@ class RegistryV2FirestoreIndexes:
                 ),
             ),
             FirestoreCompositeIndex(
+                collection_group="asset_versions",
+                fields=(
+                    ("asset_type", _ASCENDING),
+                    ("name", _ASCENDING),
+                    ("created_at", _ASCENDING),
+                    ("asset_version_id", _ASCENDING),
+                ),
+            ),
+            FirestoreCompositeIndex(
+                collection_group="asset_versions",
+                fields=(
+                    ("asset_type", _ASCENDING),
+                    ("name", _ASCENDING),
+                    ("lifecycle_state", _ASCENDING),
+                    ("created_at", _ASCENDING),
+                    ("asset_version_id", _ASCENDING),
+                ),
+            ),
+            FirestoreCompositeIndex(
+                collection_group="asset_versions",
+                fields=(
+                    ("asset_type", _ASCENDING),
+                    ("name", _ASCENDING),
+                    ("trust_state", _ASCENDING),
+                    ("created_at", _ASCENDING),
+                    ("asset_version_id", _ASCENDING),
+                ),
+            ),
+            FirestoreCompositeIndex(
+                collection_group="asset_versions",
+                fields=(
+                    ("asset_type", _ASCENDING),
+                    ("name", _ASCENDING),
+                    ("lifecycle_state", _ASCENDING),
+                    ("trust_state", _ASCENDING),
+                    ("created_at", _ASCENDING),
+                    ("asset_version_id", _ASCENDING),
+                ),
+            ),
+            FirestoreCompositeIndex(
                 collection_group="occurrences",
                 fields=(
                     ("run_id", _ASCENDING),
+                    ("status", _ASCENDING),
+                    ("committed_at", _ASCENDING),
+                    ("occurrence_id", _ASCENDING),
+                ),
+            ),
+            FirestoreCompositeIndex(
+                collection_group="occurrences",
+                fields=(
+                    ("run_id", _ASCENDING),
+                    ("status", _ASCENDING),
                     ("step_name", _ASCENDING),
-                    ("committed_at", _DESCENDING),
+                    ("committed_at", _ASCENDING),
+                    ("occurrence_id", _ASCENDING),
                 ),
             ),
             FirestoreCompositeIndex(
@@ -114,6 +165,24 @@ class RegistryV2FirestoreIndexes:
             FirestoreCompositeIndex(
                 collection_group="runs",
                 fields=(("status", _ASCENDING), ("run_id", _ASCENDING)),
+            ),
+            FirestoreCompositeIndex(
+                collection_group="outbox",
+                fields=(
+                    ("status", _ASCENDING),
+                    ("next_attempt_at", _ASCENDING),
+                    ("created_at", _ASCENDING),
+                    ("event_id", _ASCENDING),
+                ),
+            ),
+            FirestoreCompositeIndex(
+                collection_group="outbox",
+                fields=(
+                    ("status", _ASCENDING),
+                    ("lease_expires_at", _ASCENDING),
+                    ("created_at", _ASCENDING),
+                    ("event_id", _ASCENDING),
+                ),
             ),
         )
 
