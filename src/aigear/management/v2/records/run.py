@@ -240,6 +240,8 @@ class RunRecord:
     remaining_required_steps: Optional[int] = None
     parent_run_id: Optional[str] = None
     backfill_of: Optional[str] = None
+    failure_reason: Optional[str] = None
+    cancel_reason: Optional[str] = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "run_id", validate_segment(self.run_id, field_name="run_id"))
@@ -273,6 +275,8 @@ class StepRecord:
     resolved_inputs_digest: Optional[TypedId] = None
     resolved_at: Optional[str] = None
     source_step_revision: Optional[int] = None
+    next_attempt_at: Optional[str] = None
+    failure_reason: Optional[str] = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "run_id", validate_segment(self.run_id, field_name="run_id"))
@@ -310,6 +314,7 @@ class AttemptRecord:
     owner_principal: Optional[str] = None
     lease_expires_at: Optional[str] = None
     heartbeat_at: Optional[str] = None
+    failure_reason: Optional[str] = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "run_id", validate_segment(self.run_id, field_name="run_id"))

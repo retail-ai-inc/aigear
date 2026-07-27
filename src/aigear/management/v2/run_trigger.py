@@ -15,16 +15,10 @@ has no forward dependency on the registry's later Operation CRUD support;
 ``FakeRegistryV2`` is made to satisfy this Protocol structurally once it
 grows ``get_operation``/``put_operation``.
 
-Deliberate scope note: a ``run_trigger`` operation never stages or uploads
-any file, so the generic ``reserved -> staging -> uploaded -> finalizing ->
-succeeded`` phase chain (spec 10.2, written for the shared Operation type in
-general) does not really describe it. Spec 10.1/10.2 do not carve out a
-shorter path for this operation type, so this module makes an explicit
-choice: a successfully reserved run-trigger operation is left in
-``OperationPhase.RESERVED`` and that *is* its terminal, successful state for
-this operation type -- it is not forced through the file-upload-oriented
-phases that do not apply to it. Revisit this if a later phase gives run
-triggering its own phase vocabulary.
+A ``run_trigger`` has no upload phases.  Its create-only transaction writes a
+terminal ``succeeded`` record directly, without exposing an intermediate
+``reserved`` record.  This keeps the shared Operation transition graph strict
+while still making reconcile and SLO accounting observe the trigger as done.
 """
 
 from __future__ import annotations
@@ -78,6 +72,11 @@ def begin_run_trigger(
     request_fingerprint: str,
     owner_principal: str,
     create_run: Callable[[], str],
+    write_epoch: int = 1,
+    firestore_database_id: Optional[str] = None,
+    firestore_database_resource: Optional[str] = None,
+    registry_binding_id: Optional[str] = None,
+    registry_binding_epoch: Optional[int] = None,
 ) -> OperationRecord:
     """Reserve (or replay) an idempotent run trigger.
 
@@ -106,10 +105,14 @@ def begin_run_trigger(
         request_fingerprint=request_fingerprint,
         operation_type="run_trigger",
         owner_principal=owner_principal,
-        write_epoch=1,
+        write_epoch=write_epoch,
         fencing_token=0,
-        phase=OperationPhase.RESERVED,
+        phase=OperationPhase.SUCCEEDED,
         revision=1,
         run_id=run_id,
+        firestore_database_id=firestore_database_id,
+        firestore_database_resource=firestore_database_resource,
+        registry_binding_id=registry_binding_id,
+        registry_binding_epoch=registry_binding_epoch,
     )
     return store.put_operation(operation)

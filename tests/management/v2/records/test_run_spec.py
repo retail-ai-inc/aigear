@@ -128,6 +128,26 @@ def test_run_spec_accepts_multiple_distinct_steps():
     assert len(spec.steps) == 2
 
 
+def test_run_spec_rejects_unknown_dependency():
+    with pytest.raises(InvalidRunSpecError, match="unknown step"):
+        _run_spec(steps=(_step(step_name="train", dependencies=("missing",)),))
+
+
+def test_run_spec_rejects_self_dependency():
+    with pytest.raises(InvalidRunSpecError, match="depend on itself"):
+        _run_spec(steps=(_step(step_name="train", dependencies=("train",)),))
+
+
+def test_run_spec_rejects_dependency_cycle():
+    with pytest.raises(InvalidRunSpecError, match="cycle"):
+        _run_spec(
+            steps=(
+                _step(step_name="a", dependencies=("b",)),
+                _step(step_name="b", dependencies=("a",)),
+            )
+        )
+
+
 def test_run_spec_rejects_duplicate_seed_input_binding_name():
     binding = SeedInputBinding(binding_name="features", asset_version_id=_DIGEST)
     with pytest.raises(InvalidRunSpecError):
@@ -159,6 +179,21 @@ def test_run_spec_defaults_retry_and_cancel_policy_to_empty_dict():
 def test_run_spec_rejects_non_dict_retry_policy():
     with pytest.raises(InvalidRunSpecError):
         _run_spec(retry_policy="not-a-dict")
+
+
+def test_run_spec_rejects_unknown_retry_policy_key():
+    with pytest.raises(InvalidRunSpecError, match="unsupported keys"):
+        _run_spec(retry_policy={"forever": True})
+
+
+def test_run_spec_rejects_unbounded_or_inverted_backoff():
+    with pytest.raises(InvalidRunSpecError, match="must be >= initial"):
+        _run_spec(
+            retry_policy={
+                "initial_backoff_seconds": 10,
+                "max_backoff_seconds": 5,
+            }
+        )
 
 
 def test_run_spec_scheduled_for_defaults_to_none():

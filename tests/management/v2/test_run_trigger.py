@@ -73,7 +73,7 @@ def test_begin_run_trigger_creates_run_on_first_call():
 
     assert created_run_ids == ["run-1"]
     assert operation.run_id == "run-1"
-    assert operation.phase == OperationPhase.RESERVED
+    assert operation.phase == OperationPhase.SUCCEEDED
     assert operation.idempotency_key_hash == key.bare
     assert store.get_operation(key.bare) is operation
 

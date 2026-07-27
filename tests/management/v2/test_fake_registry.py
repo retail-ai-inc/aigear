@@ -83,6 +83,18 @@ def _fingerprint() -> TypedId:
     return TypedId.from_bare(_FINGERPRINT_HEX)
 
 
+def test_run_atomic_rolls_back_every_registry_write_on_failure():
+    registry = FakeRegistryV2()
+
+    def work(tx):
+        tx.create_run(RunRecord(run_id="run-atomic", status=RunStatus.PENDING))
+        raise RuntimeError("inject transaction failure")
+
+    with pytest.raises(RuntimeError, match="inject"):
+        registry.run_atomic(work)
+    assert registry.get_run("run-atomic") is None
+
+
 def _blob_record(**overrides) -> BlobRecord:
     blob_id = TypedId.from_bare(_BLOB_HEX)
     defaults = dict(

@@ -21,13 +21,24 @@ observe an Attempt at rest in ``committing``.
 
 from __future__ import annotations
 
-from typing import Optional, Protocol
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
+from typing import Optional, Protocol, Sequence
+
+from aigear.management.v2.identifiers import TypedId
+from aigear.management.v2.records.occurrence import (
+    OccurrenceRecord,
+    OccurrenceStatus,
+    compute_occurrence_id,
+)
 
 from aigear.management.v2.records.run import (
     AttemptRecord,
     AttemptStatus,
     StepRecord,
     StepStatus,
+    RunRecord,
+    RunStatus,
 )
 
 __all__ = ["FailAttemptError", "FailAttemptStore", "fail_attempt"]
@@ -38,6 +49,10 @@ class FailAttemptError(ValueError):
 
 
 class FailAttemptStore(Protocol):
+    def get_run(self, run_id: str) -> Optional[RunRecord]: ...
+
+    def update_run_status(self, run_id: str, target_status: RunStatus, **field_updates) -> RunRecord: ...
+
     def get_attempt(self, run_id: str, step_name: str, attempt_no: int) -> Optional[AttemptRecord]: ...
 
     def update_attempt_status(
@@ -49,6 +64,10 @@ class FailAttemptStore(Protocol):
     def update_step_status(
         self, run_id: str, step_name: str, target_status: StepStatus, **field_updates
     ) -> StepRecord: ...
+
+    def get_occurrence(self, occurrence_id: TypedId) -> Optional[OccurrenceRecord]: ...
+
+    def put_occurrence(self, record: OccurrenceRecord) -> OccurrenceRecord: ...
 
 
 _ATTEMPT_FAILABLE_STATUSES = frozenset({AttemptStatus.LEASED, AttemptStatus.RUNNING})
@@ -63,6 +82,10 @@ def fail_attempt(
     fencing_token: int,
     retryable: bool,
     reason: str,
+    output_names: Sequence[str] = (),
+    max_attempts: int = 3,
+    retry_backoff_seconds: float = 0,
+    now: Optional[datetime] = None,
 ) -> StepRecord:
     """Report that Attempt ``attempt_no`` failed, fencing out a stale caller.
 
@@ -75,6 +98,18 @@ def fail_attempt(
     if not isinstance(reason, str) or not reason:
         raise FailAttemptError(f"reason must be a non-empty str, got {reason!r}")
 
+    if isinstance(max_attempts, bool) or not isinstance(max_attempts, int) or max_attempts < 1:
+        raise FailAttemptError(f"max_attempts must be a positive int, got {max_attempts!r}")
+    if isinstance(retry_backoff_seconds, bool) or not isinstance(
+        retry_backoff_seconds, (int, float)
+    ) or retry_backoff_seconds < 0:
+        raise FailAttemptError(
+            f"retry_backoff_seconds must be a non-negative number, got {retry_backoff_seconds!r}"
+        )
+
+    run = store.get_run(run_id)
+    if run is None:
+        raise FailAttemptError(f"no Run registered for run_id {run_id!r}")
     attempt = store.get_attempt(run_id, step_name, attempt_no)
     if attempt is None:
         raise FailAttemptError(
@@ -93,6 +128,18 @@ def fail_attempt(
             "refusing to act on a superseded Attempt"
         )
 
+    step = store.get_step(run_id, step_name)
+    if step is None:
+        raise FailAttemptError(f"no Step registered for (run_id={run_id!r}, step_name={step_name!r})")
+    if step.current_attempt_no != attempt_no:
+        raise FailAttemptError(
+            f"Attempt {attempt_no!r} is no longer current for step {step_name!r}"
+        )
+    if run.status != RunStatus.RUNNING:
+        raise FailAttemptError(
+            f"Run {run_id!r} is not running (status={run.status.value!r})"
+        )
+
     store.update_attempt_status(
         run_id,
         step_name,
@@ -101,10 +148,34 @@ def fail_attempt(
         owner_principal=None,
         lease_expires_at=None,
         heartbeat_at=None,
+        failure_reason=reason,
     )
 
-    step = store.get_step(run_id, step_name)
-    if step is None:
-        raise FailAttemptError(f"no Step registered for (run_id={run_id!r}, step_name={step_name!r})")
-    target_status = StepStatus.RETRY_WAIT if retryable else StepStatus.FAILED
-    return store.update_step_status(run_id, step_name, target_status)
+    for output_name in output_names:
+        occurrence = store.get_occurrence(
+            compute_occurrence_id(run_id, step_name, attempt_no, output_name)
+        )
+        if occurrence is not None and occurrence.status == OccurrenceStatus.PROVISIONAL:
+            store.put_occurrence(replace(occurrence, status=OccurrenceStatus.ABORTED))
+
+    may_retry = retryable and attempt_no < max_attempts
+    if may_retry:
+        base_time = now or datetime.now(timezone.utc)
+        next_attempt_at = (base_time + timedelta(seconds=float(retry_backoff_seconds))).isoformat()
+        return store.update_step_status(
+            run_id,
+            step_name,
+            StepStatus.RETRY_WAIT,
+            next_attempt_at=next_attempt_at,
+            failure_reason=reason,
+        )
+
+    updated_step = store.update_step_status(
+        run_id,
+        step_name,
+        StepStatus.FAILED,
+        next_attempt_at=None,
+        failure_reason=reason,
+    )
+    store.update_run_status(run_id, RunStatus.FAILED, failure_reason=reason)
+    return updated_step

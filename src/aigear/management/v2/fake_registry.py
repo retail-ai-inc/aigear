@@ -42,17 +42,20 @@ must enforce, at the granularity spec sections 7-10 actually require:
   unfiltered, unsorted iterators for ``query.py`` (T27) to build bounded,
   paginated list queries on top of; they never create or mutate a record.
 
-This is a test/dev double, not a Firestore client: there is no transaction
-isolation, no CAS/optimistic-concurrency semantics beyond what is described
-above, and no persistence across process restarts.
+This is a test/dev double, not a Firestore client. ``run_atomic`` serializes
+callbacks and rolls all in-memory collections back on failure, but there is
+no cross-process isolation or persistence across process restarts.
 """
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import replace
-from typing import Dict, Iterator, Optional, Tuple
+from threading import RLock
+from typing import Callable, Dict, Iterator, Optional, Tuple, TypeVar
 
 from aigear.management.v2.identifiers import TypedId
+from aigear.management.v2.attestation import AttestationRecord, same_attestation_identity
 from aigear.management.v2.records.asset_version import AssetVersionRecord
 from aigear.management.v2.records.blob import BlobLocationRevision, BlobRecord
 from aigear.management.v2.records.blob_claim import BlobClaim, validate_claim_transition
@@ -75,6 +78,7 @@ from aigear.management.v2.records.run import (
     validate_run_status_transition,
     validate_step_status_transition,
 )
+from aigear.management.v2.records.run_spec import RunSpec, compute_run_spec_digest
 
 __all__ = [
     "FakeRegistryConflictError",
@@ -117,6 +121,9 @@ class OperationConflict(FakeRegistryConflictError):
     """Same ``idempotency_key_hash`` but a different ``request_fingerprint`` (spec 10.1/10.2)."""
 
 
+_T = TypeVar("_T")
+
+
 def _blob_physical_identity(record: BlobRecord) -> tuple:
     return (record.sha256, record.size_bytes, record.crc32c)
 
@@ -131,13 +138,16 @@ class FakeRegistryV2:
     """In-memory stand-in for the V2 Firestore registry."""
 
     def __init__(self) -> None:
+        self._transaction_lock = RLock()
         self._blobs: Dict[TypedId, BlobRecord] = {}
         self._blob_location_revisions: Dict[Tuple[TypedId, int], BlobLocationRevision] = {}
         self._asset_versions: Dict[TypedId, AssetVersionRecord] = {}
+        self._attestations: Dict[TypedId, AttestationRecord] = {}
         self._labels: Dict[TypedId, LabelRecord] = {}
         self._occurrences: Dict[TypedId, OccurrenceRecord] = {}
         self._committed_output_index: Dict[TypedId, TypedId] = {}
         self._runs: Dict[str, RunRecord] = {}
+        self._run_specs: Dict[str, RunSpec] = {}
         self._steps: Dict[Tuple[str, str], StepRecord] = {}
         self._attempts: Dict[Tuple[str, str, int], AttemptRecord] = {}
         self._operations: Dict[str, OperationRecord] = {}
@@ -145,6 +155,33 @@ class FakeRegistryV2:
         self._lineage_edges: Dict[TypedId, LineageEdge] = {}
         self._component_edges: Dict[TypedId, ComponentEdge] = {}
         self._attachment_edges: Dict[TypedId, AttachmentEdge] = {}
+
+    # ── transaction boundary ───────────────────────────────────────────
+
+    def run_atomic(self, work: Callable[["FakeRegistryV2"], _T]) -> _T:
+        """Execute ``work`` with serializable in-memory semantics.
+
+        The fake used to mutate a sequence of dictionaries directly, so an
+        exception half way through finalize/cancel/lease acquisition exposed
+        partial state even though the production contract requires one
+        Firestore transaction.  A re-entrant lock plus snapshot rollback makes
+        the reference backend exercise the same all-or-nothing boundary.  GCS
+        side effects remain external Saga effects and are intentionally not
+        rolled back.
+        """
+        with self._transaction_lock:
+            state_fields = tuple(
+                name
+                for name, value in self.__dict__.items()
+                if name != "_transaction_lock" and isinstance(value, dict)
+            )
+            snapshot = {name: deepcopy(getattr(self, name)) for name in state_fields}
+            try:
+                return work(self)
+            except BaseException:
+                for name, value in snapshot.items():
+                    setattr(self, name, value)
+                raise
 
     # ── Blob ─────────────────────────────────────────────────────────────
 
@@ -196,6 +233,22 @@ class FakeRegistryV2:
 
     def get_asset_version(self, asset_version_id: TypedId) -> Optional[AssetVersionRecord]:
         return self._asset_versions.get(asset_version_id)
+
+    # ── Attestation ─────────────────────────────────────────────────────
+
+    def put_attestation(self, record: AttestationRecord) -> AttestationRecord:
+        existing = self._attestations.get(record.attestation_id)
+        if existing is not None:
+            if not same_attestation_identity(existing, record):
+                raise IdentityConflict(
+                    f"attestation_id {record.attestation_id.typed!r} already exists with different content"
+                )
+            return existing
+        self._attestations[record.attestation_id] = record
+        return record
+
+    def get_attestation(self, attestation_id: TypedId) -> Optional[AttestationRecord]:
+        return self._attestations.get(attestation_id)
 
     # ── Label ────────────────────────────────────────────────────────────
 
@@ -272,6 +325,17 @@ class FakeRegistryV2:
             )
         self._runs[record.run_id] = record
         return record
+
+    def put_run_spec(self, run_id: str, run_spec: RunSpec) -> RunSpec:
+        """Persist the immutable RunSpec instead of relying on process memory."""
+        existing = self._run_specs.get(run_id)
+        if existing is not None and compute_run_spec_digest(existing) != compute_run_spec_digest(run_spec):
+            raise IdentityConflict(f"run_id {run_id!r} already has a different immutable RunSpec")
+        self._run_specs[run_id] = run_spec
+        return run_spec
+
+    def get_run_spec(self, run_id: str) -> Optional[RunSpec]:
+        return self._run_specs.get(run_id)
 
     def get_run(self, run_id: str) -> Optional[RunRecord]:
         return self._runs.get(run_id)

@@ -123,6 +123,11 @@ class OperationRecord:
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
     finished_at: Optional[str] = None
+    firestore_database_id: Optional[str] = None
+    firestore_database_resource: Optional[str] = None
+    registry_binding_id: Optional[str] = None
+    registry_binding_epoch: Optional[int] = None
+    security_watermark: Optional[int] = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -156,3 +161,22 @@ class OperationRecord:
             raise InvalidOperationRecordError(
                 "last_error and error_class must both be set or both be None"
             )
+        binding_values = (
+            self.firestore_database_id,
+            self.registry_binding_id,
+            self.registry_binding_epoch,
+        )
+        if any(value is not None for value in binding_values) and any(
+            value is None for value in binding_values
+        ):
+            raise InvalidOperationRecordError(
+                "firestore_database_id and registry_binding_id/epoch must be set together"
+            )
+        if self.firestore_database_id is not None:
+            _require_non_empty_str("firestore_database_id", self.firestore_database_id)
+            _require_non_empty_str("registry_binding_id", self.registry_binding_id)
+            _require_positive_int("registry_binding_epoch", self.registry_binding_epoch)
+        if self.firestore_database_resource is not None:
+            _require_non_empty_str("firestore_database_resource", self.firestore_database_resource)
+        if self.security_watermark is not None:
+            _require_non_negative_int("security_watermark", self.security_watermark)

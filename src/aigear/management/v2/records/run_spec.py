@@ -11,15 +11,15 @@ collision among a Step's outputs (spec 6.7: two outputs sharing a
 that is enforced eagerly in ``__post_init__``, matching every other Phase A
 record type in this package.
 
-Deliberately out of scope here: dependency-graph validation (whether a
-Step's declared ``dependencies`` actually reference other Steps in the same
-RunSpec, cycle detection) and ``resolved_inputs`` resolution -- the spec's
-explicit fail-fast list for ``begin_run`` does not mention either, and
-resolving symbolic dependencies into concrete Occurrences is a later,
-Firestore-transaction-backed step (T20), not a property of the RunSpec value
-itself. ``retry_policy``/``cancel_policy`` are left as opaque dicts because
-spec 9.2 requires that a RunSpec carry them but never defines a closed schema
-for their contents.
+The dependency graph is validated eagerly.  Unknown dependencies,
+self-dependencies and cycles are deployment errors and must fail before a Run
+or worker resource is created.  ``resolved_inputs`` remains a runtime concern,
+but the symbolic graph it resolves is immutable and must already be sound.
+
+``retry_policy`` and ``cancel_policy`` remain JSON objects for wire
+compatibility, but their currently supported keys are closed and validated.
+Unknown keys fail closed instead of being silently ignored by different
+controller versions.
 """
 
 from __future__ import annotations
@@ -44,6 +44,112 @@ __all__ = [
 
 class InvalidRunSpecError(ValueError):
     """Raised for a malformed RunSpec field or a fail-fast uniqueness/collision violation (spec 9.2)."""
+
+
+_RETRY_POLICY_KEYS = frozenset(
+    {
+        "max_attempts",
+        "initial_backoff_seconds",
+        "max_backoff_seconds",
+        "backoff_multiplier",
+        "retryable_error_classes",
+    }
+)
+_CANCEL_POLICY_KEYS = frozenset({"grace_period_seconds", "force_after_seconds"})
+
+
+def _require_number(field_name: str, value: object, *, minimum: float) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < minimum:
+        raise InvalidRunSpecError(f"{field_name} must be a number >= {minimum}, got {value!r}")
+    return float(value)
+
+
+def _validate_retry_policy(policy: Dict) -> None:
+    unknown = set(policy) - _RETRY_POLICY_KEYS
+    if unknown:
+        raise InvalidRunSpecError(f"retry_policy contains unsupported keys: {sorted(unknown)!r}")
+    if "max_attempts" in policy:
+        value = policy["max_attempts"]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise InvalidRunSpecError(f"retry_policy.max_attempts must be a positive int, got {value!r}")
+    initial = _require_number(
+        "retry_policy.initial_backoff_seconds",
+        policy.get("initial_backoff_seconds", 1),
+        minimum=0,
+    )
+    maximum = _require_number(
+        "retry_policy.max_backoff_seconds",
+        policy.get("max_backoff_seconds", max(initial, 1)),
+        minimum=0,
+    )
+    if maximum < initial:
+        raise InvalidRunSpecError(
+            "retry_policy.max_backoff_seconds must be >= initial_backoff_seconds"
+        )
+    _require_number(
+        "retry_policy.backoff_multiplier",
+        policy.get("backoff_multiplier", 2),
+        minimum=1,
+    )
+    retryable = policy.get("retryable_error_classes", ())
+    if not isinstance(retryable, (list, tuple)) or not all(
+        isinstance(item, str) and item for item in retryable
+    ):
+        raise InvalidRunSpecError(
+            "retry_policy.retryable_error_classes must be a sequence of non-empty strings"
+        )
+
+
+def _validate_cancel_policy(policy: Dict) -> None:
+    unknown = set(policy) - _CANCEL_POLICY_KEYS
+    if unknown:
+        raise InvalidRunSpecError(f"cancel_policy contains unsupported keys: {sorted(unknown)!r}")
+    grace = _require_number(
+        "cancel_policy.grace_period_seconds",
+        policy.get("grace_period_seconds", 30),
+        minimum=0,
+    )
+    force_after = _require_number(
+        "cancel_policy.force_after_seconds",
+        policy.get("force_after_seconds", max(grace, 30)),
+        minimum=0,
+    )
+    if force_after < grace:
+        raise InvalidRunSpecError(
+            "cancel_policy.force_after_seconds must be >= grace_period_seconds"
+        )
+
+
+def _validate_dependency_graph(steps: Tuple["StepSpec", ...]) -> None:
+    names = {step.step_name for step in steps}
+    graph = {step.step_name: tuple(step.dependencies) for step in steps}
+    for step_name, dependencies in graph.items():
+        for dependency in dependencies:
+            if dependency == step_name:
+                raise InvalidRunSpecError(f"step {step_name!r} must not depend on itself")
+            if dependency not in names:
+                raise InvalidRunSpecError(
+                    f"step {step_name!r} depends on unknown step {dependency!r}"
+                )
+
+    visiting = set()
+    visited = set()
+
+    def visit(step_name: str, path: Tuple[str, ...]) -> None:
+        if step_name in visited:
+            return
+        if step_name in visiting:
+            cycle_start = path.index(step_name)
+            cycle = path[cycle_start:] + (step_name,)
+            raise InvalidRunSpecError(f"RunSpec dependency cycle detected: {' -> '.join(cycle)}")
+        visiting.add(step_name)
+        for dependency in graph[step_name]:
+            visit(dependency, path + (step_name,))
+        visiting.remove(step_name)
+        visited.add(step_name)
+
+    for step_name in sorted(names):
+        visit(step_name, ())
 
 
 def _require_non_empty_str(field_name: str, value: object) -> None:
@@ -237,6 +343,7 @@ class RunSpec:
         if not self.steps or not all(isinstance(step, StepSpec) for step in self.steps):
             raise InvalidRunSpecError("steps must be a non-empty sequence of StepSpec")
         _ensure_unique((step.step_name for step in self.steps), field_name="step_name")
+        _validate_dependency_graph(self.steps)
 
         if not all(isinstance(binding, SeedInputBinding) for binding in self.seed_inputs):
             raise InvalidRunSpecError("seed_inputs must be a sequence of SeedInputBinding")
@@ -253,6 +360,8 @@ class RunSpec:
             raise InvalidRunSpecError(
                 f"cancel_policy must be a dict, got {type(self.cancel_policy)!r}"
             )
+        _validate_retry_policy(self.retry_policy)
+        _validate_cancel_policy(self.cancel_policy)
 
     def to_digest_dict(self) -> dict:
         return {

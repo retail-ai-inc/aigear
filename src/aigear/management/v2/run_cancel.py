@@ -34,7 +34,15 @@ T27 for read-side iteration helpers).
 
 from __future__ import annotations
 
-from typing import Optional, Protocol, Sequence
+from dataclasses import replace
+from typing import Mapping, Optional, Protocol, Sequence
+
+from aigear.management.v2.identifiers import TypedId
+from aigear.management.v2.records.occurrence import (
+    OccurrenceRecord,
+    OccurrenceStatus,
+    compute_occurrence_id,
+)
 
 from aigear.management.v2.records.run import (
     AttemptRecord,
@@ -74,13 +82,22 @@ class RunCancelStore(Protocol):
         self, run_id: str, step_name: str, attempt_no: int, target_status: AttemptStatus, **field_updates
     ) -> AttemptRecord: ...
 
+    def get_occurrence(self, occurrence_id: TypedId) -> Optional[OccurrenceRecord]: ...
+
+    def put_occurrence(self, record: OccurrenceRecord) -> OccurrenceRecord: ...
+
 
 _STEP_TERMINAL_STATUSES = frozenset({StepStatus.SUCCEEDED, StepStatus.FAILED, StepStatus.CANCELLED})
 _ATTEMPT_ACTIVE_STATUSES = frozenset({AttemptStatus.LEASED, AttemptStatus.RUNNING})
 
 
 def cancel_run(
-    store: RunCancelStore, *, run_id: str, step_names: Sequence[str], reason: str
+    store: RunCancelStore,
+    *,
+    run_id: str,
+    step_names: Sequence[str],
+    reason: str,
+    output_names_by_step: Optional[Mapping[str, Sequence[str]]] = None,
 ) -> RunRecord:
     """Begin cancelling ``run_id``: CAS it to ``cancelling`` and fence every
     non-terminal Step (and its current Attempt, if any) to ``cancelled``."""
@@ -97,7 +114,7 @@ def cancel_run(
     if run.status == RunStatus.CANCELLED:
         return run
     if run.status == RunStatus.RUNNING:
-        store.update_run_status(run_id, RunStatus.CANCELLING)
+        store.update_run_status(run_id, RunStatus.CANCELLING, cancel_reason=reason)
 
     for step_name in step_names:
         step = store.get_step(run_id, step_name)
@@ -117,6 +134,14 @@ def cancel_run(
                     lease_expires_at=None,
                     heartbeat_at=None,
                 )
+                for output_name in (output_names_by_step or {}).get(step_name, ()):
+                    occurrence = store.get_occurrence(
+                        compute_occurrence_id(run_id, step_name, attempt.attempt_no, output_name)
+                    )
+                    if occurrence is not None and occurrence.status == OccurrenceStatus.PROVISIONAL:
+                        store.put_occurrence(
+                            replace(occurrence, status=OccurrenceStatus.ABORTED)
+                        )
 
         store.update_step_status(run_id, step_name, StepStatus.CANCELLED)
 
