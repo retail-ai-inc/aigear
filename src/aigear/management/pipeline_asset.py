@@ -28,11 +28,10 @@ supplied (``schema_contract_digest``/``runtime_contract_digest``/
 ``download_exact``) -- this keeps the zero-config constructor working for
 every caller that never touches those two methods.
 
-``begin_run`` is the only place a :class:`~aigear.management.v2.records.
-run_spec.RunSpec` is ever supplied; every other method above only takes a
-``run_id``, so this class caches the accepted ``RunSpec`` in memory
-(``self._run_specs``) and looks it up by ``run_id`` for them. This mirrors
-spec 9.2's own assumption that a Run's RunSpec is immutable once accepted.
+``begin_run`` persists the immutable RunSpec in Registry V2. Later calls
+resolve it from Registry, so controller restarts and horizontal replicas do
+not depend on process memory. ``self._run_specs`` remains only as a backwards-
+compatible fallback for third-party test doubles written before RunSpec CRUD.
 
 Out of scope for T28 (spec 24.1's ``upload_asset``/``upload_bundle``/
 ``import_external``): manual asset ingestion is a distinct workflow (spec
@@ -47,22 +46,28 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Callable, Dict, Optional, Tuple, TypeVar
 
 from aigear.management.v2 import attempt_fail, resolve_inputs as resolve_inputs_module, run_cancel
+from aigear.management.v2.attempt_heartbeat import heartbeat_attempt as _heartbeat_attempt
+from aigear.management.v2.attestation import CloudKmsAsymmetricSigner, DigestSigner, HmacTestSigner
 from aigear.management.v2.control_document import ControlDocument
 from aigear.management.v2.download import download_exact as _download_blob
 from aigear.management.v2.environment import EnvironmentIdentity, compute_environment_fingerprint
 from aigear.management.v2.fake_gcs import FakeGcsClient
 from aigear.management.v2.fake_registry import FakeRegistryV2
+from aigear.management.v2.firestore_registry import FirestoreRegistryV2
 from aigear.management.v2.finalizer import FinalizeContext
 from aigear.management.v2.finalizer import finalize_step_outputs as _finalize_step_outputs
+from aigear.management.v2.finalizer import reserve_finalize_blob_claims
 from aigear.management.v2.gcs_layout import GcsLayoutV2
+from aigear.management.v2.gcs_client import GcsClientV2, GoogleGcsClientV2
 from aigear.management.v2.identifiers import SHA256_TYPED_PREFIX, TypedId
 from aigear.management.v2.records.asset_version import AssetVersionRecord
 from aigear.management.v2.records.occurrence import OccurrenceRecord
 from aigear.management.v2.records.run import AttemptRecord, RunRecord, RunStatus, StepRecord, StepStatus
 from aigear.management.v2.records.run_spec import RunSpec, compute_run_spec_digest
+from aigear.management.v2.pubsub_auth import verify_pubsub_oidc_token
 from aigear.management.v2.resolver import Selector, UsageContext
 from aigear.management.v2.resolver import resolve as _resolve_selector
 from aigear.management.v2.run_trigger import begin_run_trigger
@@ -81,6 +86,7 @@ _NOT_IMPLEMENTED_HINT = (
 # Phase B module makes it configurable yet, so it is a module constant here
 # too rather than a per-instance guess.
 _SCHEMA_VERSION = "2.0"
+_T = TypeVar("_T")
 
 
 class PipelineAssetManagementError(ValueError):
@@ -110,10 +116,9 @@ class PipelineAssetManagement:
         ``project_name``/``pipeline_version`` also fully determine this
         instance's ``GcsLayoutV2``.
     registry, gcs:
-        Injected backends; each defaults to a fresh in-memory fake so this
-        class is usable standalone (e.g. in tests) without any GCP
-        dependency. Real Firestore/GCS backends are out of scope for this
-        phase and will replace these defaults in a later phase.
+        Injected backends; each defaults to a fresh in-memory fake for tests.
+        Production mode rejects these defaults; use :meth:`for_gcp` or inject
+        equivalent transaction/generation-aware production implementations.
     schema_contract_digest, runtime_contract_digest, policy_version:
         Deployment-level pins ``finalize_step_outputs`` needs (spec 8.2);
         left optional here because most callers of this class never call
@@ -131,12 +136,19 @@ class PipelineAssetManagement:
         self,
         environment_identity: EnvironmentIdentity,
         *,
-        registry: Optional[FakeRegistryV2] = None,
-        gcs: Optional[FakeGcsClient] = None,
+        registry: Optional[object] = None,
+        gcs: Optional[GcsClientV2] = None,
         schema_contract_digest: Optional[TypedId] = None,
         runtime_contract_digest: Optional[TypedId] = None,
         policy_version: Optional[str] = None,
         control_document: Optional[ControlDocument] = None,
+        attestation_signer: Optional[DigestSigner] = None,
+        manifest_integrity_signer: Optional[DigestSigner] = None,
+        blob_location_signer: Optional[DigestSigner] = None,
+        occurrence_finalization_signer: Optional[DigestSigner] = None,
+        allowed_completion_publishers: Tuple[str, ...] = (),
+        completion_oidc_audience: Optional[str] = None,
+        production: bool = False,
     ) -> None:
         self.environment_identity = environment_identity
         self.environment_fingerprint = compute_environment_fingerprint(environment_identity)
@@ -151,18 +163,210 @@ class PipelineAssetManagement:
         self.runtime_contract_digest = runtime_contract_digest
         self.policy_version = policy_version
         self.control_document = control_document
+        self.attestation_signer = attestation_signer
+        self.manifest_integrity_signer = manifest_integrity_signer or attestation_signer
+        self.blob_location_signer = blob_location_signer or attestation_signer
+        self.occurrence_finalization_signer = occurrence_finalization_signer or attestation_signer
+        self.production = production
+        self.allowed_completion_publishers = tuple(allowed_completion_publishers)
+        self.completion_oidc_audience = completion_oidc_audience
         self._run_specs: Dict[str, RunSpec] = {}
+        if production:
+            missing = [
+                name
+                for name, value in (
+                    ("control_document", control_document),
+                    ("schema_contract_digest", schema_contract_digest),
+                    ("runtime_contract_digest", runtime_contract_digest),
+                    ("policy_version", policy_version),
+                    ("manifest_integrity_signer", self.manifest_integrity_signer),
+                    ("blob_location_signer", self.blob_location_signer),
+                    ("occurrence_finalization_signer", self.occurrence_finalization_signer),
+                    ("allowed_completion_publishers", self.allowed_completion_publishers or None),
+                    ("completion_oidc_audience", completion_oidc_audience),
+                )
+                if value is None
+            ]
+            if missing:
+                raise PipelineAssetManagementError(
+                    f"production mode requires explicit {', '.join(missing)}"
+                )
+            if not control_document.firestore_database_resource:
+                raise PipelineAssetManagementError(
+                    "production mode requires control_document.firestore_database_resource"
+                )
+            if (
+                control_document.environment_id != environment_identity.environment_id
+                or control_document.environment_fingerprint != self.environment_fingerprint
+            ):
+                raise PipelineAssetManagementError(
+                    "production control document does not belong to this environment identity"
+                )
+            if isinstance(self.registry, FakeRegistryV2) or isinstance(self.gcs, FakeGcsClient):
+                raise PipelineAssetManagementError(
+                    "production mode refuses FakeRegistryV2/FakeGcsClient backends"
+                )
+            if any(
+                isinstance(signer, HmacTestSigner)
+                for signer in (
+                    self.manifest_integrity_signer,
+                    self.blob_location_signer,
+                    self.occurrence_finalization_signer,
+                )
+            ):
+                raise PipelineAssetManagementError(
+                    "production mode refuses HmacTestSigner; use a pinned asymmetric KMS signer"
+                )
+            key_versions = {
+                signer.key_version
+                for signer in (
+                    self.manifest_integrity_signer,
+                    self.blob_location_signer,
+                    self.occurrence_finalization_signer,
+                )
+            }
+            if len(key_versions) != 3:
+                raise PipelineAssetManagementError(
+                    "production mode requires distinct pinned keys for manifest, blob location, "
+                    "and occurrence finalization attestations"
+                )
+            if not all(
+                isinstance(signer, CloudKmsAsymmetricSigner)
+                for signer in (
+                    self.manifest_integrity_signer,
+                    self.blob_location_signer,
+                    self.occurrence_finalization_signer,
+                )
+            ):
+                raise PipelineAssetManagementError(
+                    "production mode requires CloudKmsAsymmetricSigner for all attestations"
+                )
+
+    @classmethod
+    def for_gcp(
+        cls,
+        environment_identity: EnvironmentIdentity,
+        *,
+        control_document: ControlDocument,
+        schema_contract_digest: TypedId,
+        runtime_contract_digest: TypedId,
+        policy_version: str,
+        manifest_integrity_key_version: str,
+        blob_location_key_version: str,
+        occurrence_finalization_key_version: str,
+        allowed_completion_publishers: Tuple[str, ...],
+        completion_oidc_audience: str,
+        firestore_client: object = None,
+        storage_client: object = None,
+        kms_client: object = None,
+    ) -> "PipelineAssetManagement":
+        """Construct a fail-closed production manager for the current GCP binding."""
+        registry = FirestoreRegistryV2(
+            environment_identity.project_name,
+            environment_identity.pipeline_version,
+            database_id=control_document.registry_binding.firestore_database_id,
+            client=firestore_client,
+        )
+        gcs = GoogleGcsClientV2(
+            environment_identity.asset_bucket_name,
+            client=storage_client,
+        )
+        return cls(
+            environment_identity,
+            registry=registry,
+            gcs=gcs,
+            schema_contract_digest=schema_contract_digest,
+            runtime_contract_digest=runtime_contract_digest,
+            policy_version=policy_version,
+            control_document=control_document,
+            manifest_integrity_signer=CloudKmsAsymmetricSigner(
+                manifest_integrity_key_version, client=kms_client
+            ),
+            blob_location_signer=CloudKmsAsymmetricSigner(
+                blob_location_key_version, client=kms_client
+            ),
+            occurrence_finalization_signer=CloudKmsAsymmetricSigner(
+                occurrence_finalization_key_version, client=kms_client
+            ),
+            allowed_completion_publishers=allowed_completion_publishers,
+            completion_oidc_audience=completion_oidc_audience,
+            production=True,
+        )
 
     # ── internal lookups ─────────────────────────────────────────────────
 
     def _require_run_spec(self, run_id: str) -> RunSpec:
-        run_spec = self._run_specs.get(run_id)
+        getter = getattr(self.registry, "get_run_spec", None)
+        run_spec = getter(run_id) if getter is not None else None
+        if run_spec is None:
+            # Compatibility fallback for a third-party test backend written
+            # against the earlier Phase-B protocol. Production backends must
+            # implement get/put_run_spec; for the bundled backend the cache is
+            # never authoritative.
+            run_spec = self._run_specs.get(run_id)
         if run_spec is None:
             raise PipelineAssetManagementError(
-                f"no RunSpec cached for run_id {run_id!r}; it must have been accepted by "
-                "begin_run on this same PipelineAssetManagement instance first"
+                f"no RunSpec cached or persisted for run_id {run_id!r}"
             )
         return run_spec
+
+    def _run_atomic(self, work: Callable[[object], _T]) -> _T:
+        runner = getattr(self.registry, "run_atomic", None)
+        if runner is None:
+            raise PipelineAssetManagementError(
+                "the configured Registry backend has no run_atomic transaction boundary; "
+                "refusing a multi-record Pipeline V2 mutation"
+            )
+        def guarded(registry):
+            if self.production:
+                self._validate_current_control(registry)
+            return work(registry)
+
+        return runner(guarded)
+
+    def _validate_current_control(self, registry) -> ControlDocument:
+        getter = getattr(registry, "get_control_document", None)
+        if getter is None:
+            raise PipelineAssetManagementError(
+                "production Registry backend cannot read the V2 control document"
+            )
+        current = getter()
+        if current is None:
+            raise PipelineAssetManagementError("V2 control document is missing")
+        expected = self.control_document
+        if expected is None:
+            raise PipelineAssetManagementError("production manager has no expected control binding")
+        if current.environment_fingerprint != self.environment_fingerprint:
+            raise PipelineAssetManagementError("control environment_fingerprint mismatch")
+        if current.authority != "v2" or current.phase not in {
+            "v2_authoritative",
+            "compatibility_window",
+            "complete",
+        }:
+            raise PipelineAssetManagementError(
+                f"V2 is not writable in control phase {current.phase!r}"
+            )
+        if (
+            current.write_epoch != expected.write_epoch
+            or current.registry_binding != expected.registry_binding
+            or current.firestore_database_resource != expected.firestore_database_resource
+        ):
+            raise PipelineAssetManagementError(
+                "control database/binding/write epoch changed; recreate the manager from current config"
+            )
+        backend_database_id = getattr(registry, "database_id", None)
+        if backend_database_id != current.registry_binding.firestore_database_id:
+            raise PipelineAssetManagementError(
+                "Registry backend database_id does not match the current control binding"
+            )
+        if (
+            current.applied_security_watermark < expected.applied_security_watermark
+            or current.security_journal_head_sequence < expected.security_journal_head_sequence
+        ):
+            raise PipelineAssetManagementError(
+                "control security watermark/journal head moved backwards; possible restore rollback"
+            )
+        return current
 
     def _require_finalize_context(self, now: datetime) -> FinalizeContext:
         missing = [
@@ -179,6 +383,16 @@ class PipelineAssetManagement:
                 "finalize_step_outputs requires "
                 f"{', '.join(missing)} to be set on this PipelineAssetManagement instance"
             )
+        manifest_signer = self.manifest_integrity_signer
+        location_signer = self.blob_location_signer
+        occurrence_signer = self.occurrence_finalization_signer
+        if manifest_signer is None or location_signer is None or occurrence_signer is None:
+            if self.production:
+                raise PipelineAssetManagementError("production finalize requires all integrity signers")
+            default_signer = HmacTestSigner()
+            manifest_signer = manifest_signer or default_signer
+            location_signer = location_signer or default_signer
+            occurrence_signer = occurrence_signer or default_signer
         return FinalizeContext(
             environment_id=self.environment_identity.environment_id,
             environment_fingerprint=self.environment_fingerprint,
@@ -187,6 +401,30 @@ class PipelineAssetManagement:
             runtime_contract_digest=self.runtime_contract_digest,
             policy_version=self.policy_version,
             now=now,
+            manifest_integrity_signer=manifest_signer,
+            blob_location_signer=location_signer,
+            occurrence_finalization_signer=occurrence_signer,
+            write_epoch=self.control_document.write_epoch if self.control_document else 1,
+            firestore_database_id=(
+                self.control_document.registry_binding.firestore_database_id
+                if self.control_document
+                else None
+            ),
+            firestore_database_resource=(
+                self.control_document.firestore_database_resource
+                if self.control_document
+                else None
+            ),
+            registry_binding_id=(
+                self.control_document.registry_binding.registry_binding_id
+                if self.control_document
+                else None
+            ),
+            registry_binding_epoch=(
+                self.control_document.registry_binding.registry_binding_epoch
+                if self.control_document
+                else None
+            ),
         )
 
     def _require_control_document(self) -> ControlDocument:
@@ -195,6 +433,8 @@ class PipelineAssetManagement:
                 "download_exact requires control_document to be set on this "
                 "PipelineAssetManagement instance"
             )
+        if self.production:
+            return self._validate_current_control(self.registry)
         return self.control_document
 
     # ── read-only lookups (implemented) ─────────────────────────────────
@@ -220,31 +460,61 @@ class PipelineAssetManagement:
         """
         run_spec_digest = compute_run_spec_digest(run_spec)
 
-        def _create_run() -> str:
-            run_id = f"run-{uuid.uuid4().hex}"
-            self.registry.create_run(
-                RunRecord(
-                    run_id=run_id,
-                    status=RunStatus.PENDING,
-                    run_spec_digest=run_spec_digest,
-                    remaining_required_steps=len(run_spec.steps),
+        def _work(registry) -> object:
+            def _create_run() -> str:
+                run_id = f"run-{uuid.uuid4().hex}"
+                registry.create_run(
+                    RunRecord(
+                        run_id=run_id,
+                        status=RunStatus.PENDING,
+                        run_spec_digest=run_spec_digest,
+                        remaining_required_steps=len(run_spec.steps),
+                    )
                 )
-            )
-            for step_spec in run_spec.steps:
-                initial_status = StepStatus.BLOCKED if step_spec.dependencies else StepStatus.READY
-                self.registry.create_step(
-                    StepRecord(run_id=run_id, step_name=step_spec.step_name, status=initial_status)
-                )
-            self.registry.update_run_status(run_id, RunStatus.RUNNING)
-            return run_id
+                put_run_spec = getattr(registry, "put_run_spec", None)
+                if put_run_spec is None:
+                    raise PipelineAssetManagementError(
+                        "the configured Registry backend cannot persist immutable RunSpec records"
+                    )
+                put_run_spec(run_id, run_spec)
+                for step_spec in run_spec.steps:
+                    initial_status = StepStatus.BLOCKED if step_spec.dependencies else StepStatus.READY
+                    registry.create_step(
+                        StepRecord(run_id=run_id, step_name=step_spec.step_name, status=initial_status)
+                    )
+                registry.update_run_status(run_id, RunStatus.RUNNING)
+                return run_id
 
-        operation = begin_run_trigger(
-            self.registry,
-            idempotency_key=_coerce_typed_id(idempotency_key),
-            request_fingerprint=run_spec_digest.typed,
-            owner_principal=owner_principal,
-            create_run=_create_run,
-        )
+            return begin_run_trigger(
+                registry,
+                idempotency_key=_coerce_typed_id(idempotency_key),
+                request_fingerprint=run_spec_digest.typed,
+                owner_principal=owner_principal,
+                create_run=_create_run,
+                write_epoch=self.control_document.write_epoch if self.control_document else 1,
+                firestore_database_id=(
+                    self.control_document.registry_binding.firestore_database_id
+                    if self.control_document
+                    else None
+                ),
+                firestore_database_resource=(
+                    self.control_document.firestore_database_resource
+                    if self.control_document
+                    else None
+                ),
+                registry_binding_id=(
+                    self.control_document.registry_binding.registry_binding_id
+                    if self.control_document
+                    else None
+                ),
+                registry_binding_epoch=(
+                    self.control_document.registry_binding.registry_binding_epoch
+                    if self.control_document
+                    else None
+                ),
+            )
+
+        operation = self._run_atomic(_work)
         self._run_specs[operation.run_id] = run_spec
         return self.registry.get_run(operation.run_id)
 
@@ -252,8 +522,10 @@ class PipelineAssetManagement:
         """Resolve ``step_name``'s declared dependencies into exact upstream
         Occurrences (spec 9.2, T28's ``resolve_inputs`` module)."""
         run_spec = self._require_run_spec(run_id)
-        return resolve_inputs_module.resolve_step_inputs(
-            self.registry, run_spec, run_id=run_id, step_name=step_name, now=now
+        return self._run_atomic(
+            lambda registry: resolve_inputs_module.resolve_step_inputs(
+                registry, run_spec, run_id=run_id, step_name=step_name, now=now
+            )
         )
 
     def begin_attempt(
@@ -266,28 +538,126 @@ class PipelineAssetManagement:
         step_spec = step_specs_by_name.get(step_name)
         if step_spec is None:
             raise PipelineAssetManagementError(f"RunSpec for run_id {run_id!r} has no Step named {step_name!r}")
-        step = self.registry.get_step(run_id, step_name)
-        if step is None:
-            raise PipelineAssetManagementError(
-                f"no Step registered for (run_id={run_id!r}, step_name={step_name!r})"
+        def _work(registry):
+            step = registry.get_step(run_id, step_name)
+            if step is None:
+                raise PipelineAssetManagementError(
+                    f"no Step registered for (run_id={run_id!r}, step_name={step_name!r})"
+                )
+            return acquire_step_lease(
+                registry,
+                run_id=run_id,
+                step_name=step_name,
+                output_names=[output.output_name for output in step_spec.outputs],
+                resolved_input_bindings=step.resolved_inputs,
+                environment_fingerprint=self.environment_fingerprint,
+                schema_version=_SCHEMA_VERSION,
+                owner_principal=owner_principal,
+                now=now,
             )
-        return acquire_step_lease(
-            self.registry,
-            run_id=run_id,
-            step_name=step_name,
-            output_names=[output.output_name for output in step_spec.outputs],
-            resolved_input_bindings=step.resolved_inputs,
-            environment_fingerprint=self.environment_fingerprint,
-            schema_version=_SCHEMA_VERSION,
-            owner_principal=owner_principal,
-            now=now,
-        )
+        return self._run_atomic(_work)
 
-    def finalize_step_outputs(self, step_completion: StepCompletionMessage, *, now: datetime):
+    def finalize_step_outputs(
+        self,
+        step_completion: StepCompletionMessage,
+        *,
+        now: datetime,
+        verified_publisher_principal: Optional[str] = None,
+        publisher_oidc_token: Optional[str] = None,
+    ):
         """Finalize every output in one worker completion message (spec 10.4, T22)."""
         run_spec = self._require_run_spec(step_completion.run_id)
         context = self._require_finalize_context(now)
-        return _finalize_step_outputs(self.registry, self.gcs, self.layout, step_completion, run_spec, context)
+        if self.production:
+            if step_completion.fencing_token is None:
+                raise PipelineAssetManagementError(
+                    "production finalize requires the complete database/binding/write/fencing envelope"
+                )
+            if publisher_oidc_token is None:
+                raise PipelineAssetManagementError(
+                    "production finalize requires the Pub/Sub push OIDC token"
+                )
+            verified_publisher_principal = verify_pubsub_oidc_token(
+                publisher_oidc_token,
+                audience=self.completion_oidc_audience,
+                allowed_service_accounts=self.allowed_completion_publishers,
+            )
+            if verified_publisher_principal != step_completion.publisher_principal:
+                raise PipelineAssetManagementError(
+                    "verified publisher principal does not match the completion envelope"
+                )
+            if verified_publisher_principal not in self.allowed_completion_publishers:
+                raise PipelineAssetManagementError("completion publisher principal is not allowlisted")
+            try:
+                issued_at = datetime.fromisoformat(step_completion.issued_at)
+                expires_at = datetime.fromisoformat(step_completion.expires_at)
+            except (TypeError, ValueError) as exc:
+                raise PipelineAssetManagementError(
+                    "completion issued_at/expires_at must be valid RFC3339 timestamps"
+                ) from exc
+            if now.tzinfo is None or issued_at.tzinfo is None or expires_at.tzinfo is None:
+                raise PipelineAssetManagementError("completion timestamps and now must be timezone-aware")
+            if not (issued_at <= now < expires_at):
+                raise PipelineAssetManagementError("completion message is not within its replay window")
+            if (expires_at - issued_at).total_seconds() > 600:
+                raise PipelineAssetManagementError("completion replay window exceeds 10 minutes")
+            control = self._require_control_document()
+            expected = (
+                control.registry_binding.firestore_database_id,
+                control.firestore_database_resource,
+                control.registry_binding.registry_binding_id,
+                control.registry_binding.registry_binding_epoch,
+                control.write_epoch,
+            )
+            actual = (
+                step_completion.firestore_database_id,
+                step_completion.firestore_database_resource,
+                step_completion.registry_binding_id,
+                step_completion.registry_binding_epoch,
+                step_completion.write_epoch,
+            )
+            if actual != expected:
+                raise PipelineAssetManagementError(
+                    "completion database/binding/write epoch does not match the current control document"
+                )
+        self._run_atomic(
+            lambda registry: reserve_finalize_blob_claims(
+                registry,
+                self.gcs,
+                self.layout,
+                step_completion,
+                run_spec,
+                now=now,
+            )
+        )
+        return self._run_atomic(
+            lambda registry: _finalize_step_outputs(
+                registry, self.gcs, self.layout, step_completion, run_spec, context
+            )
+        )
+
+    def heartbeat_attempt(
+        self,
+        run_id: str,
+        step_name: str,
+        attempt_no: int,
+        *,
+        fencing_token: int,
+        owner_principal: str,
+        now: datetime,
+    ) -> AttemptRecord:
+        """Extend the current Attempt lease after owner/fence validation."""
+        return self._run_atomic(
+            lambda registry: _heartbeat_attempt(
+                registry,
+                run_id=run_id,
+                step_name=step_name,
+                attempt_no=attempt_no,
+                fencing_token=fencing_token,
+                owner_principal=owner_principal,
+                now=now,
+            )
+        )
 
     def fail_attempt(
         self,
@@ -298,23 +668,56 @@ class PipelineAssetManagement:
         fencing_token: int,
         retryable: bool,
         reason: str,
+        now: Optional[datetime] = None,
     ) -> StepRecord:
         """Report that an Attempt failed (spec 24.1, T28's ``attempt_fail`` module)."""
-        return attempt_fail.fail_attempt(
-            self.registry,
-            run_id=run_id,
-            step_name=step_name,
-            attempt_no=attempt_no,
-            fencing_token=fencing_token,
-            retryable=retryable,
-            reason=reason,
+        run_spec = self._require_run_spec(run_id)
+        step_spec = next(
+            (candidate for candidate in run_spec.steps if candidate.step_name == step_name), None
+        )
+        if step_spec is None:
+            raise PipelineAssetManagementError(
+                f"RunSpec for run_id {run_id!r} has no Step named {step_name!r}"
+            )
+        retry_policy = run_spec.retry_policy
+        max_attempts = int(retry_policy.get("max_attempts", 3))
+        initial_backoff = float(retry_policy.get("initial_backoff_seconds", 1))
+        max_backoff = float(retry_policy.get("max_backoff_seconds", max(initial_backoff, 1)))
+        multiplier = float(retry_policy.get("backoff_multiplier", 2))
+        retry_backoff = min(max_backoff, initial_backoff * (multiplier ** max(0, attempt_no - 1)))
+        return self._run_atomic(
+            lambda registry: attempt_fail.fail_attempt(
+                registry,
+                run_id=run_id,
+                step_name=step_name,
+                attempt_no=attempt_no,
+                fencing_token=fencing_token,
+                retryable=retryable,
+                reason=reason,
+                output_names=[output.output_name for output in step_spec.outputs],
+                max_attempts=max_attempts,
+                retry_backoff_seconds=retry_backoff,
+                now=now,
+            )
         )
 
     def cancel_run(self, run_id: str, reason: str) -> RunRecord:
         """Cancel every non-terminal Step of ``run_id`` (spec 10.5, T23)."""
         run_spec = self._require_run_spec(run_id)
         step_names = [step_spec.step_name for step_spec in run_spec.steps]
-        return run_cancel.cancel_run(self.registry, run_id=run_id, step_names=step_names, reason=reason)
+        output_names_by_step = {
+            step_spec.step_name: [output.output_name for output in step_spec.outputs]
+            for step_spec in run_spec.steps
+        }
+        return self._run_atomic(
+            lambda registry: run_cancel.cancel_run(
+                registry,
+                run_id=run_id,
+                step_names=step_names,
+                reason=reason,
+                output_names_by_step=output_names_by_step,
+            )
+        )
 
     # ── asset ingestion (not yet implemented) ───────────────────────────
 

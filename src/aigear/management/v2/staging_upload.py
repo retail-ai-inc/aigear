@@ -24,17 +24,21 @@ not the worker's.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Tuple
+from typing import Optional, Tuple
 
 from aigear.management.v2.identifiers import TypedId
+from aigear.management.v2.gcs_client import GcsClientV2
+from aigear.management.v2.gcs_layout import GcsLayoutV2
 from aigear.management.v2.naming import validate_segment
 from aigear.management.v2.records.run_spec import RunSpec
 
 __all__ = [
     "StagingUploadError",
     "validate_local_output_file",
+    "stage_output_file",
     "StagingOutputDescriptor",
     "StepCompletionMessage",
     "validate_step_completion_message",
@@ -133,6 +137,58 @@ class StagingOutputDescriptor:
         _require_non_empty_str("media_type", self.media_type)
 
 
+def stage_output_file(
+    gcs: GcsClientV2,
+    layout: GcsLayoutV2,
+    *,
+    local_path: Path,
+    base_dir: Path,
+    run_id: str,
+    step_name: str,
+    attempt_no: int,
+    operation_id: str,
+    output_name: str,
+    payload_kind: str,
+    payload_key: str,
+    media_type: str,
+) -> StagingOutputDescriptor:
+    """Hash one immutable local snapshot and create-only upload it to staging."""
+    resolved = validate_local_output_file(local_path, base_dir=base_dir)
+    digest = hashlib.sha256()
+    size = 0
+    with open(resolved, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+            size += len(chunk)
+    typed_digest = TypedId.from_bare(digest.hexdigest())
+    object_name = layout.staging(
+        run_id=run_id,
+        step_name=step_name,
+        attempt_no=attempt_no,
+        operation_id=operation_id,
+        output_name=output_name,
+        payload_kind=payload_kind,
+        payload_key=payload_key,
+        file_name=resolved.name,
+    )
+    snapshot = gcs.upload_file(
+        object_name,
+        resolved,
+        if_generation_match=0,
+        expected_sha256=typed_digest.bare,
+    )
+    if snapshot.sha256 != typed_digest.bare or snapshot.size_bytes != size:
+        raise StagingUploadError("uploaded staging object does not match the local immutable snapshot")
+    return StagingOutputDescriptor(
+        output_name=output_name,
+        staging_object=object_name,
+        generation=snapshot.generation,
+        digest=typed_digest,
+        size=size,
+        media_type=media_type,
+    )
+
+
 @dataclass(frozen=True)
 class StepCompletionMessage:
     """The one-shot completion message a worker publishes for a Step Attempt
@@ -143,6 +199,16 @@ class StepCompletionMessage:
     attempt_no: int
     operation_id: str
     outputs: Tuple[StagingOutputDescriptor, ...]
+    fencing_token: Optional[int] = None
+    firestore_database_id: Optional[str] = None
+    firestore_database_resource: Optional[str] = None
+    registry_binding_id: Optional[str] = None
+    registry_binding_epoch: Optional[int] = None
+    write_epoch: Optional[int] = None
+    publisher_principal: Optional[str] = None
+    message_id: Optional[str] = None
+    issued_at: Optional[str] = None
+    expires_at: Optional[str] = None
 
     def __post_init__(self) -> None:
         if isinstance(self.outputs, list):
@@ -154,6 +220,38 @@ class StepCompletionMessage:
         )
         _require_positive_int("attempt_no", self.attempt_no)
         _require_non_empty_str("operation_id", self.operation_id)
+
+        security_values = (
+            self.fencing_token,
+            self.firestore_database_id,
+            self.firestore_database_resource,
+            self.registry_binding_id,
+            self.registry_binding_epoch,
+            self.write_epoch,
+            self.publisher_principal,
+            self.message_id,
+            self.issued_at,
+            self.expires_at,
+        )
+        if any(value is not None for value in security_values) and any(
+            value is None for value in security_values
+        ):
+            raise StagingUploadError(
+                "completion security envelope must provide fencing_token, firestore_database_id, "
+                "firestore_database_resource, registry_binding_id/epoch, write_epoch, "
+                "publisher_principal and message_id together"
+            )
+        if self.fencing_token is not None:
+            _require_positive_int("fencing_token", self.fencing_token)
+            _require_non_empty_str("firestore_database_id", self.firestore_database_id)
+            _require_non_empty_str("firestore_database_resource", self.firestore_database_resource)
+            _require_non_empty_str("registry_binding_id", self.registry_binding_id)
+            _require_positive_int("registry_binding_epoch", self.registry_binding_epoch)
+            _require_positive_int("write_epoch", self.write_epoch)
+            _require_non_empty_str("publisher_principal", self.publisher_principal)
+            _require_non_empty_str("message_id", self.message_id)
+            _require_non_empty_str("issued_at", self.issued_at)
+            _require_non_empty_str("expires_at", self.expires_at)
 
         if not self.outputs or not all(
             isinstance(output, StagingOutputDescriptor) for output in self.outputs

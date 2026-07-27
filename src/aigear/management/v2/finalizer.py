@@ -1,8 +1,8 @@
 """Finalize transaction orchestrator (spec section 10.4, read-validate-write).
 
-Implements the parts of spec 10.4/6.5's finalize protocol that need no real
-GCP infrastructure, against :class:`~aigear.management.v2.fake_registry.
-FakeRegistryV2` and :class:`~aigear.management.v2.fake_gcs.FakeGcsClient`:
+Implements spec 10.4/6.5's finalize protocol against the structural Registry
+and generation-aware GCS interfaces. Tests use fakes; production uses the
+Firestore/GCS adapters and pinned KMS asymmetric signers.
 
 1. Read: Run/Step/Attempt, the provisional Occurrence and any existing
    committed-output binding, an existing BlobRecord (reuse candidate).
@@ -16,11 +16,8 @@ FakeRegistryV2` and :class:`~aigear.management.v2.fake_gcs.FakeGcsClient`:
    Attempt/Step to ``succeeded``, and decrement the Run's
    ``remaining_required_steps``.
 
-Deliberately out of scope (per Phase B's task list): real KMS attestation
-signing (every ``*_attestation_ref`` here is a deterministic placeholder
-digest -- see :func:`_placeholder_attestation_ref`), real GCS generation
-preconditions (``FakeGcsClient`` stands in), and real Pub/Sub message
-validation.
+Pub/Sub OIDC and environment-binding validation occur at the
+``PipelineAssetManagement`` boundary before this domain transaction runs.
 
 Two gaps in the surrounding Phase B types that this module's design works
 around, both documented where they are actually addressed:
@@ -46,13 +43,15 @@ not required by any Phase B task.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
-from datetime import datetime
-from typing import Tuple
+from dataclasses import dataclass, field, replace
+from datetime import datetime, timedelta
+from typing import Optional, Tuple
 
 from aigear.management.v2.canonical import digest_sha256_of_jcs
-from aigear.management.v2.fake_gcs import FakeGcsClient
+from aigear.management.v2.attestation import DigestSigner, HmacTestSigner, create_attestation
 from aigear.management.v2.fake_registry import FakeRegistryV2
+from aigear.management.v2.fake_gcs import GenerationPreconditionError
+from aigear.management.v2.gcs_client import GcsClientV2
 from aigear.management.v2.gcs_layout import GcsLayoutV2
 from aigear.management.v2.identifiers import TypedId
 from aigear.management.v2.records.asset_version import (
@@ -70,6 +69,7 @@ from aigear.management.v2.records.blob import (
     BlobRecord,
     LocationOperationKind,
     compute_genesis_location_chain_head,
+    compute_location_chain_head,
 )
 from aigear.management.v2.records.blob_claim import BlobClaim, ClaimState
 from aigear.management.v2.records.label import (
@@ -103,12 +103,14 @@ from aigear.management.v2.staging_upload import (
     StepCompletionMessage,
     validate_step_completion_message,
 )
+from aigear.management.v2.step_lease import compute_attempt_finalize_operation_id
 
 __all__ = [
     "FinalizeError",
     "FinalizeContext",
     "FinalizedOutput",
     "FinalizeOutcome",
+    "reserve_finalize_blob_claims",
     "finalize_step_outputs",
 ]
 
@@ -133,11 +135,6 @@ _ATTEMPT_LADDER = (
 _STEP_LADDER = (StepStatus.LEASED, StepStatus.RUNNING, StepStatus.COMMITTING, StepStatus.SUCCEEDED)
 
 
-def _placeholder_attestation_ref(domain: str, *parts: str) -> TypedId:
-    """Deterministic stand-in for a real KMS-signed attestation (out of scope here)."""
-    return TypedId.from_bare(digest_sha256_of_jcs([domain, *parts]))
-
-
 @dataclass(frozen=True)
 class FinalizeContext:
     """Cross-cutting inputs finalize needs that no Phase B message carries
@@ -150,6 +147,14 @@ class FinalizeContext:
     runtime_contract_digest: TypedId
     policy_version: str
     now: datetime
+    manifest_integrity_signer: DigestSigner = field(default_factory=HmacTestSigner)
+    blob_location_signer: DigestSigner = field(default_factory=HmacTestSigner)
+    occurrence_finalization_signer: DigestSigner = field(default_factory=HmacTestSigner)
+    write_epoch: int = 1
+    firestore_database_id: Optional[str] = None
+    firestore_database_resource: Optional[str] = None
+    registry_binding_id: Optional[str] = None
+    registry_binding_epoch: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -169,6 +174,71 @@ class FinalizeOutcome:
     step: StepRecord
     attempt: AttemptRecord
     outputs: Tuple[FinalizedOutput, ...]
+
+
+def reserve_finalize_blob_claims(
+    registry: FakeRegistryV2,
+    gcs: GcsClientV2,
+    layout: GcsLayoutV2,
+    completion_message: StepCompletionMessage,
+    run_spec: RunSpec,
+    *,
+    now: datetime,
+    claim_ttl: timedelta = timedelta(minutes=15),
+) -> None:
+    """Durably reserve every missing Blob before canonical GCS side effects.
+
+    This is intentionally a separate short Registry transaction.  If the
+    process crashes after the GCS copy but before the finalize transaction,
+    the adoption claim remains visible to orphan GC and reconcile.
+    """
+    validate_step_completion_message(completion_message, run_spec)
+    run = registry.get_run(completion_message.run_id)
+    step = registry.get_step(completion_message.run_id, completion_message.step_name)
+    attempt = registry.get_attempt(
+        completion_message.run_id, completion_message.step_name, completion_message.attempt_no
+    )
+    if run is None or run.status != RunStatus.RUNNING or step is None or attempt is None:
+        raise FinalizeError("Run/Step/Attempt is missing or no longer eligible for finalize reservation")
+    if step.current_attempt_no != attempt.attempt_no:
+        raise FinalizeError("Attempt is no longer current")
+    if completion_message.fencing_token is not None and completion_message.fencing_token != attempt.fencing_token:
+        raise FinalizeError("completion fencing_token mismatch")
+
+    for descriptor in completion_message.outputs:
+        snapshot = gcs.get_object(descriptor.staging_object, generation=descriptor.generation)
+        if snapshot.sha256 != descriptor.digest.bare or snapshot.size_bytes != descriptor.size:
+            raise FinalizeError("staging object digest/size mismatch during claim reservation")
+        if registry.get_blob(descriptor.digest) is not None:
+            continue
+        canonical_name = layout.canonical_blob(descriptor.digest)
+        request_digest = TypedId.from_bare(
+            digest_sha256_of_jcs(
+                ["aigear.blob-claim-request.v2", completion_message.operation_id, descriptor.digest.typed]
+            )
+        )
+        existing = registry.get_blob_claim(descriptor.digest)
+        if existing is not None:
+            if (
+                existing.state != ClaimState.ADOPTING
+                or existing.operation_id != completion_message.operation_id
+                or existing.request_digest != request_digest
+                or existing.fencing_token != attempt.fencing_token
+            ):
+                raise FinalizeError(f"Blob {descriptor.digest.typed!r} is claimed by another operation")
+            continue
+        registry.put_blob_claim(
+            BlobClaim(
+                blob_id=descriptor.digest,
+                claim_epoch=1,
+                fencing_token=attempt.fencing_token,
+                operation_id=completion_message.operation_id,
+                expected_object_name=canonical_name,
+                request_digest=request_digest,
+                state=ClaimState.ADOPTING,
+                lease_expires_at=(now + claim_ttl).isoformat(),
+            )
+        )
 
 
 def _request_fingerprint(message: StepCompletionMessage) -> str:
@@ -259,7 +329,7 @@ def _rebuild_outcome(
 def _finalize_one_output(
     *,
     registry: FakeRegistryV2,
-    gcs: FakeGcsClient,
+    gcs: GcsClientV2,
     layout: GcsLayoutV2,
     context: FinalizeContext,
     run_id: str,
@@ -302,6 +372,24 @@ def _finalize_one_output(
             f"({winner.occurrence_id.typed!r})"
         )
 
+    try:
+        parsed_staging = layout.parse_and_validate(layout.to_uri(descriptor.staging_object))
+    except ValueError as exc:
+        raise FinalizeError(f"invalid staging object path: {descriptor.staging_object!r}") from exc
+    expected_staging_identity = {
+        "run_id": run_id,
+        "step_name": step_name,
+        "attempt_no": str(attempt.attempt_no),
+        "operation_id": operation_id,
+        "output_name": descriptor.output_name,
+    }
+    if parsed_staging.kind != "staging" or any(
+        parsed_staging.fields.get(key) != value for key, value in expected_staging_identity.items()
+    ):
+        raise FinalizeError(
+            "staging object path is not bound to the current run/step/attempt/operation/output"
+        )
+
     staging_snapshot = gcs.get_object(descriptor.staging_object, generation=descriptor.generation)
     if staging_snapshot.size_bytes != descriptor.size or staging_snapshot.sha256 != descriptor.digest.bare:
         raise FinalizeError(
@@ -321,28 +409,76 @@ def _finalize_one_output(
         request_digest = TypedId.from_bare(
             digest_sha256_of_jcs(["aigear.blob-claim-request.v2", operation_id, blob_id.typed])
         )
-        claim = BlobClaim(
-            blob_id=blob_id,
-            claim_epoch=1,
-            fencing_token=attempt.fencing_token,
-            operation_id=operation_id,
-            expected_object_name=canonical_object_name,
-            request_digest=request_digest,
-            state=ClaimState.ADOPTING,
-        )
-        registry.put_blob_claim(claim)
+        claim = registry.get_blob_claim(blob_id)
+        if claim is None:
+            # Direct unit-level use of finalize remains supported; the
+            # production entry point always reserves in a prior transaction.
+            claim = BlobClaim(
+                blob_id=blob_id,
+                claim_epoch=1,
+                fencing_token=attempt.fencing_token,
+                operation_id=operation_id,
+                expected_object_name=canonical_object_name,
+                request_digest=request_digest,
+                state=ClaimState.ADOPTING,
+            )
+            registry.put_blob_claim(claim)
+        elif (
+            claim.state != ClaimState.ADOPTING
+            or claim.operation_id != operation_id
+            or claim.request_digest != request_digest
+            or claim.fencing_token != attempt.fencing_token
+        ):
+            raise FinalizeError(f"Blob {blob_id.typed!r} does not have this operation's adoption claim")
 
-        canonical_snapshot = gcs.copy_object(
-            descriptor.staging_object, descriptor.generation, canonical_object_name, if_generation_match=0
-        )
-        location_attestation_ref = _placeholder_attestation_ref(
-            "aigear.blob-location-attestation.v2",
-            blob_id.typed,
-            canonical_object_name,
-            canonical_snapshot.generation,
-        )
-        location_chain_head = compute_genesis_location_chain_head(
+        try:
+            canonical_snapshot = gcs.copy_object(
+                descriptor.staging_object,
+                descriptor.generation,
+                canonical_object_name,
+                if_generation_match=0,
+            )
+        except GenerationPreconditionError:
+            canonical_snapshot = gcs.get_live_object(canonical_object_name)
+            if canonical_snapshot is None:
+                raise
+            if (
+                canonical_snapshot.sha256 != blob_id.bare
+                or canonical_snapshot.size_bytes != descriptor.size
+            ):
+                raise FinalizeError(
+                    f"canonical path {canonical_object_name!r} already contains different bytes"
+                )
+        claim = replace(claim, expected_generation=canonical_snapshot.generation)
+        registry.put_blob_claim(claim)
+        previous_chain_head = compute_genesis_location_chain_head(
             context.environment_fingerprint, blob_id
+        )
+        location_attestation = create_attestation(
+            schema_version=context.schema_version,
+            attestation_kind="blob_location",
+            environment_fingerprint=context.environment_fingerprint,
+            subject={
+                "blob_id": blob_id.typed,
+                "location_revision": 1,
+                "previous_location_attestation_ref": None,
+                "previous_chain_head": previous_chain_head.typed,
+                "bucket": layout.bucket_name,
+                "object_name": canonical_object_name,
+                "generation": canonical_snapshot.generation,
+                "sha256": blob_id.bare,
+                "crc32c": canonical_snapshot.crc32c,
+                "size_bytes": descriptor.size,
+                "location_operation_kind": LocationOperationKind.PIPELINE_FINALIZE.value,
+                "location_operation_id": operation_id,
+                "fencing_token": attempt.fencing_token,
+            },
+            signer=context.blob_location_signer,
+        )
+        registry.put_attestation(location_attestation)
+        location_attestation_ref = location_attestation.attestation_id
+        location_chain_head = compute_location_chain_head(
+            previous_chain_head, location_attestation_ref
         )
         blob = BlobRecord(
             schema_version=context.schema_version,
@@ -423,9 +559,19 @@ def _finalize_one_output(
         reference_epoch = existing_asset_version.reference_epoch + 1
         trust_state = existing_asset_version.trust_state
     else:
-        manifest_integrity_attestation_ref = _placeholder_attestation_ref(
-            "aigear.manifest-integrity-attestation.v2", asset_version_id.typed
+        manifest_attestation = create_attestation(
+            schema_version=context.schema_version,
+            attestation_kind="asset_manifest_integrity",
+            environment_fingerprint=context.environment_fingerprint,
+            subject={
+                "asset_version_id": asset_version_id.typed,
+                "manifest_digest": asset_version_id.typed,
+                "manifest_schema_version": context.schema_version,
+            },
+            signer=context.manifest_integrity_signer,
         )
+        registry.put_attestation(manifest_attestation)
+        manifest_integrity_attestation_ref = manifest_attestation.attestation_id
         record_revision = 1
         reference_epoch = 1
         trust_state = TrustState.QUARANTINED
@@ -496,6 +642,40 @@ def _finalize_one_output(
     )
     registry.put_label(label)
 
+    occurrence_attestation = create_attestation(
+        schema_version=context.schema_version,
+        attestation_kind="occurrence_finalization",
+        environment_fingerprint=context.environment_fingerprint,
+        subject={
+            "producer_kind": "normal_pipeline",
+            "occurrence_id": occurrence_id.typed,
+            "run_id": run_id,
+            "step_name": step_name,
+            "attempt_no": attempt.attempt_no,
+            "fencing_token": attempt.fencing_token,
+            "committed_output_key": provisional.committed_output_key.typed,
+            "asset_version_id": asset_version_id.typed,
+            "label_id": label_id.typed,
+            "resolved_inputs_digest": provisional.resolved_inputs_digest.typed,
+            "operation_id": operation_id,
+            "firestore_database_id": context.firestore_database_id,
+            "firestore_database_resource": context.firestore_database_resource,
+            "registry_binding_id": context.registry_binding_id,
+            "registry_binding_epoch": context.registry_binding_epoch,
+            "write_epoch": context.write_epoch,
+            "components": [
+                {
+                    "component_key": component.component_key.typed,
+                    "blob_id": blob_id.typed,
+                    "location_revision": blob.current_location_revision,
+                    "generation": blob.generation,
+                }
+            ],
+        },
+        signer=context.occurrence_finalization_signer,
+    )
+    registry.put_attestation(occurrence_attestation)
+
     committed_occurrence = replace(
         provisional,
         status=OccurrenceStatus.COMMITTED,
@@ -504,9 +684,7 @@ def _finalize_one_output(
         asset_name=slot.asset_name,
         label_id=label_id,
         display_version=run_id,
-        finalization_attestation_ref=_placeholder_attestation_ref(
-            "aigear.occurrence-finalization-attestation.v2", occurrence_id.typed, asset_version_id.typed
-        ),
+        finalization_attestation_ref=occurrence_attestation.attestation_id,
         committed_at=context.now.isoformat(),
     )
     registry.put_occurrence(committed_occurrence)
@@ -516,7 +694,7 @@ def _finalize_one_output(
 
 def finalize_step_outputs(
     registry: FakeRegistryV2,
-    gcs: FakeGcsClient,
+    gcs: GcsClientV2,
     layout: GcsLayoutV2,
     completion_message: StepCompletionMessage,
     run_spec: RunSpec,
@@ -547,6 +725,22 @@ def finalize_step_outputs(
         raise FinalizeError(
             f"Attempt {attempt_no} is no longer the current attempt for "
             f"(run_id={run_id!r}, step_name={step_name!r}); a later takeover has fenced it out"
+        )
+    expected_operation_id = compute_attempt_finalize_operation_id(
+        run_id, step_name, attempt_no
+    ).bare
+    if completion_message.operation_id != expected_operation_id:
+        raise FinalizeError(
+            f"operation_id mismatch: expected {expected_operation_id!r}, "
+            f"got {completion_message.operation_id!r}"
+        )
+    if (
+        completion_message.fencing_token is not None
+        and completion_message.fencing_token != attempt.fencing_token
+    ):
+        raise FinalizeError(
+            f"completion fencing_token {completion_message.fencing_token!r} does not match "
+            f"current Attempt token {attempt.fencing_token!r}"
         )
 
     step_spec = next((candidate for candidate in run_spec.steps if candidate.step_name == step_name), None)
@@ -582,13 +776,17 @@ def finalize_step_outputs(
             request_fingerprint=request_fingerprint,
             operation_type="pipeline_finalize",
             owner_principal=owner_principal,
-            write_epoch=1,
+            write_epoch=context.write_epoch,
             fencing_token=attempt.fencing_token,
             phase=OperationPhase.FINALIZING,
             revision=1,
             run_id=run_id,
             step_name=step_name,
             attempt_no=attempt_no,
+            firestore_database_id=context.firestore_database_id,
+            firestore_database_resource=context.firestore_database_resource,
+            registry_binding_id=context.registry_binding_id,
+            registry_binding_epoch=context.registry_binding_epoch,
         )
     )
 
@@ -619,13 +817,17 @@ def finalize_step_outputs(
             request_fingerprint=request_fingerprint,
             operation_type="pipeline_finalize",
             owner_principal=owner_principal,
-            write_epoch=1,
+            write_epoch=context.write_epoch,
             fencing_token=attempt.fencing_token,
             phase=OperationPhase.SUCCEEDED,
             revision=2,
             run_id=run_id,
             step_name=step_name,
             attempt_no=attempt_no,
+            firestore_database_id=context.firestore_database_id,
+            firestore_database_resource=context.firestore_database_resource,
+            registry_binding_id=context.registry_binding_id,
+            registry_binding_epoch=context.registry_binding_epoch,
         )
     )
 

@@ -155,6 +155,69 @@ def test_construction_accepts_injected_registry():
     assert manager.registry is registry
 
 
+class _ProductionSigner:
+    def __init__(self, key_version):
+        self.key_version = key_version
+
+    def sign_sha256_digest(self, digest):
+        return b"signature"
+
+
+def _production_control_document():
+    fingerprint = compute_environment_fingerprint(_environment_identity())
+    return ControlDocument(
+        schema_version="2.0",
+        environment_id="production",
+        authority="v2",
+        phase="v2_authoritative",
+        write_epoch=2,
+        min_reader_version="2.0",
+        min_writer_version="2.0",
+        required_capabilities=("pipeline_v2",),
+        environment_fingerprint=fingerprint,
+        registry_binding=RegistryBinding(
+            firestore_database_id="aigear-prod",
+            registry_binding_id=generate_registry_binding_id(),
+            registry_binding_epoch=1,
+            bound_environment_fingerprint=fingerprint,
+        ),
+        registry_bound_by="controller@aigear",
+        firestore_database_resource="projects/p/databases/aigear-prod",
+    )
+
+
+def _production_kwargs():
+    return {
+        "schema_contract_digest": TypedId.from_bare("dd" * 32),
+        "runtime_contract_digest": TypedId.from_bare("ee" * 32),
+        "policy_version": "policy-v1",
+        "control_document": _production_control_document(),
+        "manifest_integrity_signer": _ProductionSigner("key/cryptoKeyVersions/1"),
+        "blob_location_signer": _ProductionSigner("key/cryptoKeyVersions/2"),
+        "occurrence_finalization_signer": _ProductionSigner("key/cryptoKeyVersions/3"),
+        "allowed_completion_publishers": ("push@p.iam.gserviceaccount.com",),
+        "completion_oidc_audience": "https://finalizer.example.test/completion",
+        "production": True,
+    }
+
+
+def test_production_mode_rejects_fake_backends():
+    with pytest.raises(PipelineAssetManagementError, match="refuses Fake"):
+        PipelineAssetManagement(_environment_identity(), **_production_kwargs())
+
+
+def test_production_mode_requires_three_distinct_attestation_keys():
+    kwargs = _production_kwargs()
+    kwargs["blob_location_signer"] = _ProductionSigner("key/cryptoKeyVersions/1")
+    with pytest.raises(PipelineAssetManagementError, match="distinct pinned keys"):
+        PipelineAssetManagement(
+            _environment_identity(),
+            registry=object(),
+            gcs=object(),
+            **kwargs,
+        )
+
+
 # ── get_asset / get_occurrence (implemented) ──────────────────────────────────────
 
 
