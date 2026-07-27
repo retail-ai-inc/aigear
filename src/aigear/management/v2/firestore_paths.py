@@ -121,6 +121,11 @@ class FirestorePathsV2:
     def run_document(self, run_id: str) -> str:
         return self._under_root("runs", validate_segment(run_id, field_name="run_id"))
 
+    def run_spec_document(self, run_id: str) -> str:
+        return self._under_root(
+            "runs", validate_segment(run_id, field_name="run_id"), "run_spec", "current"
+        )
+
     def run_input_binding_document(self, run_id: str, input_name: str) -> str:
         return self._under_root(
             "runs",

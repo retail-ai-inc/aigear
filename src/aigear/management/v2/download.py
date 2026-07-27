@@ -38,7 +38,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from aigear.management.v2.fake_gcs import FakeGcsClient
+from aigear.management.v2.gcs_client import GcsClientV2
 from aigear.management.v2.identifiers import TypedId
 from aigear.management.v2.resolver import ResolvedHandle
 
@@ -77,7 +77,7 @@ def verify_cached_file(path: Path, *, expected_sha256: str, expected_size: int) 
 
 def download_exact(
     handle: ResolvedHandle,
-    gcs: FakeGcsClient,
+    gcs: GcsClientV2,
     target_path: Path,
     *,
     now: Optional[datetime] = None,
@@ -99,23 +99,29 @@ def download_exact(
             f"Blob {blob.blob_id.typed!r} size {blob.size_bytes} exceeds max_size_bytes {max_size_bytes}"
         )
 
-    snapshot = gcs.get_object(blob.object_name, generation=blob.generation)
-    if snapshot.size_bytes != blob.size_bytes:
-        raise DownloadError(
-            f"Blob {blob.blob_id.typed!r} size mismatch: resolved handle says "
-            f"{blob.size_bytes}, downloaded object is {snapshot.size_bytes}"
-        )
-    if snapshot.sha256 != blob.sha256:
-        raise DownloadError(
-            f"Blob {blob.blob_id.typed!r} SHA-256 mismatch: resolved handle says "
-            f"{blob.sha256!r}, downloaded object is {snapshot.sha256!r}"
-        )
-
     target_path = Path(target_path)
+    if not target_path.parent.is_dir():
+        raise DownloadError(f"target parent directory does not exist: {target_path.parent}")
+    if target_path.is_symlink():
+        raise DownloadError(f"target path must not be a symlink: {target_path}")
     tmp_path = target_path.with_name(f".{target_path.name}.{uuid.uuid4().hex}.tmp")
     try:
-        with open(tmp_path, "wb") as file_obj:
-            file_obj.write(snapshot.data)
+        gcs.download_to_file(blob.object_name, blob.generation, tmp_path)
+        actual_size = tmp_path.stat().st_size
+        if actual_size != blob.size_bytes:
+            raise DownloadError(
+                f"Blob {blob.blob_id.typed!r} size mismatch: resolved handle says "
+                f"{blob.size_bytes}, downloaded object is {actual_size}"
+            )
+        digest = hashlib.sha256()
+        with open(tmp_path, "rb+") as file_obj:
+            for chunk in iter(lambda: file_obj.read(1024 * 1024), b""):
+                digest.update(chunk)
+            if digest.hexdigest() != blob.sha256:
+                raise DownloadError(
+                    f"Blob {blob.blob_id.typed!r} SHA-256 mismatch: resolved handle says "
+                    f"{blob.sha256!r}, downloaded object is {digest.hexdigest()!r}"
+                )
             file_obj.flush()
             os.fsync(file_obj.fileno())
         os.replace(tmp_path, target_path)

@@ -60,7 +60,9 @@ gcp = [
     "google-cloud-storage>=3.2.0",
     "google-cloud-compute>=1.38.0",
     "google-cloud-firestore>=2.20.0",
+    "google-cloud-kms>=3.4.0",
     "google-api-core>=2.0.0",
+    "google-auth>=2.0.0",
 ]
 mongodb = [
     "pymongo>=4.0.0",

@@ -23,6 +23,7 @@ import hashlib
 import zlib
 from base64 import b64encode
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, Optional, Tuple
 
 __all__ = [
@@ -103,6 +104,20 @@ class FakeGcsClient:
         self._by_generation[(object_name, snapshot.generation)] = snapshot
         return snapshot
 
+    def upload_file(
+        self,
+        object_name: str,
+        source: Path,
+        *,
+        if_generation_match: int = 0,
+        expected_sha256: Optional[str] = None,
+    ) -> GcsObjectSnapshot:
+        data = source.read_bytes()
+        actual = hashlib.sha256(data).hexdigest()
+        if expected_sha256 is not None and actual != expected_sha256:
+            raise ValueError("source file changed before upload")
+        return self.put_object(object_name, data, if_generation_match=if_generation_match)
+
     def get_object(self, object_name: str, *, generation: str) -> GcsObjectSnapshot:
         """Read back the exact generation reported earlier (spec 6.5 step 2/4:
         finalizer must re-read by the reported generation, never "latest")."""
@@ -128,3 +143,8 @@ class FakeGcsClient:
         step 4: canonical copy uses ``ifGenerationMatch=0``, i.e. create-only)."""
         source = self.get_object(source_object_name, generation=source_generation)
         return self.put_object(dest_object_name, source.data, if_generation_match=if_generation_match)
+
+    def download_to_file(self, object_name: str, generation: str, target: Path) -> None:
+        snapshot = self.get_object(object_name, generation=generation)
+        with open(target, "wb") as handle:
+            handle.write(snapshot.data)

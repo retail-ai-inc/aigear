@@ -45,8 +45,9 @@ from enum import Enum
 
 from aigear.management.v2.canonical import canonicalize_json, digest_sha256_of_jcs
 from aigear.management.v2.control_document import parse_schema_version
-from aigear.management.v2.fake_gcs import FakeGcsClient, GcsObjectSnapshot
+from aigear.management.v2.fake_gcs import GcsObjectSnapshot
 from aigear.management.v2.fake_registry import FakeRegistryV2
+from aigear.management.v2.gcs_client import GcsClientV2
 from aigear.management.v2.gcs_layout import GcsLayoutV2
 from aigear.management.v2.identifiers import TypedId
 from aigear.management.v2.records.label import ReadableManifestProjection
@@ -149,7 +150,7 @@ def _finalize_projection_bytes(payload: dict) -> bytes:
     return canonicalize_json({**payload, "payload_digest": payload_digest})
 
 
-def _write_projection(gcs: FakeGcsClient, object_name: str, final_bytes: bytes, *, current_generation: int) -> GcsObjectSnapshot:
+def _write_projection(gcs: GcsClientV2, object_name: str, final_bytes: bytes, *, current_generation: int) -> GcsObjectSnapshot:
     """CAS-write (create-only when ``current_generation == 0``).
 
     A retry that finds identical bytes already live -- at any generation --
@@ -201,7 +202,7 @@ def _mark_ready(
 
 
 def _consume_asset_manifest_event(
-    registry: FakeRegistryV2, gcs: FakeGcsClient, layout: GcsLayoutV2, event: ProjectionEvent
+    registry: FakeRegistryV2, gcs: GcsClientV2, layout: GcsLayoutV2, event: ProjectionEvent
 ) -> ReadableManifestProjection:
     label = registry.get_label(event.subject_id)
     if label is None:
@@ -259,7 +260,7 @@ def _consume_asset_manifest_event(
 
 
 def _consume_committed_run_output_event(
-    registry: FakeRegistryV2, gcs: FakeGcsClient, layout: GcsLayoutV2, event: ProjectionEvent
+    registry: FakeRegistryV2, gcs: GcsClientV2, layout: GcsLayoutV2, event: ProjectionEvent
 ) -> ReadableManifestProjection:
     occurrence = registry.get_committed_occurrence_by_output_key(event.subject_id)
     if occurrence is None or occurrence.status != OccurrenceStatus.COMMITTED:
@@ -311,7 +312,7 @@ def _consume_committed_run_output_event(
 
 
 def consume_projection_event(
-    registry: FakeRegistryV2, gcs: FakeGcsClient, layout: GcsLayoutV2, event: ProjectionEvent
+    registry: FakeRegistryV2, gcs: GcsClientV2, layout: GcsLayoutV2, event: ProjectionEvent
 ) -> ReadableManifestProjection:
     """Render and deliver one projection event (spec 6.3/6.5 step 8)."""
     if event.kind == ProjectionKind.ASSET_MANIFEST:
