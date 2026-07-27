@@ -44,29 +44,52 @@ still fail loudly with :class:`NotImplementedError`.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Dict, Optional, Tuple, TypeVar
 
 from aigear.management.v2 import attempt_fail, resolve_inputs as resolve_inputs_module, run_cancel
 from aigear.management.v2.attempt_heartbeat import heartbeat_attempt as _heartbeat_attempt
-from aigear.management.v2.attestation import CloudKmsAsymmetricSigner, DigestSigner, HmacTestSigner
+from aigear.management.v2.attestation import (
+    AttestationVerifier,
+    CloudKmsAsymmetricSigner,
+    CloudKmsAttestationVerifier,
+    DigestSigner,
+    HmacTestSigner,
+)
 from aigear.management.v2.control_document import ControlDocument
-from aigear.management.v2.download import download_exact as _download_blob
+from aigear.management.v2.download import (
+    download_bundle_exact as _download_bundle,
+    download_exact as _download_blob,
+)
 from aigear.management.v2.environment import EnvironmentIdentity, compute_environment_fingerprint
 from aigear.management.v2.fake_gcs import FakeGcsClient
 from aigear.management.v2.fake_registry import FakeRegistryV2
 from aigear.management.v2.firestore_registry import FirestoreRegistryV2
 from aigear.management.v2.finalizer import FinalizeContext
 from aigear.management.v2.finalizer import finalize_step_outputs as _finalize_step_outputs
-from aigear.management.v2.finalizer import reserve_finalize_blob_claims
+from aigear.management.v2.finalizer import (
+    prepare_finalize_external,
+    reserve_finalize_blob_claims,
+    try_rebuild_finalize_outcome,
+    validate_finalize_staging,
+)
 from aigear.management.v2.gcs_layout import GcsLayoutV2
 from aigear.management.v2.gcs_client import GcsClientV2, GoogleGcsClientV2
 from aigear.management.v2.identifiers import SHA256_TYPED_PREFIX, TypedId
-from aigear.management.v2.records.asset_version import AssetVersionRecord
-from aigear.management.v2.records.occurrence import OccurrenceRecord
+from aigear.management.v2.records.asset_version import AssetVersionRecord, LifecycleState, TrustState
+from aigear.management.v2.records.occurrence import (
+    OccurrenceRecord,
+    OccurrenceStatus,
+    ResolvedInputBinding,
+    compute_resolved_inputs_digest,
+)
 from aigear.management.v2.records.run import AttemptRecord, RunRecord, RunStatus, StepRecord, StepStatus
-from aigear.management.v2.records.run_spec import RunSpec, compute_run_spec_digest
+from aigear.management.v2.records.run_spec import (
+    RunSpec,
+    compute_run_spec_digest,
+    seed_inputs_for_step,
+)
 from aigear.management.v2.pubsub_auth import verify_pubsub_oidc_token
 from aigear.management.v2.resolver import Selector, UsageContext
 from aigear.management.v2.resolver import resolve as _resolve_selector
@@ -146,6 +169,7 @@ class PipelineAssetManagement:
         manifest_integrity_signer: Optional[DigestSigner] = None,
         blob_location_signer: Optional[DigestSigner] = None,
         occurrence_finalization_signer: Optional[DigestSigner] = None,
+        attestation_verifier: Optional[AttestationVerifier] = None,
         allowed_completion_publishers: Tuple[str, ...] = (),
         completion_oidc_audience: Optional[str] = None,
         production: bool = False,
@@ -167,6 +191,7 @@ class PipelineAssetManagement:
         self.manifest_integrity_signer = manifest_integrity_signer or attestation_signer
         self.blob_location_signer = blob_location_signer or attestation_signer
         self.occurrence_finalization_signer = occurrence_finalization_signer or attestation_signer
+        self.attestation_verifier = attestation_verifier
         self.production = production
         self.allowed_completion_publishers = tuple(allowed_completion_publishers)
         self.completion_oidc_audience = completion_oidc_audience
@@ -182,6 +207,7 @@ class PipelineAssetManagement:
                     ("manifest_integrity_signer", self.manifest_integrity_signer),
                     ("blob_location_signer", self.blob_location_signer),
                     ("occurrence_finalization_signer", self.occurrence_finalization_signer),
+                    ("attestation_verifier", self.attestation_verifier),
                     ("allowed_completion_publishers", self.allowed_completion_publishers or None),
                     ("completion_oidc_audience", completion_oidc_audience),
                 )
@@ -241,6 +267,8 @@ class PipelineAssetManagement:
                 raise PipelineAssetManagementError(
                     "production mode requires CloudKmsAsymmetricSigner for all attestations"
                 )
+            if isinstance(self.attestation_verifier, CloudKmsAttestationVerifier):
+                self.attestation_verifier.warm()
 
     @classmethod
     def for_gcp(
@@ -287,6 +315,14 @@ class PipelineAssetManagement:
             ),
             occurrence_finalization_signer=CloudKmsAsymmetricSigner(
                 occurrence_finalization_key_version, client=kms_client
+            ),
+            attestation_verifier=CloudKmsAttestationVerifier(
+                (
+                    manifest_integrity_key_version,
+                    blob_location_key_version,
+                    occurrence_finalization_key_version,
+                ),
+                client=kms_client,
             ),
             allowed_completion_publishers=allowed_completion_publishers,
             completion_oidc_audience=completion_oidc_audience,
@@ -447,6 +483,86 @@ class PipelineAssetManagement:
         """Look up an Occurrence by its exact ID (spec 24.1: ``PipelineAssetRegistryV2.get_occurrence``)."""
         return self.registry.get_occurrence(_coerce_typed_id(occurrence_id))
 
+    @staticmethod
+    def _validate_seed_input_state(
+        registry, run_spec: RunSpec, environment_fingerprint: TypedId
+    ) -> None:
+        for seed in run_spec.seed_inputs:
+            asset = registry.get_asset_version(seed.asset_version_id)
+            if asset is None:
+                raise PipelineAssetManagementError(
+                    f"seed input {seed.binding_name!r} AssetVersion is missing"
+                )
+            if asset.environment_fingerprint != environment_fingerprint:
+                raise PipelineAssetManagementError(
+                    f"seed input {seed.binding_name!r} belongs to another environment"
+                )
+            if (
+                asset.lifecycle_state != LifecycleState.ACTIVE
+                or asset.trust_state != TrustState.APPROVED
+                or asset.policy_decision_head_ref is None
+            ):
+                raise PipelineAssetManagementError(
+                    f"seed input {seed.binding_name!r} requires active + approved "
+                    "AssetVersion with a policy decision head"
+                )
+            if seed.occurrence_id is not None:
+                occurrence = registry.get_occurrence(seed.occurrence_id)
+                if (
+                    occurrence is None
+                    or occurrence.status != OccurrenceStatus.COMMITTED
+                    or occurrence.asset_version_id != seed.asset_version_id
+                ):
+                    raise PipelineAssetManagementError(
+                        f"seed input {seed.binding_name!r} Occurrence is missing, "
+                        "uncommitted or points to another AssetVersion"
+                    )
+                winner = registry.get_committed_occurrence_by_output_key(
+                    occurrence.committed_output_key
+                )
+                if winner is None or winner.occurrence_id != occurrence.occurrence_id:
+                    raise PipelineAssetManagementError(
+                        f"seed input {seed.binding_name!r} Occurrence is not the output winner"
+                    )
+            if seed.source_label_id is not None:
+                label = registry.get_label(seed.source_label_id)
+                if label is None or label.asset_version_id != seed.asset_version_id:
+                    raise PipelineAssetManagementError(
+                        f"seed input {seed.binding_name!r} source label is missing or rebound"
+                    )
+
+    def _verify_seed_input_attestations(self, run_spec: RunSpec) -> None:
+        if self.attestation_verifier is None or not run_spec.seed_inputs:
+            return
+        control = self._require_control_document()
+        now = datetime.now(timezone.utc)
+        for seed in run_spec.seed_inputs:
+            selector = (
+                Selector.by_occurrence(seed.occurrence_id)
+                if seed.occurrence_id is not None
+                else Selector.by_asset_version(seed.asset_version_id)
+            )
+            handle = _resolve_selector(
+                self.registry,
+                control,
+                self.layout,
+                selector,
+                UsageContext.NEW_RUN_SEED,
+                now,
+                attestation_verifier=self.attestation_verifier,
+            )
+            if handle.asset_version_id != seed.asset_version_id:
+                raise PipelineAssetManagementError(
+                    f"seed input {seed.binding_name!r} resolved to another AssetVersion"
+                )
+            if seed.source_label_id is not None and handle.label_id not in (
+                None,
+                seed.source_label_id,
+            ):
+                raise PipelineAssetManagementError(
+                    f"seed input {seed.binding_name!r} resolved to another Label"
+                )
+
     # ── execution lifecycle ──────────────────────────────────────────────
 
     def begin_run(self, run_spec: RunSpec, idempotency_key: "TypedId | str", *, owner_principal: str) -> RunRecord:
@@ -459,8 +575,15 @@ class PipelineAssetManagement:
         ``RunTriggerIdempotencyConflict``, exactly spec 10.1's rule.
         """
         run_spec_digest = compute_run_spec_digest(run_spec)
+        self._validate_seed_input_state(
+            self.registry, run_spec, self.environment_fingerprint
+        )
+        self._verify_seed_input_attestations(run_spec)
 
         def _work(registry) -> object:
+            self._validate_seed_input_state(
+                registry, run_spec, self.environment_fingerprint
+            )
             def _create_run() -> str:
                 run_id = f"run-{uuid.uuid4().hex}"
                 registry.create_run(
@@ -479,8 +602,26 @@ class PipelineAssetManagement:
                 put_run_spec(run_id, run_spec)
                 for step_spec in run_spec.steps:
                     initial_status = StepStatus.BLOCKED if step_spec.dependencies else StepStatus.READY
+                    seeds = tuple(
+                        ResolvedInputBinding(
+                            binding_name=seed.binding_name,
+                            asset_version_id=seed.asset_version_id,
+                            occurrence_id=seed.occurrence_id,
+                            source_label_id=seed.source_label_id,
+                        )
+                        for seed in seed_inputs_for_step(run_spec, step_spec)
+                    )
                     registry.create_step(
-                        StepRecord(run_id=run_id, step_name=step_spec.step_name, status=initial_status)
+                        StepRecord(
+                            run_id=run_id,
+                            step_name=step_spec.step_name,
+                            status=initial_status,
+                            resolved_inputs=seeds,
+                            resolved_inputs_digest=(
+                                compute_resolved_inputs_digest(seeds) if seeds else None
+                            ),
+                            source_step_revision=1 if seeds else None,
+                        )
                     )
                 registry.update_run_status(run_id, RunStatus.RUNNING)
                 return run_id
@@ -524,7 +665,13 @@ class PipelineAssetManagement:
         run_spec = self._require_run_spec(run_id)
         return self._run_atomic(
             lambda registry: resolve_inputs_module.resolve_step_inputs(
-                registry, run_spec, run_id=run_id, step_name=step_name, now=now
+                registry,
+                run_spec,
+                run_id=run_id,
+                step_name=step_name,
+                now=now,
+                layout=self.layout,
+                attestation_verifier=self.attestation_verifier,
             )
         )
 
@@ -620,19 +767,38 @@ class PipelineAssetManagement:
                 raise PipelineAssetManagementError(
                     "completion database/binding/write epoch does not match the current control document"
                 )
+        replay = try_rebuild_finalize_outcome(self.registry, step_completion)
+        if replay is not None:
+            return replay
+        validate_finalize_staging(self.gcs, self.layout, step_completion, run_spec)
         self._run_atomic(
             lambda registry: reserve_finalize_blob_claims(
+                registry,
+                None,
+                self.layout,
+                step_completion,
+                run_spec,
+                now=now,
+                staging_validated=True,
+            )
+        )
+        prepared = prepare_finalize_external(
+            self.registry,
+            self.gcs,
+            self.layout,
+            step_completion,
+            run_spec,
+            context,
+        )
+        return self._run_atomic(
+            lambda registry: _finalize_step_outputs(
                 registry,
                 self.gcs,
                 self.layout,
                 step_completion,
                 run_spec,
-                now=now,
-            )
-        )
-        return self._run_atomic(
-            lambda registry: _finalize_step_outputs(
-                registry, self.gcs, self.layout, step_completion, run_spec, context
+                context,
+                prepared,
             )
         )
 
@@ -765,5 +931,53 @@ class PipelineAssetManagement:
         else:
             selector = Selector.by_asset_version(_coerce_typed_id(asset_version_id))
 
-        handle = _resolve_selector(self.registry, control_document, self.layout, selector, usage_context, now)
+        handle = _resolve_selector(
+            self.registry,
+            control_document,
+            self.layout,
+            selector,
+            usage_context,
+            now,
+            attestation_verifier=self.attestation_verifier,
+        )
         return _download_blob(handle, self.gcs, target_path, now=now, max_size_bytes=max_size_bytes)
+
+    def download_bundle_exact(
+        self,
+        asset_version_id: "TypedId | str | None" = None,
+        occurrence_id: "TypedId | str | None" = None,
+        *,
+        target_path: Path,
+        now: datetime,
+        usage_context: UsageContext = UsageContext.MANUAL_DOWNLOAD,
+        max_components: int = 32,
+        max_total_size_bytes: Optional[int] = None,
+    ) -> Path:
+        """Resolve and atomically materialize an exact multi-component bundle."""
+        if (asset_version_id is None) == (occurrence_id is None):
+            raise PipelineAssetManagementError(
+                "download_bundle_exact requires exactly one of asset_version_id/occurrence_id"
+            )
+        control_document = self._require_control_document()
+        selector = (
+            Selector.by_occurrence(_coerce_typed_id(occurrence_id))
+            if occurrence_id is not None
+            else Selector.by_asset_version(_coerce_typed_id(asset_version_id))
+        )
+        handle = _resolve_selector(
+            self.registry,
+            control_document,
+            self.layout,
+            selector,
+            usage_context,
+            now,
+            attestation_verifier=self.attestation_verifier,
+        )
+        return _download_bundle(
+            handle,
+            self.gcs,
+            target_path,
+            now=now,
+            max_components=max_components,
+            max_total_size_bytes=max_total_size_bytes,
+        )

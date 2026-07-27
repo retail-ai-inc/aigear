@@ -51,6 +51,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import replace
+from datetime import datetime
 from threading import RLock
 from typing import Callable, Dict, Iterator, Optional, Tuple, TypeVar
 
@@ -67,6 +68,7 @@ from aigear.management.v2.records.occurrence import (
     validate_occurrence_status_transition,
 )
 from aigear.management.v2.records.operation import OperationRecord, validate_operation_phase_transition
+from aigear.management.v2.records.outbox import OutboxEventRecord, OutboxStatus
 from aigear.management.v2.records.run import (
     AttemptRecord,
     AttemptStatus,
@@ -155,6 +157,7 @@ class FakeRegistryV2:
         self._lineage_edges: Dict[TypedId, LineageEdge] = {}
         self._component_edges: Dict[TypedId, ComponentEdge] = {}
         self._attachment_edges: Dict[TypedId, AttachmentEdge] = {}
+        self._outbox_events: Dict[TypedId, OutboxEventRecord] = {}
 
     # ── transaction boundary ───────────────────────────────────────────
 
@@ -479,6 +482,49 @@ class FakeRegistryV2:
 
     def get_attachment_edge(self, attachment_edge_id: TypedId) -> Optional[AttachmentEdge]:
         return self._attachment_edges.get(attachment_edge_id)
+
+    # ── transactional outbox ───────────────────────────────────────────
+
+    def put_outbox_event(self, record: OutboxEventRecord) -> OutboxEventRecord:
+        existing = self._outbox_events.get(record.event_id)
+        if existing is not None and existing.immutable_identity != record.immutable_identity:
+            raise IdentityConflict(
+                f"outbox event_id {record.event_id.typed!r} has conflicting immutable content"
+            )
+        if existing is not None and record.status.value == "pending":
+            return existing
+        self._outbox_events[record.event_id] = record
+        return record
+
+    def get_outbox_event(self, event_id: TypedId) -> Optional[OutboxEventRecord]:
+        return self._outbox_events.get(event_id)
+
+    def iter_outbox_events(self) -> Iterator[OutboxEventRecord]:
+        return iter(self._outbox_events.values())
+
+    def query_due_outbox_events(self, *, now: str, limit: int):
+        """Bounded fake equivalent of the production outbox work query."""
+        now_value = datetime.fromisoformat(now)
+
+        def due(record: OutboxEventRecord) -> bool:
+            if record.status in (OutboxStatus.PENDING, OutboxStatus.FAILED):
+                return record.next_attempt_at is None or datetime.fromisoformat(
+                    record.next_attempt_at
+                ) <= now_value
+            if record.status == OutboxStatus.DELIVERING:
+                return record.lease_expires_at is not None and datetime.fromisoformat(
+                    record.lease_expires_at
+                ) <= now_value
+            return False
+
+        records = sorted(
+            (record for record in self._outbox_events.values() if due(record)),
+            key=lambda record: (
+                record.next_attempt_at or record.lease_expires_at or record.created_at or "",
+                record.event_id.typed,
+            ),
+        )
+        return tuple(records[:limit])
 
     # ── read-only list helpers (T27: bounded query) ─────────────────────
     #

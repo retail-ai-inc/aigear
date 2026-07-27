@@ -30,15 +30,21 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 from aigear.management.v2.identifiers import TypedId
+from aigear.management.v2.canonical import digest_sha256_of_jcs
 from aigear.management.v2.gcs_client import GcsClientV2
 from aigear.management.v2.gcs_layout import GcsLayoutV2
 from aigear.management.v2.naming import validate_segment
+from aigear.management.v2.records.asset_version import compute_component_key
 from aigear.management.v2.records.run_spec import RunSpec
 
 __all__ = [
     "StagingUploadError",
     "validate_local_output_file",
     "stage_output_file",
+    "stage_component_file",
+    "stage_attachment_file",
+    "StagingComponentDescriptor",
+    "StagingAttachmentDescriptor",
     "StagingOutputDescriptor",
     "StepCompletionMessage",
     "validate_step_completion_message",
@@ -109,6 +115,60 @@ def _require_positive_int(field_name: str, value: object) -> None:
 
 
 @dataclass(frozen=True)
+class StagingComponentDescriptor:
+    role: str
+    logical_name: str
+    staging_object: str
+    generation: str
+    digest: TypedId
+    size: int
+    media_type: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "role", validate_segment(self.role, field_name="role"))
+        object.__setattr__(
+            self,
+            "logical_name",
+            validate_segment(self.logical_name, field_name="logical_name"),
+        )
+        _validate_staged_payload(self)
+
+
+@dataclass(frozen=True)
+class StagingAttachmentDescriptor:
+    attachment_kind: str
+    logical_name: str
+    staging_object: str
+    generation: str
+    digest: TypedId
+    size: int
+    media_type: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "attachment_kind",
+            validate_segment(self.attachment_kind, field_name="attachment_kind"),
+        )
+        object.__setattr__(
+            self,
+            "logical_name",
+            validate_segment(self.logical_name, field_name="logical_name"),
+        )
+        _validate_staged_payload(self)
+
+
+def _validate_staged_payload(value) -> None:
+    _require_non_empty_str("staging_object", value.staging_object)
+    _require_non_empty_str("generation", value.generation)
+    if not isinstance(value.digest, TypedId):
+        raise StagingUploadError(f"digest must be a TypedId, got {type(value.digest)!r}")
+    if isinstance(value.size, bool) or not isinstance(value.size, int) or value.size < 0:
+        raise StagingUploadError(f"size must be a non-negative int, got {value.size!r}")
+    _require_non_empty_str("media_type", value.media_type)
+
+
+@dataclass(frozen=True)
 class StagingOutputDescriptor:
     """One declared output's staged-upload result (spec 6.5 step 5).
 
@@ -123,18 +183,45 @@ class StagingOutputDescriptor:
     digest: TypedId
     size: int
     media_type: str
+    additional_components: Tuple[StagingComponentDescriptor, ...] = ()
+    attachments: Tuple[StagingAttachmentDescriptor, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(
             self, "output_name", validate_segment(self.output_name, field_name="output_name")
         )
-        _require_non_empty_str("staging_object", self.staging_object)
-        _require_non_empty_str("generation", self.generation)
-        if not isinstance(self.digest, TypedId):
-            raise StagingUploadError(f"digest must be a TypedId, got {type(self.digest)!r}")
-        if isinstance(self.size, bool) or not isinstance(self.size, int) or self.size < 0:
-            raise StagingUploadError(f"size must be a non-negative int, got {self.size!r}")
-        _require_non_empty_str("media_type", self.media_type)
+        if isinstance(self.additional_components, list):
+            object.__setattr__(self, "additional_components", tuple(self.additional_components))
+        if isinstance(self.attachments, list):
+            object.__setattr__(self, "attachments", tuple(self.attachments))
+        _validate_staged_payload(self)
+        if not all(
+            isinstance(value, StagingComponentDescriptor)
+            for value in self.additional_components
+        ):
+            raise StagingUploadError(
+                "additional_components must contain StagingComponentDescriptor values"
+            )
+        if not all(
+            isinstance(value, StagingAttachmentDescriptor) for value in self.attachments
+        ):
+            raise StagingUploadError(
+                "attachments must contain StagingAttachmentDescriptor values"
+            )
+        component_keys = [
+            (value.role, value.logical_name) for value in self.additional_components
+        ]
+        if len(set(component_keys)) != len(component_keys):
+            raise StagingUploadError(
+                "additional components must be unique by (role, logical_name)"
+            )
+        attachment_keys = [
+            (value.attachment_kind, value.logical_name) for value in self.attachments
+        ]
+        if len(set(attachment_keys)) != len(attachment_keys):
+            raise StagingUploadError(
+                "attachments must be unique by (attachment_kind, logical_name)"
+            )
 
 
 def stage_output_file(
@@ -186,6 +273,92 @@ def stage_output_file(
         digest=typed_digest,
         size=size,
         media_type=media_type,
+    )
+
+
+def stage_component_file(
+    gcs: GcsClientV2,
+    layout: GcsLayoutV2,
+    *,
+    local_path: Path,
+    base_dir: Path,
+    run_id: str,
+    step_name: str,
+    attempt_no: int,
+    operation_id: str,
+    output_name: str,
+    role: str,
+    logical_name: str,
+    media_type: str,
+) -> StagingComponentDescriptor:
+    """Create-only stage one additional identity component."""
+    component_key = compute_component_key(role, logical_name).bare
+    staged = stage_output_file(
+        gcs,
+        layout,
+        local_path=local_path,
+        base_dir=base_dir,
+        run_id=run_id,
+        step_name=step_name,
+        attempt_no=attempt_no,
+        operation_id=operation_id,
+        output_name=output_name,
+        payload_kind="components",
+        payload_key=component_key,
+        media_type=media_type,
+    )
+    return StagingComponentDescriptor(
+        role=role,
+        logical_name=logical_name,
+        staging_object=staged.staging_object,
+        generation=staged.generation,
+        digest=staged.digest,
+        size=staged.size,
+        media_type=staged.media_type,
+    )
+
+
+def stage_attachment_file(
+    gcs: GcsClientV2,
+    layout: GcsLayoutV2,
+    *,
+    local_path: Path,
+    base_dir: Path,
+    run_id: str,
+    step_name: str,
+    attempt_no: int,
+    operation_id: str,
+    output_name: str,
+    attachment_kind: str,
+    logical_name: str,
+    media_type: str,
+) -> StagingAttachmentDescriptor:
+    """Create-only stage one non-identity attachment."""
+    payload_key = digest_sha256_of_jcs(
+        ["aigear.attachment-slot.v2", attachment_kind, logical_name]
+    )
+    staged = stage_output_file(
+        gcs,
+        layout,
+        local_path=local_path,
+        base_dir=base_dir,
+        run_id=run_id,
+        step_name=step_name,
+        attempt_no=attempt_no,
+        operation_id=operation_id,
+        output_name=output_name,
+        payload_kind="attachments",
+        payload_key=payload_key,
+        media_type=media_type,
+    )
+    return StagingAttachmentDescriptor(
+        attachment_kind=attachment_kind,
+        logical_name=logical_name,
+        staging_object=staged.staging_object,
+        generation=staged.generation,
+        digest=staged.digest,
+        size=staged.size,
+        media_type=staged.media_type,
     )
 
 
@@ -292,3 +465,31 @@ def validate_step_completion_message(message: StepCompletionMessage, run_spec: R
             f"completion message for step {message.step_name!r} references unknown "
             f"outputs: {sorted(unknown)!r}"
         )
+
+    slots = {output.output_name: output for output in step.outputs}
+    for reported in message.outputs:
+        slot = slots[reported.output_name]
+        expected_components = {
+            (item.role, item.logical_name) for item in slot.additional_components
+        }
+        actual_components = {
+            (item.role, item.logical_name) for item in reported.additional_components
+        }
+        if actual_components != expected_components:
+            raise StagingUploadError(
+                f"completion message component set for output {reported.output_name!r} "
+                f"does not match RunSpec: expected {sorted(expected_components)!r}, "
+                f"got {sorted(actual_components)!r}"
+            )
+        expected_attachments = {
+            (item.attachment_kind, item.logical_name) for item in slot.attachments
+        }
+        actual_attachments = {
+            (item.attachment_kind, item.logical_name) for item in reported.attachments
+        }
+        if actual_attachments != expected_attachments:
+            raise StagingUploadError(
+                f"completion message attachment set for output {reported.output_name!r} "
+                f"does not match RunSpec: expected {sorted(expected_attachments)!r}, "
+                f"got {sorted(actual_attachments)!r}"
+            )

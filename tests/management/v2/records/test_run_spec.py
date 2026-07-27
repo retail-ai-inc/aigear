@@ -6,6 +6,7 @@ from aigear.management.v2.identifiers import TypedId
 from aigear.management.v2.naming import InvalidSegmentError
 from aigear.management.v2.records.asset_version import compute_component_key
 from aigear.management.v2.records.run_spec import (
+    ComponentSlotSpec,
     InvalidRunSpecError,
     OutputSlotSpec,
     RunSpec,
@@ -160,6 +161,16 @@ def test_run_spec_accepts_seed_inputs():
     assert spec.seed_inputs == (binding,)
 
 
+def test_run_spec_rejects_seed_targeting_unknown_consumer_step():
+    binding = SeedInputBinding(
+        binding_name="features",
+        asset_version_id=_DIGEST,
+        consumer_steps=("missing",),
+    )
+    with pytest.raises(InvalidRunSpecError, match="unknown steps"):
+        _run_spec(seed_inputs=(binding,))
+
+
 def test_run_spec_requires_non_empty_trigger_principal():
     with pytest.raises(InvalidRunSpecError):
         _run_spec(trigger_principal="")
@@ -193,6 +204,23 @@ def test_run_spec_rejects_unbounded_or_inverted_backoff():
                 "initial_backoff_seconds": 10,
                 "max_backoff_seconds": 5,
             }
+        )
+
+
+def test_run_spec_rejects_step_exceeding_finalize_write_budget():
+    with pytest.raises(InvalidRunSpecError, match="worst-case finalize"):
+        _run_spec(max_finalize_writes=1)
+
+
+def test_output_bundle_rejects_cross_platform_component_path_collision():
+    with pytest.raises(ValueError, match="collide"):
+        OutputSlotSpec(
+            output_name="model",
+            role="model",
+            logical_name="weights",
+            additional_components=(
+                ComponentSlotSpec(role="MODEL", logical_name="schema"),
+            ),
         )
 
 

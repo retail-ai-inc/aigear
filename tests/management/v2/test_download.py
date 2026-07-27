@@ -9,6 +9,7 @@ import pytest
 from aigear.management.v2.download import (
     DownloadError,
     compute_local_cache_key,
+    download_bundle_exact,
     download_exact,
     verify_cached_file,
 )
@@ -87,6 +88,56 @@ def test_download_exact_rejects_bundle_handles(tmp_path):
     with pytest.raises(DownloadError, match="single-component"):
         download_exact(handle, gcs, target)
     assert not target.exists()
+
+
+def test_download_bundle_exact_publishes_complete_role_tree_atomically(tmp_path):
+    gcs = FakeGcsClient()
+    model = _resolved_blob(gcs, object_name="_objects/sha256/aa/model", data=b"model")
+    schema = replace(
+        _resolved_blob(gcs, object_name="_objects/sha256/bb/schema", data=b"schema"),
+        role="schema",
+        logical_name="contract.json",
+    )
+    handle = _handle([model, schema])
+    target = tmp_path / "bundle"
+
+    result = download_bundle_exact(handle, gcs, target)
+
+    assert result == target
+    assert (target / "model" / "weights").read_bytes() == b"model"
+    assert (target / "schema" / "contract.json").read_bytes() == b"schema"
+    assert [path for path in tmp_path.iterdir() if path.name.endswith(".tmp")] == []
+
+
+def test_download_bundle_exact_keeps_target_hidden_and_cleans_temp_on_failure(tmp_path):
+    gcs = FakeGcsClient()
+    good = _resolved_blob(gcs, object_name="_objects/sha256/aa/good", data=b"good")
+    bad = replace(
+        _resolved_blob(gcs, object_name="_objects/sha256/bb/bad", data=b"bad"),
+        role="schema",
+        logical_name="contract.json",
+        sha256="0" * 64,
+    )
+    target = tmp_path / "bundle"
+
+    with pytest.raises(DownloadError, match="SHA-256 mismatch"):
+        download_bundle_exact(_handle([good, bad]), gcs, target)
+
+    assert not target.exists()
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_download_bundle_exact_rejects_cross_platform_path_collisions(tmp_path):
+    gcs = FakeGcsClient()
+    first = _resolved_blob(gcs, object_name="_objects/sha256/aa/first", data=b"first")
+    second = replace(
+        _resolved_blob(gcs, object_name="_objects/sha256/bb/second", data=b"second"),
+        role="MODEL",
+        logical_name="other",
+    )
+
+    with pytest.raises(ValueError, match="collide"):
+        download_bundle_exact(_handle([first, second]), gcs, tmp_path / "bundle")
 
 
 def test_download_exact_rejects_oversized_blob(tmp_path):

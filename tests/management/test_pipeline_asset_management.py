@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import pytest
 
 from aigear.management.pipeline_asset import PipelineAssetManagement, PipelineAssetManagementError
+from aigear.management.v2.attestation import HmacTestSigner
 from aigear.management.v2.control_document import ControlDocument
 from aigear.management.v2.environment import (
     EnvironmentIdentity,
@@ -15,6 +16,7 @@ from aigear.management.v2.environment import (
     generate_registry_binding_id,
 )
 from aigear.management.v2.fake_registry import FakeRegistryV2
+from aigear.management.v2.fake_gcs import FakeGcsClient
 from aigear.management.v2.identifiers import TypedId
 from aigear.management.v2.records.asset_version import (
     AssetComponent,
@@ -33,7 +35,12 @@ from aigear.management.v2.records.occurrence import (
     compute_resolved_inputs_digest,
 )
 from aigear.management.v2.records.run import RunStatus, StepStatus
-from aigear.management.v2.records.run_spec import OutputSlotSpec, RunSpec, StepSpec
+from aigear.management.v2.records.run_spec import (
+    OutputSlotSpec,
+    RunSpec,
+    SeedInputBinding,
+    StepSpec,
+)
 from aigear.management.v2.staging_upload import StagingOutputDescriptor, StepCompletionMessage
 from aigear.management.v2.step_lease import compute_attempt_finalize_operation_id
 
@@ -163,6 +170,11 @@ class _ProductionSigner:
         return b"signature"
 
 
+class _ProductionVerifier:
+    def verify_sha256_digest(self, *, key_version, digest, signature):
+        return None
+
+
 def _production_control_document():
     fingerprint = compute_environment_fingerprint(_environment_identity())
     return ControlDocument(
@@ -195,6 +207,7 @@ def _production_kwargs():
         "manifest_integrity_signer": _ProductionSigner("key/cryptoKeyVersions/1"),
         "blob_location_signer": _ProductionSigner("key/cryptoKeyVersions/2"),
         "occurrence_finalization_signer": _ProductionSigner("key/cryptoKeyVersions/3"),
+        "attestation_verifier": _ProductionVerifier(),
         "allowed_completion_publishers": ("push@p.iam.gserviceaccount.com",),
         "completion_oidc_audience": "https://finalizer.example.test/completion",
         "production": True,
@@ -387,6 +400,59 @@ def test_begin_run_replays_the_same_run_on_a_repeated_idempotency_key():
     assert second.run_id == first.run_id
 
 
+def test_legacy_seed_input_is_sealed_onto_root_step_and_revalidated_at_lease():
+    manager = _fully_configured_manager()
+    source_run = manager.begin_run(
+        _two_step_run_spec(), _IDEMPOTENCY_KEY, owner_principal="scheduler@aigear"
+    )
+    source = _run_step_to_completion(
+        manager, source_run.run_id, "prep", "features", b"seed-features"
+    ).outputs[0]
+    manager.registry.put_asset_version(
+        replace(
+            source.asset_version,
+            trust_state=TrustState.APPROVED,
+            policy_decision_head_ref=TypedId.from_bare("98" * 32),
+        )
+    )
+    seeded_spec = RunSpec(
+        trigger_principal="scheduler@aigear",
+        trigger_source="schedule",
+        graph_digest=TypedId.from_bare("41" * 32),
+        code_digest=TypedId.from_bare("42" * 32),
+        config_digest=TypedId.from_bare("43" * 32),
+        producer_image_digest=TypedId.from_bare("44" * 32),
+        steps=(
+            StepSpec(
+                step_name="train",
+                outputs=(OutputSlotSpec("model", "model", "weights"),),
+            ),
+        ),
+        seed_inputs=(
+            SeedInputBinding(
+                binding_name="features",
+                asset_version_id=source.asset_version.asset_version_id,
+                occurrence_id=source.occurrence.occurrence_id,
+                source_label_id=source.label.label_id,
+            ),
+        ),
+    )
+
+    seeded_run = manager.begin_run(
+        seeded_spec,
+        TypedId.from_bare("97" * 32),
+        owner_principal="scheduler@aigear",
+    )
+    step = manager.registry.get_step(seeded_run.run_id, "train")
+
+    assert step.resolved_inputs[0].binding_name == "features"
+    assert step.resolved_inputs_digest is not None
+    attempt = manager.begin_attempt(
+        seeded_run.run_id, "train", owner_principal="worker@test", now=_NOW
+    )
+    assert attempt.attempt_no == 1
+
+
 def test_full_run_lifecycle_through_finalize_and_download(tmp_path):
     manager = _fully_configured_manager()
     run_spec = _two_step_run_spec()
@@ -424,6 +490,112 @@ def test_full_run_lifecycle_through_finalize_and_download(tmp_path):
     )
     assert downloaded.read_bytes() == b"model-bytes"
     assert prep_outcome.outputs[0].output_name == "features"
+
+
+def test_finalize_never_calls_gcs_or_signer_inside_registry_transaction():
+    class GuardRegistry(FakeRegistryV2):
+        inside_transaction = False
+
+        def run_atomic(self, work):
+            def guarded(tx):
+                self.inside_transaction = True
+                try:
+                    return work(tx)
+                finally:
+                    self.inside_transaction = False
+
+            return super().run_atomic(guarded)
+
+    class GuardGcs:
+        def __init__(self, registry):
+            self.registry = registry
+            self.backing = FakeGcsClient()
+
+        def __getattr__(self, name):
+            target = getattr(self.backing, name)
+
+            def guarded(*args, **kwargs):
+                assert not self.registry.inside_transaction
+                return target(*args, **kwargs)
+
+            return guarded
+
+    class GuardSigner:
+        def __init__(self, registry, key_version):
+            self.registry = registry
+            self.backing = HmacTestSigner(key_version=key_version)
+            self.key_version = key_version
+
+        def sign_sha256_digest(self, digest):
+            assert not self.registry.inside_transaction
+            return self.backing.sign_sha256_digest(digest)
+
+    manager = _fully_configured_manager()
+    registry = GuardRegistry()
+    manager.registry = registry
+    manager.gcs = GuardGcs(registry)
+    manager.manifest_integrity_signer = GuardSigner(registry, "manifest-test")
+    manager.blob_location_signer = GuardSigner(registry, "location-test")
+    manager.occurrence_finalization_signer = GuardSigner(registry, "occurrence-test")
+    run_spec = _two_step_run_spec()
+    run = manager.begin_run(run_spec, _IDEMPOTENCY_KEY, owner_principal="scheduler@aigear")
+
+    outcome = _run_step_to_completion(
+        manager, run.run_id, "prep", "features", b"features-bytes"
+    )
+
+    assert outcome.outputs[0].occurrence.status == OccurrenceStatus.COMMITTED
+
+
+def test_finalize_terminal_replay_does_not_require_staging_object(monkeypatch):
+    manager = _fully_configured_manager()
+    run = manager.begin_run(
+        _two_step_run_spec(), _IDEMPOTENCY_KEY, owner_principal="scheduler@aigear"
+    )
+    attempt = manager.begin_attempt(
+        run.run_id, "prep", owner_principal="worker@test", now=_NOW
+    )
+    operation_id = compute_attempt_finalize_operation_id(
+        run.run_id, "prep", attempt.attempt_no
+    ).bare
+    object_name = manager.layout.staging(
+        run_id=run.run_id,
+        step_name="prep",
+        attempt_no=attempt.attempt_no,
+        operation_id=operation_id,
+        output_name="features",
+        payload_kind="components",
+        payload_key="primary",
+        file_name="features.bin",
+    )
+    data = b"features"
+    snapshot = manager.gcs.put_object(object_name, data, if_generation_match=0)
+    message = StepCompletionMessage(
+        run_id=run.run_id,
+        step_name="prep",
+        attempt_no=attempt.attempt_no,
+        operation_id=operation_id,
+        outputs=(
+            StagingOutputDescriptor(
+                output_name="features",
+                staging_object=object_name,
+                generation=snapshot.generation,
+                digest=TypedId.from_bare(hashlib.sha256(data).hexdigest()),
+                size=len(data),
+                media_type="application/octet-stream",
+            ),
+        ),
+    )
+    first = manager.finalize_step_outputs(message, now=_NOW)
+    monkeypatch.setattr(
+        manager.gcs,
+        "get_object",
+        lambda *args, **kwargs: pytest.fail("terminal replay read staging GCS"),
+    )
+
+    second = manager.finalize_step_outputs(message, now=_NOW)
+
+    assert second.outputs[0].occurrence.occurrence_id == first.outputs[0].occurrence.occurrence_id
 
 
 def test_fail_attempt_and_cancel_run_are_wired_through():

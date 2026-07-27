@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 from datetime import datetime, timezone
 
 import pytest
 
+from aigear.management.v2.attestation import HmacTestVerifier
 from aigear.management.v2.fake_gcs import FakeGcsClient
 from aigear.management.v2.fake_registry import FakeRegistryV2
 from aigear.management.v2.finalizer import FinalizeContext, finalize_step_outputs
 from aigear.management.v2.gcs_layout import GcsLayoutV2
 from aigear.management.v2.identifiers import TypedId
+from aigear.management.v2.records.asset_version import TrustState
 from aigear.management.v2.records.occurrence import compute_resolved_inputs_digest
 from aigear.management.v2.records.run import RunRecord, RunStatus, StepRecord, StepStatus
 from aigear.management.v2.records.run_spec import OutputSlotSpec, RunSpec, StepSpec
@@ -130,7 +133,15 @@ def test_resolve_step_inputs_seals_bindings_and_moves_to_ready():
     )
     _blocked_downstream(registry)
 
-    step = resolve_step_inputs(registry, run_spec, run_id="run-1", step_name="train", now=_NOW)
+    step = resolve_step_inputs(
+        registry,
+        run_spec,
+        run_id="run-1",
+        step_name="train",
+        now=_NOW,
+        layout=layout,
+        attestation_verifier=HmacTestVerifier(),
+    )
 
     assert step.status == StepStatus.READY
     assert len(step.resolved_inputs) == 1
@@ -141,6 +152,28 @@ def test_resolve_step_inputs_seals_bindings_and_moves_to_ready():
     assert step.resolved_inputs_digest == compute_resolved_inputs_digest(step.resolved_inputs)
     assert step.resolved_at == _NOW.isoformat()
     assert step.source_step_revision == 1
+
+
+def test_resolve_step_inputs_rejects_revoked_upstream_before_sealing():
+    registry, gcs, layout = FakeRegistryV2(), FakeGcsClient(), _layout()
+    run_spec = _two_step_run_spec()
+    prep_output = _produce_committed_output(
+        registry, gcs, layout, step_name="prep", output_name="features", run_spec=run_spec
+    )
+    registry.put_asset_version(
+        replace(prep_output.asset_version, trust_state=TrustState.REVOKED)
+    )
+    _blocked_downstream(registry)
+
+    with pytest.raises(ResolveInputsError, match="revoked"):
+        resolve_step_inputs(
+            registry,
+            run_spec,
+            run_id="run-1",
+            step_name="train",
+            now=_NOW,
+            layout=layout,
+        )
 
 
 def test_resolve_step_inputs_is_idempotent_on_replay():

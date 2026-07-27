@@ -41,6 +41,7 @@ from typing import Optional, Protocol, Sequence, Tuple
 
 from aigear.management.v2.canonical import digest_sha256_of_jcs
 from aigear.management.v2.identifiers import TypedId
+from aigear.management.v2.records.asset_version import LifecycleState, TrustState
 from aigear.management.v2.records.occurrence import (
     OccurrenceRecord,
     OccurrenceStatus,
@@ -92,6 +93,12 @@ class StepLeaseStore(Protocol):
 
     def put_occurrence(self, record: OccurrenceRecord) -> OccurrenceRecord: ...
 
+    def get_committed_occurrence_by_output_key(self, key: TypedId): ...
+
+    def get_asset_version(self, asset_version_id: TypedId): ...
+
+    def get_label(self, label_id: TypedId): ...
+
 
 def compute_attempt_finalize_operation_id(run_id: str, step_name: str, attempt_no: int) -> TypedId:
     """Deterministic idempotency key for the Operation that will eventually finalize
@@ -139,6 +146,49 @@ def acquire_step_lease(
             f"Step (run_id={run_id!r}, step_name={step_name!r}) is not eligible for lease "
             f"acquisition (status={step.status.value!r})"
         )
+
+    for binding in resolved_input_bindings:
+        asset = store.get_asset_version(binding.asset_version_id)
+        if asset is None or asset.lifecycle_state != LifecycleState.ACTIVE:
+            raise StepLeaseError(
+                f"resolved input {binding.binding_name!r} AssetVersion is missing or inactive"
+            )
+        if binding.occurrence_id is not None:
+            occurrence = store.get_occurrence(binding.occurrence_id)
+            if (
+                occurrence is None
+                or occurrence.status != OccurrenceStatus.COMMITTED
+                or occurrence.asset_version_id != binding.asset_version_id
+            ):
+                raise StepLeaseError(
+                    f"resolved input {binding.binding_name!r} Occurrence is not a committed "
+                    "reference to the bound AssetVersion"
+                )
+            winner = store.get_committed_occurrence_by_output_key(
+                occurrence.committed_output_key
+            )
+            if winner is None or winner.occurrence_id != occurrence.occurrence_id:
+                raise StepLeaseError(
+                    f"resolved input {binding.binding_name!r} Occurrence is not the output winner"
+                )
+            same_run = occurrence.run_id == run_id
+        else:
+            same_run = False
+        if same_run:
+            if asset.trust_state not in (TrustState.VERIFIED, TrustState.APPROVED):
+                raise StepLeaseError(
+                    f"same-run input {binding.binding_name!r} must be verified or approved"
+                )
+        elif asset.trust_state != TrustState.APPROVED or asset.policy_decision_head_ref is None:
+            raise StepLeaseError(
+                f"seed/cross-run input {binding.binding_name!r} must be approved with policy head"
+            )
+        if binding.source_label_id is not None:
+            label = store.get_label(binding.source_label_id)
+            if label is None or label.asset_version_id != binding.asset_version_id:
+                raise StepLeaseError(
+                    f"resolved input {binding.binding_name!r} source Label is inconsistent"
+                )
 
     # A Step's current_attempt_no can be set even when it is *not* a takeover:
     # a plain retry (spec 9.1's retry_wait -> ready edge) leaves the failed

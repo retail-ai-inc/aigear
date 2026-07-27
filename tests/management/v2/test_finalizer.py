@@ -26,8 +26,23 @@ from aigear.management.v2.records.run import (
     StepRecord,
     StepStatus,
 )
-from aigear.management.v2.records.run_spec import OutputSlotSpec, RunSpec, StepSpec
+from aigear.management.v2.canonical import digest_sha256_of_jcs
+from aigear.management.v2.records.asset_version import TrustState, compute_component_key
+from aigear.management.v2.records.lineage import (
+    OwnerKind,
+    compute_attachment_edge_id,
+    compute_component_edge_id,
+)
+from aigear.management.v2.records.run_spec import (
+    AttachmentSlotSpec,
+    ComponentSlotSpec,
+    OutputSlotSpec,
+    RunSpec,
+    StepSpec,
+)
 from aigear.management.v2.staging_upload import (
+    StagingAttachmentDescriptor,
+    StagingComponentDescriptor,
     StagingOutputDescriptor,
     StagingUploadError,
     StepCompletionMessage,
@@ -180,6 +195,142 @@ def test_single_output_success_path():
     assert output.blob.blob_id == output.asset_version.components[0].blob_id
     assert output.label.asset_version_id == output.asset_version.asset_version_id
     assert output.label.display_version == "run-1"
+
+
+def test_bundle_finalize_commits_all_components_attachments_edges_and_outbox():
+    registry, gcs, layout = FakeRegistryV2(), FakeGcsClient(), _layout()
+    run_spec = RunSpec(
+        trigger_principal="scheduler@aigear",
+        trigger_source="schedule",
+        graph_digest=_GRAPH_DIGEST,
+        code_digest=_CODE_DIGEST,
+        config_digest=_CONFIG_DIGEST,
+        producer_image_digest=_IMAGE_DIGEST,
+        steps=(
+            StepSpec(
+                step_name="train",
+                outputs=(
+                    OutputSlotSpec(
+                        output_name="model",
+                        role="model",
+                        logical_name="weights",
+                        additional_components=(
+                            ComponentSlotSpec(role="schema", logical_name="schema.json"),
+                        ),
+                        attachments=(
+                            AttachmentSlotSpec(
+                                attachment_kind="metrics", logical_name="metrics.json"
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+    attempt = _lease(registry)
+    operation_id = compute_attempt_finalize_operation_id(
+        "run-1", "train", attempt.attempt_no
+    ).bare
+
+    primary = _stage_output(
+        gcs,
+        layout,
+        run_id="run-1",
+        step_name="train",
+        attempt_no=attempt.attempt_no,
+        operation_id=operation_id,
+        output_name="model",
+        data=b"weights",
+    )
+    component_data = b'{"type":"model"}'
+    component_object = layout.staging(
+        run_id="run-1",
+        step_name="train",
+        attempt_no=attempt.attempt_no,
+        operation_id=operation_id,
+        output_name="model",
+        payload_kind="components",
+        payload_key=compute_component_key("schema", "schema.json").bare,
+        file_name="schema.json",
+    )
+    component_snapshot = gcs.put_object(component_object, component_data, if_generation_match=0)
+    attachment_data = b'{"accuracy":0.99}'
+    attachment_key = digest_sha256_of_jcs(
+        ["aigear.attachment-slot.v2", "metrics", "metrics.json"]
+    )
+    attachment_object = layout.staging(
+        run_id="run-1",
+        step_name="train",
+        attempt_no=attempt.attempt_no,
+        operation_id=operation_id,
+        output_name="model",
+        payload_kind="attachments",
+        payload_key=attachment_key,
+        file_name="metrics.json",
+    )
+    attachment_snapshot = gcs.put_object(
+        attachment_object, attachment_data, if_generation_match=0
+    )
+    descriptor = StagingOutputDescriptor(
+        output_name=primary.output_name,
+        staging_object=primary.staging_object,
+        generation=primary.generation,
+        digest=primary.digest,
+        size=primary.size,
+        media_type=primary.media_type,
+        additional_components=(
+            StagingComponentDescriptor(
+                role="schema",
+                logical_name="schema.json",
+                staging_object=component_object,
+                generation=component_snapshot.generation,
+                digest=TypedId.from_bare(hashlib.sha256(component_data).hexdigest()),
+                size=len(component_data),
+                media_type="application/json",
+            ),
+        ),
+        attachments=(
+            StagingAttachmentDescriptor(
+                attachment_kind="metrics",
+                logical_name="metrics.json",
+                staging_object=attachment_object,
+                generation=attachment_snapshot.generation,
+                digest=TypedId.from_bare(hashlib.sha256(attachment_data).hexdigest()),
+                size=len(attachment_data),
+                media_type="application/json",
+            ),
+        ),
+    )
+    message = _completion_message(attempt, descriptor)
+
+    outcome = finalize_step_outputs(registry, gcs, layout, message, run_spec, _context())
+    output = outcome.outputs[0]
+
+    assert [(item.role, item.logical_name) for item in output.asset_version.components] == [
+        ("model", "weights"),
+        ("schema", "schema.json"),
+    ]
+    assert output.asset_version.trust_state == TrustState.VERIFIED
+    assert len(output.occurrence.attachment_refs) == 1
+    attachment = output.occurrence.attachment_refs[0]
+    assert registry.get_component_edge(
+        compute_component_edge_id(
+            output.asset_version.asset_version_id,
+            "schema",
+            "schema.json",
+            output.asset_version.components[1].blob_id,
+        )
+    ) is not None
+    assert registry.get_attachment_edge(
+        compute_attachment_edge_id(
+            OwnerKind.OCCURRENCE,
+            output.occurrence.occurrence_id.typed,
+            attachment.attachment_kind,
+            attachment.logical_name,
+            attachment.blob_id,
+        )
+    ) is not None
+    assert len(tuple(registry.iter_outbox_events())) == 2
 
 
 def test_replay_with_same_fingerprint_returns_same_outcome():

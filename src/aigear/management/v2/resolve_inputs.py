@@ -30,6 +30,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional, Protocol
 
+from aigear.management.v2.attestation import AttestationVerifier
+from aigear.management.v2.gcs_layout import GcsLayoutV2
 from aigear.management.v2.identifiers import TypedId
 from aigear.management.v2.records.occurrence import (
     OccurrenceRecord,
@@ -38,7 +40,8 @@ from aigear.management.v2.records.occurrence import (
     compute_resolved_inputs_digest,
 )
 from aigear.management.v2.records.run import StepRecord, StepStatus
-from aigear.management.v2.records.run_spec import RunSpec
+from aigear.management.v2.records.run_spec import RunSpec, seed_inputs_for_step
+from aigear.management.v2.resolver import ResolverError, validate_same_run_upstream
 
 __all__ = ["ResolveInputsError", "ResolveInputsStore", "resolve_step_inputs"]
 
@@ -60,7 +63,14 @@ class ResolveInputsStore(Protocol):
 
 
 def resolve_step_inputs(
-    store: ResolveInputsStore, run_spec: RunSpec, *, run_id: str, step_name: str, now: datetime
+    store: ResolveInputsStore,
+    run_spec: RunSpec,
+    *,
+    run_id: str,
+    step_name: str,
+    now: datetime,
+    layout: Optional[GcsLayoutV2] = None,
+    attestation_verifier: Optional[AttestationVerifier] = None,
 ) -> StepRecord:
     """Resolve ``step_name``'s declared dependencies into exact upstream
     Occurrences and move it ``blocked -> ready``.
@@ -87,7 +97,15 @@ def resolve_step_inputs(
     if this_step_spec is None:
         raise ResolveInputsError(f"RunSpec has no StepSpec named {step_name!r}")
 
-    bindings = []
+    bindings = [
+        ResolvedInputBinding(
+            binding_name=seed.binding_name,
+            asset_version_id=seed.asset_version_id,
+            occurrence_id=seed.occurrence_id,
+            source_label_id=seed.source_label_id,
+        )
+        for seed in seed_inputs_for_step(run_spec, this_step_spec)
+    ]
     for dependency_step_name in this_step_spec.dependencies:
         dependency_spec = step_specs_by_name.get(dependency_step_name)
         if dependency_spec is None:
@@ -105,6 +123,18 @@ def resolve_step_inputs(
                     f"dependency {dependency_step_name!r} output {output.output_name!r} has no "
                     f"committed Occurrence yet; Step {step_name!r} is not ready to resolve"
                 )
+            try:
+                validate_same_run_upstream(
+                    store,
+                    occurrence,
+                    layout=layout,
+                    attestation_verifier=attestation_verifier,
+                )
+            except ResolverError as exc:
+                raise ResolveInputsError(
+                    f"dependency {dependency_step_name!r} output {output.output_name!r} "
+                    f"is not eligible: {exc}"
+                ) from exc
             bindings.append(
                 ResolvedInputBinding(
                     binding_name=f"{dependency_step_name}.{output.output_name}",

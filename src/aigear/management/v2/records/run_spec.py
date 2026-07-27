@@ -35,11 +35,20 @@ from aigear.management.v2.records.asset_version import compute_component_key
 __all__ = [
     "InvalidRunSpecError",
     "SeedInputBinding",
+    "ComponentSlotSpec",
+    "AttachmentSlotSpec",
     "OutputSlotSpec",
     "StepSpec",
     "RunSpec",
     "compute_run_spec_digest",
+    "estimate_step_finalize_writes",
+    "seed_inputs_for_step",
 ]
+
+DEFAULT_MAX_FINALIZE_WRITES = 400
+FIRESTORE_TRANSACTION_WRITE_LIMIT = 500
+MAX_COMPONENTS_PER_OUTPUT = 32
+MAX_ATTACHMENTS_PER_OUTPUT = 32
 
 
 class InvalidRunSpecError(ValueError):
@@ -179,6 +188,7 @@ class SeedInputBinding:
     asset_version_id: TypedId
     occurrence_id: Optional[TypedId] = None
     source_label_id: Optional[TypedId] = None
+    consumer_steps: Tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -189,13 +199,76 @@ class SeedInputBinding:
             _require_typed_id("occurrence_id", self.occurrence_id)
         if self.source_label_id is not None:
             _require_typed_id("source_label_id", self.source_label_id)
+        if isinstance(self.consumer_steps, list):
+            object.__setattr__(self, "consumer_steps", tuple(self.consumer_steps))
+        object.__setattr__(
+            self,
+            "consumer_steps",
+            tuple(
+                validate_segment(value, field_name="seed consumer_step")
+                for value in self.consumer_steps
+            ),
+        )
+        _ensure_unique(self.consumer_steps, field_name="seed consumer_steps")
 
     def to_digest_dict(self) -> dict:
-        return {
+        result = {
             "binding_name": self.binding_name,
             "asset_version_id": self.asset_version_id.typed,
             "occurrence_id": self.occurrence_id.typed if self.occurrence_id is not None else None,
             "source_label_id": self.source_label_id.typed if self.source_label_id is not None else None,
+        }
+        if self.consumer_steps:
+            result["consumer_steps"] = list(self.consumer_steps)
+        return result
+
+
+@dataclass(frozen=True)
+class ComponentSlotSpec:
+    """One additional identity component declared by an output bundle."""
+
+    role: str
+    logical_name: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "role", validate_segment(self.role, field_name="role"))
+        object.__setattr__(
+            self,
+            "logical_name",
+            validate_segment(self.logical_name, field_name="logical_name"),
+        )
+
+    @property
+    def component_key(self) -> TypedId:
+        return compute_component_key(self.role, self.logical_name)
+
+    def to_digest_dict(self) -> dict:
+        return {"role": self.role, "logical_name": self.logical_name}
+
+
+@dataclass(frozen=True)
+class AttachmentSlotSpec:
+    """One non-identity attachment declared by an output occurrence."""
+
+    attachment_kind: str
+    logical_name: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "attachment_kind",
+            validate_segment(self.attachment_kind, field_name="attachment_kind"),
+        )
+        object.__setattr__(
+            self,
+            "logical_name",
+            validate_segment(self.logical_name, field_name="logical_name"),
+        )
+
+    def to_digest_dict(self) -> dict:
+        return {
+            "attachment_kind": self.attachment_kind,
+            "logical_name": self.logical_name,
         }
 
 
@@ -217,6 +290,8 @@ class OutputSlotSpec:
     logical_name: str
     asset_type: Optional[str] = None
     asset_name: Optional[str] = None
+    additional_components: Tuple[ComponentSlotSpec, ...] = ()
+    attachments: Tuple[AttachmentSlotSpec, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -236,6 +311,47 @@ class OutputSlotSpec:
             "asset_name",
             validate_segment(self.asset_name or self.logical_name, field_name="asset_name"),
         )
+        if isinstance(self.additional_components, list):
+            object.__setattr__(self, "additional_components", tuple(self.additional_components))
+        if isinstance(self.attachments, list):
+            object.__setattr__(self, "attachments", tuple(self.attachments))
+        if not all(isinstance(item, ComponentSlotSpec) for item in self.additional_components):
+            raise InvalidRunSpecError(
+                "additional_components must contain only ComponentSlotSpec values"
+            )
+        if not all(isinstance(item, AttachmentSlotSpec) for item in self.attachments):
+            raise InvalidRunSpecError("attachments must contain only AttachmentSlotSpec values")
+        if 1 + len(self.additional_components) > MAX_COMPONENTS_PER_OUTPUT:
+            raise InvalidRunSpecError(
+                f"an output may declare at most {MAX_COMPONENTS_PER_OUTPUT} components"
+            )
+        if len(self.attachments) > MAX_ATTACHMENTS_PER_OUTPUT:
+            raise InvalidRunSpecError(
+                f"an output may declare at most {MAX_ATTACHMENTS_PER_OUTPUT} attachments"
+            )
+        component_keys = [(self.role, self.logical_name)] + [
+            (item.role, item.logical_name) for item in self.additional_components
+        ]
+        if len(set(component_keys)) != len(component_keys):
+            raise InvalidRunSpecError(
+                "output components must be unique by (role, logical_name)"
+            )
+        roles = [role for role, _logical_name in component_keys]
+        ensure_no_collisions(roles, field_name=f"output {self.output_name!r} component role")
+        for role in set(roles):
+            ensure_no_collisions(
+                [logical_name for item_role, logical_name in component_keys if item_role == role],
+                field_name=(
+                    f"output {self.output_name!r} role {role!r} component logical_name"
+                ),
+            )
+        attachment_keys = [
+            (item.attachment_kind, item.logical_name) for item in self.attachments
+        ]
+        if len(set(attachment_keys)) != len(attachment_keys):
+            raise InvalidRunSpecError(
+                "output attachments must be unique by (attachment_kind, logical_name)"
+            )
 
     @property
     def component_key(self) -> TypedId:
@@ -243,13 +359,26 @@ class OutputSlotSpec:
         return compute_component_key(self.role, self.logical_name)
 
     def to_digest_dict(self) -> dict:
-        return {
+        result = {
             "output_name": self.output_name,
             "role": self.role,
             "logical_name": self.logical_name,
             "asset_type": self.asset_type,
             "asset_name": self.asset_name,
         }
+        # Preserve the digest of pre-bundle RunSpecs when both collections
+        # are empty; only the new capability adds new canonical fields.
+        if self.additional_components:
+            result["additional_components"] = [
+                item.to_digest_dict() for item in self.additional_components
+            ]
+        if self.attachments:
+            result["attachments"] = [item.to_digest_dict() for item in self.attachments]
+        return result
+
+    @property
+    def declared_components(self) -> Tuple[ComponentSlotSpec, ...]:
+        return (ComponentSlotSpec(self.role, self.logical_name),) + self.additional_components
 
 
 @dataclass(frozen=True)
@@ -326,6 +455,7 @@ class RunSpec:
     scheduled_for: Optional[str] = None
     retry_policy: Dict = field(default_factory=dict)
     cancel_policy: Dict = field(default_factory=dict)
+    max_finalize_writes: int = DEFAULT_MAX_FINALIZE_WRITES
 
     def __post_init__(self) -> None:
         if isinstance(self.steps, list):
@@ -351,6 +481,14 @@ class RunSpec:
             (binding.binding_name for binding in self.seed_inputs),
             field_name="seed_inputs binding_name",
         )
+        step_names = {step.step_name for step in self.steps}
+        for binding in self.seed_inputs:
+            unknown_consumers = set(binding.consumer_steps) - step_names
+            if unknown_consumers:
+                raise InvalidRunSpecError(
+                    f"seed input {binding.binding_name!r} targets unknown steps: "
+                    f"{sorted(unknown_consumers)!r}"
+                )
 
         if self.scheduled_for is not None:
             _require_non_empty_str("scheduled_for", self.scheduled_for)
@@ -362,9 +500,24 @@ class RunSpec:
             )
         _validate_retry_policy(self.retry_policy)
         _validate_cancel_policy(self.cancel_policy)
+        if (
+            isinstance(self.max_finalize_writes, bool)
+            or not isinstance(self.max_finalize_writes, int)
+            or not (1 <= self.max_finalize_writes < FIRESTORE_TRANSACTION_WRITE_LIMIT)
+        ):
+            raise InvalidRunSpecError(
+                "max_finalize_writes must be an int in [1, 499]"
+            )
+        for step in self.steps:
+            estimated = estimate_step_finalize_writes(step, self)
+            if estimated > self.max_finalize_writes:
+                raise InvalidRunSpecError(
+                    f"step {step.step_name!r} worst-case finalize requires {estimated} writes, "
+                    f"exceeding max_finalize_writes={self.max_finalize_writes}"
+                )
 
     def to_digest_dict(self) -> dict:
-        return {
+        result = {
             "trigger_principal": self.trigger_principal,
             "trigger_source": self.trigger_source,
             "graph_digest": self.graph_digest.typed,
@@ -377,6 +530,47 @@ class RunSpec:
             "retry_policy": self.retry_policy,
             "cancel_policy": self.cancel_policy,
         }
+        if self.max_finalize_writes != DEFAULT_MAX_FINALIZE_WRITES:
+            result["max_finalize_writes"] = self.max_finalize_writes
+        return result
+
+
+def seed_inputs_for_step(run_spec: RunSpec, step: StepSpec) -> Tuple[SeedInputBinding, ...]:
+    """Return explicit seed consumers; legacy empty consumer lists target roots."""
+    return tuple(
+        binding
+        for binding in run_spec.seed_inputs
+        if step.step_name in binding.consumer_steps
+        or (not binding.consumer_steps and not step.dependencies)
+    )
+
+
+def estimate_step_finalize_writes(
+    step: StepSpec, run_spec: Optional[RunSpec] = None
+) -> int:
+    """Conservative worst-case Firestore writes for one finalize transaction.
+
+    Each new payload can create Blob, location revision and location
+    attestation, consume its adoption claim, and create one reverse edge.
+    Each output additionally creates manifest/finalization attestations,
+    AssetVersion, Label, Occurrence/binding and two projection outbox events.
+    Four shared writes cover Operation, Run, Step and Attempt.
+    """
+    shared_writes = 4
+    lineage_writes = 0
+    if run_spec is not None:
+        by_name = {candidate.step_name: candidate for candidate in run_spec.steps}
+        lineage_writes = len(seed_inputs_for_step(run_spec, step)) + sum(
+            len(by_name[dependency].outputs) for dependency in step.dependencies
+        )
+    output_writes = 0
+    for output in step.outputs:
+        component_count = 1 + len(output.additional_components)
+        attachment_count = len(output.attachments)
+        payload_and_edge_writes = 5 * (component_count + attachment_count)
+        fixed_output_writes = 10
+        output_writes += payload_and_edge_writes + fixed_output_writes
+    return shared_writes + output_writes + lineage_writes * len(step.outputs)
 
 
 def compute_run_spec_digest(run_spec: RunSpec) -> TypedId:
