@@ -7,9 +7,11 @@ import sys
 _WIN_TMPFILE_RE = re.compile(r"^[A-Za-z]:[/\\].*tmpfile\s*$")
 
 
-def _clean_output(text: str) -> str:
+def _clean_output(text: str, *, is_windows: bool | None = None) -> str:
     """Remove Windows cmd.exe shell redirect noise from subprocess output."""
-    if platform.system() != "Windows":
+    if is_windows is None:
+        is_windows = platform.system() == "Windows"
+    if not is_windows:
         return text
     result = []
     for line in text.splitlines(keepends=True):
@@ -29,7 +31,7 @@ def run_sh(
     timeout: int = 30,
     check: bool = False,
 ):
-    use_shell = platform.system() == "Windows"
+    use_shell = sys.platform == "win32"
     try:
         input_bytes = inputs.encode("utf-8") if inputs else None
         result = subprocess.run(
@@ -41,7 +43,7 @@ def run_sh(
         )
         stdout = (result.stdout or b"").decode("utf-8", errors="replace")
         stderr = (result.stderr or b"").decode("utf-8", errors="replace")
-        output = _clean_output(stdout + stderr)
+        output = _clean_output(stdout + stderr, is_windows=use_shell)
         if check and result.returncode != 0:
             raise RuntimeError(
                 f"Command failed (exit {result.returncode}): {output.strip()}"
@@ -52,7 +54,7 @@ def run_sh(
 
 
 def run_sh_stream(command: list, inputs: str | None = None) -> int:
-    use_shell = platform.system() == "Windows"
+    use_shell = sys.platform == "win32"
     proc = subprocess.Popen(
         command,
         shell=use_shell,
@@ -68,7 +70,7 @@ def run_sh_stream(command: list, inputs: str | None = None) -> int:
             proc.stdin.flush()
             proc.stdin.close()
 
-        if platform.system() == "Windows":
+        if use_shell:
             while True:
                 chunk = proc.stdout.read(4096)
                 if not chunk:
