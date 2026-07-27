@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 
 class Bucket(BaseModel):
@@ -83,9 +83,64 @@ class RegistryV2(BaseModel):
     project that never touches Pipeline V2 does not need this section at all.
     """
 
+    enabled: bool = False
+    environment_id: Optional[str] = None
+    gcp_project_number: Optional[str] = None
     asset_bucket_location: Optional[str] = None
     kms_trust_domain: Optional[str] = None
     security_journal_bucket: Optional[str] = None
+    manifest_integrity_key_version: Optional[str] = None
+    blob_location_key_version: Optional[str] = None
+    occurrence_finalization_key_version: Optional[str] = None
+    completion_topic: Optional[str] = None
+    completion_subscription: Optional[str] = None
+    completion_publisher_service_account: Optional[str] = None
+    completion_oidc_audience: Optional[str] = None
+
+    @model_validator(mode="after")
+    def validate_enabled_production_config(self):
+        if not self.enabled:
+            return self
+        required = (
+            "environment_id",
+            "gcp_project_number",
+            "asset_bucket_location",
+            "kms_trust_domain",
+            "security_journal_bucket",
+            "manifest_integrity_key_version",
+            "blob_location_key_version",
+            "occurrence_finalization_key_version",
+            "completion_topic",
+            "completion_subscription",
+            "completion_publisher_service_account",
+            "completion_oidc_audience",
+        )
+        missing = [name for name in required if not getattr(self, name)]
+        if missing:
+            raise ValueError(
+                "registry_v2.enabled=true requires " + ", ".join(missing)
+            )
+        for name in (
+            "manifest_integrity_key_version",
+            "blob_location_key_version",
+            "occurrence_finalization_key_version",
+        ):
+            if "/cryptoKeyVersions/" not in getattr(self, name):
+                raise ValueError(f"registry_v2.{name} must pin a full CryptoKeyVersion resource")
+        key_versions = {
+            self.manifest_integrity_key_version,
+            self.blob_location_key_version,
+            self.occurrence_finalization_key_version,
+        }
+        if len(key_versions) != 3:
+            raise ValueError("registry_v2 attestation key versions must be distinct")
+        if not self.gcp_project_number.isdigit():
+            raise ValueError("registry_v2.gcp_project_number must contain digits only")
+        if not self.completion_publisher_service_account.endswith(".gserviceaccount.com"):
+            raise ValueError(
+                "registry_v2.completion_publisher_service_account must be a service account email"
+            )
+        return self
 
 
 class Gcp(BaseModel):
@@ -103,6 +158,25 @@ class Gcp(BaseModel):
     firestore: Firestore
     logging: bool
     registry_v2: Optional[RegistryV2] = None
+
+    @model_validator(mode="after")
+    def validate_registry_v2_dependencies(self):
+        if self.registry_v2 is None or not self.registry_v2.enabled:
+            return self
+        missing_or_disabled = []
+        if not self.firestore.on or not self.firestore.database_id:
+            missing_or_disabled.append("firestore.on/database_id")
+        if not self.bucket.on or not self.bucket.bucket_name:
+            missing_or_disabled.append("bucket.on/bucket_name")
+        if not self.kms.on:
+            missing_or_disabled.append("kms.on")
+        if not self.pub_sub.on:
+            missing_or_disabled.append("pub_sub.on")
+        if missing_or_disabled:
+            raise ValueError(
+                "registry_v2.enabled=true requires " + ", ".join(missing_or_disabled)
+            )
+        return self
 
 
 class Config(BaseModel):

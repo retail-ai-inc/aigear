@@ -81,19 +81,23 @@ def test_create_all_accepts_custom_index_list(mock_run_sh):
 # ── RegistryV2TtlPolicies ───────────────────────────────────────────────────────
 
 
-def test_default_ttl_fields_cover_blob_claims_and_operations():
-    groups = {group for group, _ in RegistryV2TtlPolicies.DEFAULT_TTL_FIELDS}
-    assert groups == {"blob_claims", "operations"}
+def test_default_ttl_fields_never_delete_correctness_fences():
+    assert RegistryV2TtlPolicies.DEFAULT_TTL_FIELDS == ()
+    assert RegistryV2TtlPolicies.FORBIDDEN_TTL_COLLECTIONS == {
+        "blob_claims",
+        "operations",
+        "tombstones",
+    }
 
 
 @patch(f"{_MODULE}.run_sh")
 def test_enable_builds_expected_command(mock_run_sh):
     ttl = RegistryV2TtlPolicies(project_id="my-project", database_id="my-db")
-    ttl.enable("operations", "lease_expires_at")
+    ttl.enable("projection_delivery_receipts", "expires_at")
     cmd = mock_run_sh.call_args[0][0]
     assert cmd[:5] == ["gcloud", "firestore", "fields", "ttls", "update"]
-    assert "lease_expires_at" in cmd
-    assert "--collection-group=operations" in cmd
+    assert "expires_at" in cmd
+    assert "--collection-group=projection_delivery_receipts" in cmd
     assert "--database=my-db" in cmd
     assert "--project=my-project" in cmd
     assert "--enable-ttl" in cmd
@@ -110,9 +114,18 @@ def test_enable_all_enables_every_default_ttl_field(mock_run_sh):
 @patch(f"{_MODULE}.run_sh")
 def test_enable_all_accepts_custom_fields(mock_run_sh):
     ttl = RegistryV2TtlPolicies(project_id="my-project", database_id="my-db")
-    ttl.enable_all([("blob_claims", "expires_at")])
+    ttl.enable_all([("projection_delivery_receipts", "expires_at")])
     assert mock_run_sh.call_count == 1
-    assert "--collection-group=blob_claims" in mock_run_sh.call_args[0][0]
+    assert "--collection-group=projection_delivery_receipts" in mock_run_sh.call_args[0][0]
+
+
+@pytest.mark.parametrize("collection_group", ["blob_claims", "operations", "tombstones"])
+@patch(f"{_MODULE}.run_sh")
+def test_enable_rejects_ttl_on_correctness_fences(mock_run_sh, collection_group):
+    ttl = RegistryV2TtlPolicies(project_id="my-project", database_id="my-db")
+    with pytest.raises(ValueError, match="TTL is forbidden"):
+        ttl.enable(collection_group, "expires_at")
+    mock_run_sh.assert_not_called()
 
 
 # ── RegistryV2GcsIam ─────────────────────────────────────────────────────────

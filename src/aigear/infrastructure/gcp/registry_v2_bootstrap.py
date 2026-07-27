@@ -6,8 +6,10 @@ GCS layout (``aigear.management.v2.firestore_paths``,
 
 - Firestore composite indexes for the ``blobs``/``labels``/``occurrences``/
   ``runs`` query patterns Phase A's record types are built around.
-- A TTL policy on the ephemeral ``blob_claims``/``operations`` collections so
-  abandoned claims/operations expire instead of accumulating forever.
+- No TTL on ``blob_claims`` or active ``operations``.  Both are correctness
+  fences and are released/compacted only by a state-aware reconciler; a
+  wall-clock TTL delete can reopen an adoption/delete race or erase an
+  unfinished Saga.
 - A prefix-scoped IAM condition binding for the GCS ``registry/v2`` admin
   root (``GcsLayoutV2.object_prefix``), so a granted principal can only ever
   touch that subtree, never the whole bucket.
@@ -140,27 +142,26 @@ class RegistryV2FirestoreIndexes:
 
 
 class RegistryV2TtlPolicies:
-    """Enables TTL on the V2 registry's ephemeral collections.
+    """Enable TTL only for explicitly reviewed, non-authoritative collections.
 
-    ``operations`` documents already carry ``lease_expires_at``
-    (``aigear.management.v2.records.operation.OperationRecord``). There is no
-    ``BlobClaim`` record type yet (claims are out of scope until the Phase B
-    finalize path needs them; only the Firestore path
-    ``FirestorePathsV2.blob_claim_document`` exists so far), so
-    ``blob_claims`` uses the conventional ``expires_at`` name; align this with
-    whatever field name the eventual ``BlobClaim`` record actually uses.
+    Lease expiry is a takeover condition, not permission to delete the
+    document. Claims, operations and tombstones therefore have no automatic
+    TTL; reconcile verifies their external effects before compacting them.
     """
 
-    DEFAULT_TTL_FIELDS = (
-        ("blob_claims", "expires_at"),
-        ("operations", "lease_expires_at"),
-    )
+    DEFAULT_TTL_FIELDS: Tuple[Tuple[str, str], ...] = ()
+    FORBIDDEN_TTL_COLLECTIONS = frozenset({"blob_claims", "operations", "tombstones"})
 
     def __init__(self, project_id: str, database_id: str) -> None:
         self.project_id = project_id
         self.database_id = database_id
 
     def enable(self, collection_group: str, ttl_field: str) -> None:
+        if collection_group in self.FORBIDDEN_TTL_COLLECTIONS:
+            raise ValueError(
+                f"TTL is forbidden on correctness-fence collection {collection_group!r}; "
+                "use the state-aware reconciler"
+            )
         command = [
             "gcloud",
             "firestore",
