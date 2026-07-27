@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from aigear.management.v2.attestation import HmacTestVerifier
 from aigear.management.v2.control_document import ControlDocument
 from aigear.management.v2.environment import RegistryBinding, generate_registry_binding_id
 from aigear.management.v2.fake_gcs import FakeGcsClient
@@ -192,6 +193,39 @@ def test_resolve_by_asset_label_returns_blob_handle():
     assert handle.expires_at == _NOW + timedelta(minutes=5)
 
 
+def test_resolve_cryptographically_verifies_manifest_and_location_attestations():
+    registry, gcs, layout = FakeRegistryV2(), FakeGcsClient(), _layout()
+    output = _produce_committed_output(registry, gcs, layout)
+    _approve(registry, output.asset_version)
+    verifier = HmacTestVerifier()
+
+    handle = resolve(
+        registry,
+        _control_document(),
+        layout,
+        Selector.by_asset_label("model", "weights", "run-1"),
+        UsageContext.MANUAL_DOWNLOAD,
+        _NOW,
+        attestation_verifier=verifier,
+    )
+    assert handle.asset_version_id == output.asset_version.asset_version_id
+
+    attestation_id = output.asset_version.manifest_integrity_attestation_ref
+    registry._attestations[attestation_id] = replace(
+        registry.get_attestation(attestation_id), signature_b64="dGFtcGVyZWQ="
+    )
+    with pytest.raises(ResolverError, match="signature is invalid"):
+        resolve(
+            registry,
+            _control_document(),
+            layout,
+            Selector.by_asset_label("model", "weights", "run-1"),
+            UsageContext.MANUAL_DOWNLOAD,
+            _NOW,
+            attestation_verifier=verifier,
+        )
+
+
 def test_resolve_by_run_output_uses_occurrences_sealed_label():
     registry, gcs, layout = FakeRegistryV2(), FakeGcsClient(), _layout()
     output = _produce_committed_output(registry, gcs, layout)
@@ -217,6 +251,7 @@ def test_resolve_by_occurrence_id():
         registry, _control_document(), layout,
         Selector.by_occurrence(output.occurrence.occurrence_id),
         UsageContext.NEW_RUN_SEED, _NOW,
+        attestation_verifier=HmacTestVerifier(),
     )
     assert handle.occurrence_id == output.occurrence.occurrence_id
 

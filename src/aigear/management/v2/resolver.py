@@ -42,8 +42,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Optional, Tuple
+from typing import Mapping, Optional, Tuple
 
+from aigear.management.v2.attestation import AttestationVerifier, verify_attestation
 from aigear.management.v2.control_document import ControlDocument
 from aigear.management.v2.fake_registry import FakeRegistryV2
 from aigear.management.v2.gcs_layout import GcsLayoutV2
@@ -62,6 +63,7 @@ __all__ = [
     "DEFAULT_RESOLVE_TTL",
     "ResolvedBlobHandle",
     "ResolvedHandle",
+    "validate_same_run_upstream",
     "resolve",
 ]
 
@@ -351,7 +353,10 @@ def _check_trust_and_lifecycle(asset_version: AssetVersionRecord, usage_context:
 
 
 def _resolve_blob_handles(
-    registry: FakeRegistryV2, layout: GcsLayoutV2, asset_version: AssetVersionRecord
+    registry: FakeRegistryV2,
+    layout: GcsLayoutV2,
+    asset_version: AssetVersionRecord,
+    attestation_verifier: Optional[AttestationVerifier],
 ) -> Tuple[ResolvedBlobHandle, ...]:
     handles = []
     for component in asset_version.components:
@@ -371,6 +376,43 @@ def _resolve_blob_handles(
                 f"{expected_object_name!r}, got bucket={blob.bucket!r} object_name="
                 f"{blob.object_name!r}"
             )
+        if attestation_verifier is not None:
+            revision = registry.get_blob_location_revision(
+                blob.blob_id, blob.current_location_revision
+            )
+            if revision is None or any(
+                (
+                    revision.bucket != blob.bucket,
+                    revision.object_name != blob.object_name,
+                    revision.generation != blob.generation,
+                    revision.sha256 != blob.sha256,
+                    revision.crc32c != blob.crc32c,
+                    revision.size_bytes != blob.size_bytes,
+                    revision.location_attestation_ref
+                    != blob.current_location_attestation_ref,
+                    revision.location_chain_head != blob.location_chain_head,
+                )
+            ):
+                raise ResolverError(
+                    f"Blob {blob.blob_id.typed!r} current location revision is inconsistent"
+                )
+            _verify_registry_attestation(
+                registry,
+                blob.current_location_attestation_ref,
+                expected_kind="blob_location",
+                environment_fingerprint=asset_version.environment_fingerprint,
+                expected_subject={
+                    "blob_id": blob.blob_id.typed,
+                    "location_revision": blob.current_location_revision,
+                    "bucket": blob.bucket,
+                    "object_name": blob.object_name,
+                    "generation": blob.generation,
+                    "sha256": blob.sha256,
+                    "crc32c": blob.crc32c,
+                    "size_bytes": blob.size_bytes,
+                },
+                verifier=attestation_verifier,
+            )
         handles.append(
             ResolvedBlobHandle(
                 role=component.role,
@@ -388,6 +430,82 @@ def _resolve_blob_handles(
     return tuple(handles)
 
 
+def _verify_registry_attestation(
+    registry,
+    attestation_id: TypedId,
+    *,
+    expected_kind: str,
+    environment_fingerprint: TypedId,
+    expected_subject: Mapping[str, object],
+    verifier: AttestationVerifier,
+) -> None:
+    record = registry.get_attestation(attestation_id)
+    if record is None:
+        raise ResolverError(f"missing attestation {attestation_id.typed!r}")
+    if (
+        record.attestation_kind != expected_kind
+        or record.environment_fingerprint != environment_fingerprint
+    ):
+        raise ResolverError("attestation kind or environment fingerprint mismatch")
+    subject = record.unsigned_envelope.get("subject")
+    if not isinstance(subject, Mapping) or any(
+        subject.get(key) != value for key, value in expected_subject.items()
+    ):
+        raise ResolverError(f"{expected_kind} attestation subject does not match Registry state")
+    try:
+        verify_attestation(record, verifier)
+    except ValueError as exc:
+        raise ResolverError(f"{expected_kind} attestation signature is invalid") from exc
+
+
+def validate_same_run_upstream(
+    registry,
+    occurrence,
+    *,
+    layout: Optional[GcsLayoutV2] = None,
+    attestation_verifier: Optional[AttestationVerifier] = None,
+) -> AssetVersionRecord:
+    """Validate the exact committed winner before sealing a downstream input."""
+    if occurrence.status != OccurrenceStatus.COMMITTED:
+        raise ResolverError("same-run upstream Occurrence is not committed")
+    winner = registry.get_committed_occurrence_by_output_key(occurrence.committed_output_key)
+    if winner is None or winner.occurrence_id != occurrence.occurrence_id:
+        raise ResolverError("same-run upstream Occurrence is not the committed-output winner")
+    asset_version = registry.get_asset_version(occurrence.asset_version_id)
+    if asset_version is None:
+        raise ResolverError("same-run upstream AssetVersion is missing")
+    _check_trust_and_lifecycle(asset_version, UsageContext.SAME_RUN_DIRECT_UPSTREAM)
+    if layout is not None:
+        _resolve_blob_handles(registry, layout, asset_version, attestation_verifier)
+    if attestation_verifier is not None:
+        _verify_registry_attestation(
+            registry,
+            asset_version.manifest_integrity_attestation_ref,
+            expected_kind="asset_manifest_integrity",
+            environment_fingerprint=asset_version.environment_fingerprint,
+            expected_subject={
+                "asset_version_id": asset_version.asset_version_id.typed,
+                "manifest_digest": asset_version.manifest_digest.typed,
+                "manifest_schema_version": asset_version.schema_version,
+            },
+            verifier=attestation_verifier,
+        )
+        _verify_registry_attestation(
+            registry,
+            occurrence.finalization_attestation_ref,
+            expected_kind="occurrence_finalization",
+            environment_fingerprint=asset_version.environment_fingerprint,
+            expected_subject={
+                "occurrence_id": occurrence.occurrence_id.typed,
+                "committed_output_key": occurrence.committed_output_key.typed,
+                "asset_version_id": occurrence.asset_version_id.typed,
+                "operation_id": occurrence.operation_id,
+            },
+            verifier=attestation_verifier,
+        )
+    return asset_version
+
+
 def resolve(
     registry: FakeRegistryV2,
     control_document: ControlDocument,
@@ -399,6 +517,7 @@ def resolve(
     ttl: timedelta = DEFAULT_RESOLVE_TTL,
     consumer_occurrence_id: Optional[TypedId] = None,
     consumer_binding_name: Optional[str] = None,
+    attestation_verifier: Optional[AttestationVerifier] = None,
 ) -> ResolvedHandle:
     """Resolve one closed selector branch into an immutable, short-TTL handle (spec 6.4)."""
     if control_document.authority != "v2":
@@ -427,7 +546,71 @@ def resolve(
 
     _check_trust_and_lifecycle(asset_version, usage_context)
 
-    blobs = _resolve_blob_handles(registry, layout, asset_version)
+    if attestation_verifier is not None:
+        _verify_registry_attestation(
+            registry,
+            asset_version.manifest_integrity_attestation_ref,
+            expected_kind="asset_manifest_integrity",
+            environment_fingerprint=asset_version.environment_fingerprint,
+            expected_subject={
+                "asset_version_id": asset_version.asset_version_id.typed,
+                "manifest_digest": asset_version.manifest_digest.typed,
+                "manifest_schema_version": asset_version.schema_version,
+            },
+            verifier=attestation_verifier,
+        )
+        if occurrence_id is not None:
+            occurrence = registry.get_occurrence(occurrence_id)
+            component_inventory = []
+            for component in asset_version.components:
+                component_blob = registry.get_blob(component.blob_id)
+                if component_blob is None:
+                    raise ResolverError("AssetVersion component Blob is missing")
+                component_inventory.append(
+                    {
+                        "component_key": component.component_key.typed,
+                        "blob_id": component.blob_id.typed,
+                        "location_revision": component_blob.current_location_revision,
+                        "generation": component_blob.generation,
+                    }
+                )
+            attachment_inventory = []
+            for attachment in occurrence.attachment_refs:
+                attachment_blob = registry.get_blob(attachment.blob_id)
+                if attachment_blob is None:
+                    raise ResolverError("Occurrence attachment Blob is missing")
+                attachment_inventory.append(
+                    {
+                        "attachment_kind": attachment.attachment_kind,
+                        "logical_name": attachment.logical_name,
+                        "blob_id": attachment.blob_id.typed,
+                        "location_revision": attachment_blob.current_location_revision,
+                        "generation": attachment_blob.generation,
+                    }
+                )
+            _verify_registry_attestation(
+                registry,
+                occurrence.finalization_attestation_ref,
+                expected_kind="occurrence_finalization",
+                environment_fingerprint=asset_version.environment_fingerprint,
+                expected_subject={
+                    "occurrence_id": occurrence.occurrence_id.typed,
+                    "run_id": occurrence.run_id,
+                    "step_name": occurrence.step_name,
+                    "attempt_no": occurrence.attempt_no,
+                    "fencing_token": occurrence.fencing_token,
+                    "committed_output_key": occurrence.committed_output_key.typed,
+                    "asset_version_id": occurrence.asset_version_id.typed,
+                    "label_id": occurrence.label_id.typed,
+                    "resolved_inputs_digest": occurrence.resolved_inputs_digest.typed,
+                    "operation_id": occurrence.operation_id,
+                    "components": component_inventory,
+                    "attachments": attachment_inventory,
+                },
+                verifier=attestation_verifier,
+            )
+
+    blobs = _resolve_blob_handles(registry, layout, asset_version, attestation_verifier)
 
     return ResolvedHandle(
         usage_context=usage_context,
