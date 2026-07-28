@@ -23,6 +23,10 @@ from aigear.management.v2.fake_gcs import FakeGcsClient
 from aigear.management.v2.gcs_layout import GcsLayoutV2
 from aigear.management.v2.identifiers import TypedId
 from aigear.management.v2.import_executor import execute_import_to_quarantine
+from aigear.management.v2.import_adoption import (
+    ImportAdoptionError,
+    adopt_import_blobs,
+)
 from aigear.management.v2.import_prepare import (
     ImportPrepareError,
     prepare_external_import,
@@ -34,6 +38,8 @@ from aigear.management.v2.records.import_operation import (
     ImportOperationRecord,
     ImportPhase,
 )
+from aigear.management.v2.records.blob_claim import BlobClaim, ClaimState
+from aigear.management.v2.fake_registry import FakeRegistryV2
 
 _FP = TypedId.from_bare("aa" * 32)
 _ZERO = TypedId.from_bare("00" * 32)
@@ -356,4 +362,121 @@ def test_signers_are_called_before_prepared_value_can_be_committed():
             inspection,
             quarantine,
             manifest_signer=FailingSigner(),
+        )
+
+
+def _adoption_setup():
+    operation, completion, inspection, quarantine = _setup()
+    prepared = _prepare(operation, completion, inspection, quarantine)
+    operation = replace(
+        operation,
+        phase=ImportPhase.PREPARING,
+        revision=4,
+    )
+    registry = FakeRegistryV2()
+    registry.put_import_operation(operation)
+    return registry, operation, prepared, quarantine
+
+
+def test_import_adoption_claims_copies_and_rechecks_exact_canonical_generation():
+    registry, operation, prepared, gcs = _adoption_setup()
+
+    adopted = adopt_import_blobs(
+        registry,
+        gcs,
+        _LAYOUT,
+        operation,
+        prepared,
+        location_signer=HmacTestSigner(b"location", key_version="test/location/1"),
+        existing_location_verifier=HmacTestVerifier(
+            b"location", key_version="test/location/1"
+        ),
+        now="2026-07-28T00:02:00+00:00",
+    )
+
+    assert len(adopted.materials) == 2
+    for material in adopted.materials:
+        claim = registry.get_blob_claim(material.blob.blob_id)
+        assert claim.state is ClaimState.ADOPTING
+        assert claim.expected_generation == material.blob.generation
+        exact = gcs.get_object(
+            material.blob.object_name, generation=material.blob.generation
+        )
+        assert exact.sha256 == material.blob.blob_id.bare
+
+
+def test_orphan_delete_claim_wins_before_import_copy():
+    registry, operation, prepared, gcs = _adoption_setup()
+    payload = prepared.payloads[0]
+    registry.put_blob_claim(
+        BlobClaim(
+            blob_id=payload.blob_id,
+            claim_epoch=1,
+            fencing_token=99,
+            operation_id="orphan-delete",
+            expected_object_name=_LAYOUT.canonical_blob(payload.blob_id),
+            request_digest=TypedId.from_bare("77" * 32),
+            state=ClaimState.DELETE_INTENT,
+        )
+    )
+
+    with pytest.raises(ImportAdoptionError, match="claimed by another"):
+        adopt_import_blobs(
+            registry,
+            gcs,
+            _LAYOUT,
+            operation,
+            prepared,
+            location_signer=HmacTestSigner(),
+            existing_location_verifier=HmacTestVerifier(),
+            now="2026-07-28T00:02:00+00:00",
+        )
+    assert gcs.get_live_object(_LAYOUT.canonical_blob(payload.blob_id)) is None
+
+
+def test_existing_blob_requires_verified_current_location_chain():
+    registry, operation, prepared, gcs = _adoption_setup()
+    signer = HmacTestSigner(b"location", key_version="test/location/1")
+    verifier = HmacTestVerifier(b"location", key_version="test/location/1")
+    adopted = adopt_import_blobs(
+        registry,
+        gcs,
+        _LAYOUT,
+        operation,
+        prepared,
+        location_signer=signer,
+        existing_location_verifier=verifier,
+        now="2026-07-28T00:02:00+00:00",
+    )
+    for material in adopted.materials:
+        registry.put_attestation(material.location_attestation)
+        registry.put_blob_location_revision(material.location_revision)
+        registry.put_blob(material.blob)
+        claim = registry.get_blob_claim(material.blob.blob_id)
+        registry.put_blob_claim(replace(claim, state=ClaimState.CONSUMED))
+
+    replay = adopt_import_blobs(
+        registry,
+        gcs,
+        _LAYOUT,
+        operation,
+        prepared,
+        location_signer=signer,
+        existing_location_verifier=verifier,
+        now="2026-07-28T00:03:00+00:00",
+    )
+    assert all(value.reused_existing for value in replay.materials)
+
+    blob = replay.materials[0].blob
+    registry._blobs[blob.blob_id] = replace(blob, generation="999")
+    with pytest.raises(ImportAdoptionError, match="location chain"):
+        adopt_import_blobs(
+            registry,
+            gcs,
+            _LAYOUT,
+            operation,
+            prepared,
+            location_signer=signer,
+            existing_location_verifier=verifier,
+            now="2026-07-28T00:03:00+00:00",
         )
