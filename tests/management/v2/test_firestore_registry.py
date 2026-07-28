@@ -165,3 +165,44 @@ def test_policy_evidence_queries_pin_read_time_cursor_and_limit_server_side():
     )
     with pytest.raises(ValueError, match="read-only"):
         registry.run_atomic(lambda tx: None)
+
+
+class _ServerTimeSnapshot:
+    exists = False
+
+    def __init__(self, read_time):
+        self.read_time = read_time
+
+    def to_dict(self):
+        return None
+
+
+class _ServerTimeDocument:
+    def __init__(self, read_time):
+        self.read_time = read_time
+
+    def get(self):
+        return _ServerTimeSnapshot(self.read_time)
+
+
+class _ServerTimeClient:
+    def __init__(self, read_time):
+        self.read_time = read_time
+
+    def document(self, _path):
+        return _ServerTimeDocument(self.read_time)
+
+
+def test_policy_reservation_uses_firestore_snapshot_server_time():
+    read_time = datetime(2026, 7, 28, 1, 2, 3, tzinfo=timezone.utc)
+    registry = FirestoreRegistryV2(
+        "proj",
+        "v1",
+        client=_ServerTimeClient(read_time),
+    )
+
+    assert (
+        registry.get_policy_decision_head(TypedId.from_bare("aa" * 32))
+        is None
+    )
+    assert registry.get_server_read_time() == read_time

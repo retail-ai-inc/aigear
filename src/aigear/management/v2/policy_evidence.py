@@ -260,6 +260,55 @@ class PolicyEvidenceClosure:
     closure_digest: TypedId
 
     def __post_init__(self) -> None:
+        if not isinstance(self.subject_asset_version_id, TypedId):
+            raise PolicyEvidenceError(
+                "subject_asset_version_id must be TypedId"
+            )
+        if not isinstance(self.environment_fingerprint, TypedId):
+            raise PolicyEvidenceError(
+                "environment_fingerprint must be TypedId"
+            )
+        try:
+            parsed_read_time = datetime.fromisoformat(self.read_time)
+        except (TypeError, ValueError) as exc:
+            raise PolicyEvidenceError(
+                "read_time must be an ISO timestamp"
+            ) from exc
+        if (
+            parsed_read_time.tzinfo is None
+            or parsed_read_time.utcoffset() is None
+        ):
+            raise PolicyEvidenceError("read_time must be timezone-aware")
+        if not isinstance(self.filter_digest, TypedId):
+            raise PolicyEvidenceError("filter_digest must be TypedId")
+        if (
+            not isinstance(self.nodes, tuple)
+            or not all(isinstance(value, PolicyEvidenceNode) for value in self.nodes)
+        ):
+            raise PolicyEvidenceError(
+                "nodes must be a tuple of PolicyEvidenceNode values"
+            )
+        if (
+            not isinstance(self.links, tuple)
+            or not all(isinstance(value, PolicyEvidenceLink) for value in self.links)
+        ):
+            raise PolicyEvidenceError(
+                "links must be a tuple of PolicyEvidenceLink values"
+            )
+        if not isinstance(self.approvable, bool):
+            raise PolicyEvidenceError("approvable must be bool")
+        if (
+            not isinstance(self.rejection_reasons, tuple)
+            or not all(
+                isinstance(value, str) and value
+                for value in self.rejection_reasons
+            )
+        ):
+            raise PolicyEvidenceError(
+                "rejection_reasons must be a tuple of non-empty strings"
+            )
+        if not isinstance(self.closure_digest, TypedId):
+            raise PolicyEvidenceError("closure_digest must be TypedId")
         if tuple(sorted(self.nodes, key=lambda value: value.node_id)) != self.nodes:
             raise PolicyEvidenceError("closure nodes must be deterministically sorted")
         if tuple(sorted(self.links)) != self.links:

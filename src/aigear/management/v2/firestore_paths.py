@@ -111,6 +111,22 @@ class FirestorePathsV2:
             _coerce_typed_id(subject_epoch_key).bare,
         )
 
+    def policy_decision_operation_document(self, idempotency_key_hash: str) -> str:
+        return self._under_root(
+            "policy_decision_operations",
+            validate_segment(
+                idempotency_key_hash, field_name="idempotency_key_hash"
+            ),
+        )
+
+    def policy_decision_reservation_document(
+        self, asset_version_id: "TypedId | str"
+    ) -> str:
+        return self._under_root(
+            "policy_decision_reservations",
+            _coerce_typed_id(asset_version_id).bare,
+        )
+
     # ── labels ───────────────────────────────────────────────────────────
 
     def label_document(self, label_id: "TypedId | str") -> str:

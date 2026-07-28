@@ -11,10 +11,14 @@ from aigear.management.v2.records.policy import (
     PolicyDecisionConflictError,
     PolicyDecisionEpochBinding,
     PolicyDecisionHead,
+    PolicyDecisionOperationPhase,
+    PolicyDecisionOperationRecord,
     PolicyDecisionRequest,
+    PolicyDecisionReservationLock,
     PolicyDecisionUnsignedEnvelope,
     compute_subject_epoch_key,
     require_effective_policy_head,
+    validate_policy_decision_operation_transition,
 )
 
 _FP = TypedId.from_bare("aa" * 32)
@@ -28,12 +32,15 @@ _ATTESTATION = TypedId.from_bare("dd" * 32)
 def _envelope(**overrides) -> PolicyDecisionUnsignedEnvelope:
     values = {
         "schema_version": "2.0",
+        "operation_id": "policy-1",
+        "fencing_token": 1,
         "environment_id": "production",
         "environment_fingerprint": _FP,
         "subject_asset_version_id": _SUBJECT,
         "decision": PolicyDecision.APPROVED,
         "decision_epoch": 1,
         "policy_version": "policy-2026-07",
+        "policy_snapshot_digest": TypedId.from_bare("ab" * 32),
         "evidence_digests": (_EVIDENCE_A, _EVIDENCE_B),
         "evidence_closure_digest": _CLOSURE,
         "firestore_read_time": "2026-07-28T00:00:00+00:00",
@@ -117,6 +124,65 @@ def test_policy_request_binds_exact_unsigned_envelope():
     assert request.unsigned_envelope_digest == envelope.digest
     with pytest.raises(InvalidPolicyRecordError, match="does not match"):
         replace(request, unsigned_envelope_digest=_EVIDENCE_B)
+
+
+def test_policy_operation_binds_fence_policy_and_evidence():
+    envelope = _envelope()
+    request = PolicyDecisionRequest(
+        schema_version="2.0",
+        operation_id="policy-1",
+        request_fingerprint=_EVIDENCE_A,
+        expected_head_revision=0,
+        unsigned_envelope=envelope,
+        unsigned_envelope_digest=envelope.digest,
+    )
+    operation = PolicyDecisionOperationRecord(
+        schema_version="2.0",
+        operation_id="policy-1",
+        idempotency_key_hash="key-hash",
+        request_fingerprint=_EVIDENCE_A,
+        request=request,
+        policy_snapshot_digest=envelope.policy_snapshot_digest,
+        evidence_filter_digest=_EVIDENCE_A,
+        owner_principal="controller@example.test",
+        fencing_token=1,
+        phase=PolicyDecisionOperationPhase.RESERVED,
+        revision=1,
+        lease_expires_at="2026-07-28T00:05:01+00:00",
+        created_at="2026-07-28T00:00:01+00:00",
+        updated_at="2026-07-28T00:00:01+00:00",
+    )
+
+    with pytest.raises(InvalidPolicyRecordError, match="fencing token"):
+        replace(operation, fencing_token=2)
+    with pytest.raises(InvalidPolicyRecordError, match="filter digest"):
+        replace(operation, evidence_filter_digest=_CLOSURE)
+
+
+def test_policy_reservation_lock_requires_a_live_lease():
+    with pytest.raises(InvalidPolicyRecordError, match="later"):
+        PolicyDecisionReservationLock(
+            schema_version="2.0",
+            environment_fingerprint=_FP,
+            subject_asset_version_id=_SUBJECT,
+            expected_head_revision=0,
+            decision_epoch=1,
+            operation_id="policy-1",
+            idempotency_key_hash="key-hash",
+            request_fingerprint=_EVIDENCE_A,
+            fencing_token=1,
+            revision=1,
+            lease_expires_at="2026-07-28T00:00:01+00:00",
+            updated_at="2026-07-28T00:00:01+00:00",
+        )
+
+
+def test_policy_operation_transition_rejects_terminal_rewrite():
+    with pytest.raises(PolicyDecisionConflictError, match="illegal"):
+        validate_policy_decision_operation_transition(
+            PolicyDecisionOperationPhase.SUCCEEDED,
+            PolicyDecisionOperationPhase.RECONCILING,
+        )
 
 
 def test_epoch_binding_validates_deterministic_key():

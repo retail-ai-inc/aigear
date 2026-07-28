@@ -51,7 +51,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timezone
 from threading import RLock
 from typing import Callable, Dict, Iterator, Optional, Tuple, TypeVar
 
@@ -70,6 +70,12 @@ from aigear.management.v2.records.occurrence import (
 from aigear.management.v2.records.operation import OperationRecord, validate_operation_phase_transition
 from aigear.management.v2.records.import_operation import ImportOperationRecord
 from aigear.management.v2.records.outbox import OutboxEventRecord, OutboxStatus
+from aigear.management.v2.records.policy import (
+    PolicyDecisionHead,
+    PolicyDecisionOperationRecord,
+    PolicyDecisionReservationLock,
+    validate_policy_decision_operation_transition,
+)
 from aigear.management.v2.records.run import (
     AttemptRecord,
     AttemptStatus,
@@ -140,12 +146,26 @@ def _equal_ignoring_created_at(a, b) -> bool:
 class FakeRegistryV2:
     """In-memory stand-in for the V2 Firestore registry."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, server_read_time: Optional[datetime] = None) -> None:
+        if server_read_time is not None and (
+            not isinstance(server_read_time, datetime)
+            or server_read_time.tzinfo is None
+            or server_read_time.utcoffset() is None
+        ):
+            raise ValueError("server_read_time must be timezone-aware")
         self._transaction_lock = RLock()
+        self._server_read_time = server_read_time
         self._blobs: Dict[TypedId, BlobRecord] = {}
         self._blob_location_revisions: Dict[Tuple[TypedId, int], BlobLocationRevision] = {}
         self._asset_versions: Dict[TypedId, AssetVersionRecord] = {}
         self._attestations: Dict[TypedId, AttestationRecord] = {}
+        self._policy_decision_heads: Dict[TypedId, PolicyDecisionHead] = {}
+        self._policy_decision_operations: Dict[
+            str, PolicyDecisionOperationRecord
+        ] = {}
+        self._policy_decision_reservations: Dict[
+            TypedId, PolicyDecisionReservationLock
+        ] = {}
         self._labels: Dict[TypedId, LabelRecord] = {}
         self._occurrences: Dict[TypedId, OccurrenceRecord] = {}
         self._committed_output_index: Dict[TypedId, TypedId] = {}
@@ -206,6 +226,9 @@ class FakeRegistryV2:
                     setattr(view, name, deepcopy(value))
         view.read_time = read_time
         return view
+
+    def get_server_read_time(self) -> datetime:
+        return self._server_read_time or datetime.now(timezone.utc)
 
     # ── Blob ─────────────────────────────────────────────────────────────
 
@@ -273,6 +296,70 @@ class FakeRegistryV2:
 
     def get_attestation(self, attestation_id: TypedId) -> Optional[AttestationRecord]:
         return self._attestations.get(attestation_id)
+
+    # ── Policy decisions ────────────────────────────────────────────────
+
+    def get_policy_decision_head(
+        self, subject_asset_version_id: TypedId
+    ) -> Optional[PolicyDecisionHead]:
+        return self._policy_decision_heads.get(subject_asset_version_id)
+
+    def put_policy_decision_head(
+        self, record: PolicyDecisionHead
+    ) -> PolicyDecisionHead:
+        existing = self._policy_decision_heads.get(record.subject_asset_version_id)
+        if existing is not None and existing != record:
+            if record.revision != existing.revision + 1:
+                raise IdentityConflict("policy decision head revision conflict")
+            if record.current_epoch < existing.current_epoch:
+                raise IdentityConflict("policy decision head epoch moved backwards")
+        self._policy_decision_heads[record.subject_asset_version_id] = record
+        return record
+
+    def get_policy_decision_operation(
+        self, idempotency_key_hash: str
+    ) -> Optional[PolicyDecisionOperationRecord]:
+        return self._policy_decision_operations.get(idempotency_key_hash)
+
+    def put_policy_decision_operation(
+        self, record: PolicyDecisionOperationRecord
+    ) -> PolicyDecisionOperationRecord:
+        existing = self._policy_decision_operations.get(record.idempotency_key_hash)
+        if existing is not None:
+            if existing.request_fingerprint != record.request_fingerprint:
+                raise IdentityConflict(
+                    "policy decision idempotency key request conflict"
+                )
+            if existing.phase != record.phase:
+                validate_policy_decision_operation_transition(
+                    existing.phase, record.phase
+                )
+            expected_revision = existing.revision + (0 if existing == record else 1)
+            if record.revision != expected_revision:
+                raise IdentityConflict("policy decision operation revision conflict")
+        self._policy_decision_operations[record.idempotency_key_hash] = record
+        return record
+
+    def get_policy_decision_reservation(
+        self, subject_asset_version_id: TypedId
+    ) -> Optional[PolicyDecisionReservationLock]:
+        return self._policy_decision_reservations.get(subject_asset_version_id)
+
+    def put_policy_decision_reservation(
+        self, record: PolicyDecisionReservationLock
+    ) -> PolicyDecisionReservationLock:
+        existing = self._policy_decision_reservations.get(
+            record.subject_asset_version_id
+        )
+        if existing is not None and existing != record:
+            if record.revision != existing.revision + 1:
+                raise IdentityConflict("policy reservation revision conflict")
+            if record.fencing_token <= existing.fencing_token:
+                raise IdentityConflict("policy reservation fencing token is stale")
+        self._policy_decision_reservations[
+            record.subject_asset_version_id
+        ] = record
+        return record
 
     # ── Label ────────────────────────────────────────────────────────────
 

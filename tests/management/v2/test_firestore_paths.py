@@ -75,6 +75,12 @@ def test_asset_version_and_attestation_and_policy_documents(paths):
     assert paths.policy_decision_epoch_document(_HEX) == (
         f"{paths.control_document}/policy_decision_epochs/{_HEX}"
     )
+    assert paths.policy_decision_operation_document("key-hash") == (
+        f"{paths.control_document}/policy_decision_operations/key-hash"
+    )
+    assert paths.policy_decision_reservation_document(_HEX) == (
+        f"{paths.control_document}/policy_decision_reservations/{_HEX}"
+    )
 
 
 def test_label_document(paths):

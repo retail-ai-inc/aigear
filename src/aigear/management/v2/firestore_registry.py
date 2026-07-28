@@ -42,6 +42,12 @@ from aigear.management.v2.records.import_operation import (
 )
 from aigear.management.v2.import_recovery import ImportCleanupIntent
 from aigear.management.v2.records.outbox import OutboxEventRecord, OutboxStatus
+from aigear.management.v2.records.policy import (
+    PolicyDecisionHead,
+    PolicyDecisionOperationRecord,
+    PolicyDecisionReservationLock,
+    validate_policy_decision_operation_transition,
+)
 from aigear.management.v2.records.run import (
     AttemptRecord,
     AttemptStatus,
@@ -92,6 +98,7 @@ class FirestoreRegistryV2:
         ):
             raise ValueError("read_time must be timezone-aware")
         self.read_time = read_time
+        self._last_server_read_time: Optional[datetime] = None
         self._cache: Dict[str, Optional[dict]] = {}
         self._writes: Dict[str, tuple[dict, bool]] = {}
 
@@ -155,8 +162,22 @@ class FirestoreRegistryV2:
         if isinstance(snapshot, (list, tuple)):
             snapshot = snapshot[0]
         data = snapshot.to_dict() if getattr(snapshot, "exists", False) else None
+        snapshot_read_time = getattr(snapshot, "read_time", None)
+        if (
+            isinstance(snapshot_read_time, datetime)
+            and snapshot_read_time.tzinfo is not None
+            and snapshot_read_time.utcoffset() is not None
+        ):
+            self._last_server_read_time = snapshot_read_time
         self._cache[path] = None if data is None else dict(data)
         return None if data is None else dict(data)
+
+    def get_server_read_time(self) -> datetime:
+        if self._last_server_read_time is None:
+            raise RuntimeError(
+                "server read time is unavailable before a Firestore document read"
+            )
+        return self._last_server_read_time
 
     def _write_data(self, path: str, data: dict, *, create_only: bool = False) -> None:
         if self.read_time is not None:
@@ -246,6 +267,81 @@ class FirestoreRegistryV2:
 
     def get_attestation(self, attestation_id: TypedId) -> Optional[AttestationRecord]:
         return self._get(self.paths.attestation_document(attestation_id), AttestationRecord)
+
+    def get_policy_decision_head(
+        self, subject_asset_version_id: TypedId
+    ) -> Optional[PolicyDecisionHead]:
+        return self._get(
+            self.paths.policy_decision_head_document(subject_asset_version_id),
+            PolicyDecisionHead,
+        )
+
+    def put_policy_decision_head(
+        self, record: PolicyDecisionHead
+    ) -> PolicyDecisionHead:
+        path = self.paths.policy_decision_head_document(
+            record.subject_asset_version_id
+        )
+        existing = self._get(path, PolicyDecisionHead)
+        if existing is not None and existing != record:
+            if record.revision != existing.revision + 1:
+                raise IdentityConflict("policy decision head revision conflict")
+            if record.current_epoch < existing.current_epoch:
+                raise IdentityConflict("policy decision head epoch moved backwards")
+        return self._put(path, record, create_only=existing is None)
+
+    def get_policy_decision_operation(
+        self, idempotency_key_hash: str
+    ) -> Optional[PolicyDecisionOperationRecord]:
+        return self._get(
+            self.paths.policy_decision_operation_document(idempotency_key_hash),
+            PolicyDecisionOperationRecord,
+        )
+
+    def put_policy_decision_operation(
+        self, record: PolicyDecisionOperationRecord
+    ) -> PolicyDecisionOperationRecord:
+        path = self.paths.policy_decision_operation_document(
+            record.idempotency_key_hash
+        )
+        existing = self._get(path, PolicyDecisionOperationRecord)
+        if existing is not None:
+            if existing.request_fingerprint != record.request_fingerprint:
+                raise IdentityConflict(
+                    "policy decision idempotency key request conflict"
+                )
+            if existing.phase != record.phase:
+                validate_policy_decision_operation_transition(
+                    existing.phase, record.phase
+                )
+            expected_revision = existing.revision + (0 if existing == record else 1)
+            if record.revision != expected_revision:
+                raise IdentityConflict("policy decision operation revision conflict")
+        return self._put(path, record, create_only=existing is None)
+
+    def get_policy_decision_reservation(
+        self, subject_asset_version_id: TypedId
+    ) -> Optional[PolicyDecisionReservationLock]:
+        return self._get(
+            self.paths.policy_decision_reservation_document(
+                subject_asset_version_id
+            ),
+            PolicyDecisionReservationLock,
+        )
+
+    def put_policy_decision_reservation(
+        self, record: PolicyDecisionReservationLock
+    ) -> PolicyDecisionReservationLock:
+        path = self.paths.policy_decision_reservation_document(
+            record.subject_asset_version_id
+        )
+        existing = self._get(path, PolicyDecisionReservationLock)
+        if existing is not None and existing != record:
+            if record.revision != existing.revision + 1:
+                raise IdentityConflict("policy reservation revision conflict")
+            if record.fencing_token <= existing.fencing_token:
+                raise IdentityConflict("policy reservation fencing token is stale")
+        return self._put(path, record, create_only=existing is None)
 
     def get_asset_version(self, asset_version_id: TypedId) -> Optional[AssetVersionRecord]:
         return self._get(self.paths.asset_version_document(asset_version_id), AssetVersionRecord)
