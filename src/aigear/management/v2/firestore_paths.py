@@ -116,6 +116,18 @@ class FirestorePathsV2:
     def label_document(self, label_id: "TypedId | str") -> str:
         return self._under_root("labels", _coerce_typed_id(label_id).bare)
 
+    def import_provenance_document(
+        self,
+        asset_version_id: "TypedId | str",
+        attestation_id: "TypedId | str",
+    ) -> str:
+        return self._under_root(
+            "asset_import_provenance",
+            _coerce_typed_id(asset_version_id).bare,
+            "entries",
+            _coerce_typed_id(attestation_id).bare,
+        )
+
     # ── runs / steps / attempts / committed outputs ─────────────────────
 
     def run_document(self, run_id: str) -> str:

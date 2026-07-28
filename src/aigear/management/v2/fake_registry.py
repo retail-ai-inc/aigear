@@ -155,6 +155,7 @@ class FakeRegistryV2:
         self._attempts: Dict[Tuple[str, str, int], AttemptRecord] = {}
         self._operations: Dict[str, OperationRecord] = {}
         self._import_operations: Dict[str, ImportOperationRecord] = {}
+        self._import_provenance: Dict[Tuple[TypedId, TypedId], object] = {}
         self._blob_claims: Dict[TypedId, BlobClaim] = {}
         self._lineage_edges: Dict[TypedId, LineageEdge] = {}
         self._component_edges: Dict[TypedId, ComponentEdge] = {}
@@ -435,6 +436,17 @@ class FakeRegistryV2:
         self, idempotency_key_hash: str
     ) -> Optional[ImportOperationRecord]:
         return self._import_operations.get(idempotency_key_hash)
+
+    def put_import_provenance(self, record):
+        key = (record.asset_version_id, record.source_provenance_attestation_ref)
+        existing = self._import_provenance.get(key)
+        if existing is not None and existing != record:
+            raise IdentityConflict("import provenance index conflict")
+        self._import_provenance[key] = record
+        return record
+
+    def get_import_provenance(self, asset_version_id, attestation_id):
+        return self._import_provenance.get((asset_version_id, attestation_id))
 
     # ── BlobClaim ────────────────────────────────────────────────────────
 

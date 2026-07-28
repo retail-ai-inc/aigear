@@ -164,6 +164,16 @@ class SecurityJournal:
             raise SecurityJournalError("journal head does not match its exact entry")
         return head
 
+    def read_entry(self, object_name: str, generation: str) -> SecurityJournalEntry:
+        if not object_name.startswith(f"{self._prefix}/entries/"):
+            raise SecurityJournalError("journal entry is outside this journal prefix")
+        snapshot = self._gcs.get_object(object_name, generation=generation)
+        return self._decode_entry(
+            snapshot.data,
+            object_name=snapshot.object_name,
+            generation=snapshot.generation,
+        )
+
     def append(
         self,
         *,

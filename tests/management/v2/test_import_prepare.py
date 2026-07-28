@@ -32,6 +32,11 @@ from aigear.management.v2.import_identity_reservation import (
     import_identity_journal_prefix,
     reserve_import_identity,
 )
+from aigear.management.v2.import_commit import (
+    ImportCommitError,
+    commit_external_import,
+    verify_import_commit_evidence,
+)
 from aigear.management.v2.import_prepare import (
     ImportPrepareError,
     prepare_external_import,
@@ -550,3 +555,99 @@ def test_identity_reservation_rejects_wrong_per_label_journal():
 
     with pytest.raises(ImportIdentityReservationError, match="prefix"):
         reserve_import_identity(prepared, journal=journal, issued_at=_AT)
+
+
+def _commit_setup():
+    registry, operation, prepared, gcs = _adoption_setup()
+    location_signer = HmacTestSigner(b"location", key_version="test/location/1")
+    location_verifier = HmacTestVerifier(
+        b"location", key_version="test/location/1"
+    )
+    adopted = adopt_import_blobs(
+        registry,
+        gcs,
+        _LAYOUT,
+        operation,
+        prepared,
+        location_signer=location_signer,
+        existing_location_verifier=location_verifier,
+        now="2026-07-28T00:02:00+00:00",
+    )
+    journal = _identity_journal(FakeGcsClient(), prepared)
+    reservation = reserve_import_identity(prepared, journal=journal, issued_at=_AT)
+    entry = journal.read_entry(
+        reservation.journal_entry_object_name,
+        reservation.journal_entry_generation,
+    )
+    evidence = verify_import_commit_evidence(
+        prepared,
+        adopted,
+        reservation,
+        entry,
+        manifest_verifier=HmacTestVerifier(
+            b"manifest", key_version=_MANIFEST_KEY
+        ),
+        provenance_verifier=HmacTestVerifier(
+            b"provenance", key_version=_PROVENANCE_KEY
+        ),
+        location_verifier=location_verifier,
+    )
+    committing = replace(
+        operation,
+        phase=ImportPhase.COMMITTING,
+        revision=5,
+    )
+    registry.put_import_operation(committing)
+    return registry, committing, evidence
+
+
+def test_atomic_import_commit_persists_verified_asset_label_edges_and_result_refs():
+    registry, operation, evidence = _commit_setup()
+
+    result = commit_external_import(
+        registry,
+        _LAYOUT,
+        operation,
+        evidence,
+        committed_at="2026-07-28T00:03:00+00:00",
+    )
+
+    assert result.phase is ImportPhase.SUCCEEDED
+    assert result.result_asset_version_id == evidence.prepared.asset_version_id
+    assert result.result_label_id == evidence.identity_reservation.label_id
+    asset = registry.get_asset_version(result.result_asset_version_id)
+    assert asset.trust_state.value == "verified"
+    assert registry.get_label(result.result_label_id).asset_version_id == asset.asset_version_id
+    assert registry.get_import_provenance(
+        asset.asset_version_id,
+        result.result_source_provenance_attestation_ref,
+    ).operation_id == operation.operation_id
+    assert all(
+        registry.get_blob(material.blob.blob_id) == material.blob
+        for material in evidence.adopted.materials
+    )
+    assert all(
+        registry.get_blob_claim(material.blob.blob_id).state is ClaimState.CONSUMED
+        for material in evidence.adopted.materials
+    )
+
+
+def test_write_budget_rejection_leaves_registry_business_facts_uncommitted():
+    registry, operation, evidence = _commit_setup()
+    low_budget = replace(operation, write_budget=1)
+    registry.put_import_operation(low_budget)
+
+    with pytest.raises(ImportCommitError, match="budget"):
+        commit_external_import(
+            registry,
+            _LAYOUT,
+            low_budget,
+            evidence,
+            committed_at="2026-07-28T00:03:00+00:00",
+        )
+
+    assert registry.get_asset_version(evidence.prepared.asset_version_id) is None
+    assert all(
+        registry.get_blob(material.blob.blob_id) is None
+        for material in evidence.adopted.materials
+    )

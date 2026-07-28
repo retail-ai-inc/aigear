@@ -22,6 +22,16 @@ _B = TypedId.from_bare("bb" * 32)
 _C = TypedId.from_bare("cc" * 32)
 
 
+def _result_refs():
+    return {
+        "result_asset_version_id": _A,
+        "result_label_id": _B,
+        "result_source_provenance_attestation_ref": _C,
+        "identity_reservation_entry_id": _A,
+        "identity_reservation_sequence": 1,
+    }
+
+
 def _source(**overrides) -> ExactImportSource:
     values = {
         "environment_id": "production",
@@ -208,7 +218,7 @@ def test_succeeded_operation_requires_result_and_finished_at():
         phase=ImportPhase.SUCCEEDED,
         ticket=_ticket(),
         completion=_completion(),
-        result_asset_version_id=_A,
+        **_result_refs(),
         finished_at="2026-07-28T00:03:00+00:00",
     )
     assert operation.result_asset_version_id == _A
@@ -219,7 +229,7 @@ def test_terminal_operation_cannot_reopen():
         phase=ImportPhase.SUCCEEDED,
         ticket=_ticket(),
         completion=_completion(),
-        result_asset_version_id=_A,
+        **_result_refs(),
         finished_at="2026-07-28T00:03:00+00:00",
     )
     with pytest.raises(InvalidImportPhaseTransitionError):

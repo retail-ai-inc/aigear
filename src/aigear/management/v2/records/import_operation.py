@@ -20,6 +20,7 @@ __all__ = [
     "ImportControlSnapshot",
     "ImportTicketRecord",
     "ImportCompletionRecord",
+    "ImportProvenanceIndexRecord",
     "ImportOperationRecord",
 ]
 
@@ -268,6 +269,33 @@ class ImportCompletionRecord:
 
 
 @dataclass(frozen=True)
+class ImportProvenanceIndexRecord:
+    schema_version: str
+    environment_fingerprint: TypedId
+    asset_version_id: TypedId
+    source_provenance_attestation_ref: TypedId
+    operation_id: str
+    ticket_digest: TypedId
+    identity_reservation_entry_id: TypedId
+
+    def __post_init__(self) -> None:
+        parse_schema_version(self.schema_version)
+        for field_name in (
+            "environment_fingerprint",
+            "asset_version_id",
+            "source_provenance_attestation_ref",
+            "ticket_digest",
+            "identity_reservation_entry_id",
+        ):
+            _typed_id(field_name, getattr(self, field_name))
+        object.__setattr__(
+            self,
+            "operation_id",
+            validate_segment(self.operation_id, field_name="operation_id"),
+        )
+
+
+@dataclass(frozen=True)
 class ImportOperationRecord:
     schema_version: str
     operation_id: str
@@ -286,6 +314,10 @@ class ImportOperationRecord:
     ticket: Optional[ImportTicketRecord] = None
     completion: Optional[ImportCompletionRecord] = None
     result_asset_version_id: Optional[TypedId] = None
+    result_label_id: Optional[TypedId] = None
+    result_source_provenance_attestation_ref: Optional[TypedId] = None
+    identity_reservation_entry_id: Optional[TypedId] = None
+    identity_reservation_sequence: Optional[int] = None
     error_class: Optional[str] = None
     error_summary: Optional[str] = None
     created_at: Optional[str] = None
@@ -344,15 +376,42 @@ class ImportOperationRecord:
             )
         if self.result_asset_version_id is not None:
             _typed_id("result_asset_version_id", self.result_asset_version_id)
+        result_refs = (
+            self.result_asset_version_id,
+            self.result_label_id,
+            self.result_source_provenance_attestation_ref,
+            self.identity_reservation_entry_id,
+            self.identity_reservation_sequence,
+        )
+        if any(value is not None for value in result_refs) and any(
+            value is None for value in result_refs
+        ):
+            raise InvalidImportRecordError(
+                "successful import result and identity reservation refs must be complete"
+            )
+        for field_name in (
+            "result_label_id",
+            "result_source_provenance_attestation_ref",
+            "identity_reservation_entry_id",
+        ):
+            value = getattr(self, field_name)
+            if value is not None:
+                _typed_id(field_name, value)
+        if self.identity_reservation_sequence is not None:
+            _positive(
+                "identity_reservation_sequence", self.identity_reservation_sequence
+            )
         self._validate_ticket()
         self._validate_completion()
         if self.phase == ImportPhase.SUCCEEDED and self.result_asset_version_id is None:
             raise InvalidImportRecordError(
                 "succeeded imports require result_asset_version_id"
             )
-        if self.phase != ImportPhase.SUCCEEDED and self.result_asset_version_id is not None:
+        if self.phase != ImportPhase.SUCCEEDED and any(
+            value is not None for value in result_refs
+        ):
             raise InvalidImportRecordError(
-                "only succeeded imports may set result_asset_version_id"
+                "only succeeded imports may set result refs"
             )
         terminal = self.phase in (
             ImportPhase.SUCCEEDED,

@@ -35,7 +35,10 @@ from aigear.management.v2.records.occurrence import (
     validate_occurrence_status_transition,
 )
 from aigear.management.v2.records.operation import OperationRecord, validate_operation_phase_transition
-from aigear.management.v2.records.import_operation import ImportOperationRecord
+from aigear.management.v2.records.import_operation import (
+    ImportOperationRecord,
+    ImportProvenanceIndexRecord,
+)
 from aigear.management.v2.records.outbox import OutboxEventRecord, OutboxStatus
 from aigear.management.v2.records.run import (
     AttemptRecord,
@@ -360,6 +363,27 @@ class FirestoreRegistryV2:
         if existing is not None and existing.request_fingerprint != record.request_fingerprint:
             raise OperationConflict("import idempotency key request fingerprint conflict")
         return self._put(path, record, create_only=existing is None)
+
+    def put_import_provenance(
+        self, record: ImportProvenanceIndexRecord
+    ) -> ImportProvenanceIndexRecord:
+        path = self.paths.import_provenance_document(
+            record.asset_version_id, record.source_provenance_attestation_ref
+        )
+        existing = self._get(path, ImportProvenanceIndexRecord)
+        if existing is not None:
+            if existing != record:
+                raise IdentityConflict("import provenance index conflict")
+            return existing
+        return self._put(path, record, create_only=True)
+
+    def get_import_provenance(
+        self, asset_version_id: TypedId, attestation_id: TypedId
+    ) -> Optional[ImportProvenanceIndexRecord]:
+        return self._get(
+            self.paths.import_provenance_document(asset_version_id, attestation_id),
+            ImportProvenanceIndexRecord,
+        )
 
     def get_blob_claim(self, blob_id: TypedId) -> Optional[BlobClaim]:
         return self._get(self.paths.blob_claim_document(blob_id), BlobClaim)
