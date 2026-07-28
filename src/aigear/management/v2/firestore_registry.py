@@ -35,6 +35,7 @@ from aigear.management.v2.records.occurrence import (
     validate_occurrence_status_transition,
 )
 from aigear.management.v2.records.operation import OperationRecord, validate_operation_phase_transition
+from aigear.management.v2.records.import_operation import ImportOperationRecord
 from aigear.management.v2.records.outbox import OutboxEventRecord, OutboxStatus
 from aigear.management.v2.records.run import (
     AttemptRecord,
@@ -346,6 +347,18 @@ class FirestoreRegistryV2:
                 raise OperationConflict("idempotency key request fingerprint conflict")
             if existing.phase != record.phase:
                 validate_operation_phase_transition(existing.phase, record.phase)
+        return self._put(path, record, create_only=existing is None)
+
+    def get_import_operation(self, key: str) -> Optional[ImportOperationRecord]:
+        return self._get(self.paths.import_operation_document(key), ImportOperationRecord)
+
+    def put_import_operation(
+        self, record: ImportOperationRecord
+    ) -> ImportOperationRecord:
+        path = self.paths.import_operation_document(record.idempotency_key_hash)
+        existing = self._get(path, ImportOperationRecord)
+        if existing is not None and existing.request_fingerprint != record.request_fingerprint:
+            raise OperationConflict("import idempotency key request fingerprint conflict")
         return self._put(path, record, create_only=existing is None)
 
     def get_blob_claim(self, blob_id: TypedId) -> Optional[BlobClaim]:

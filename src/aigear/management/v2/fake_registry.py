@@ -68,6 +68,7 @@ from aigear.management.v2.records.occurrence import (
     validate_occurrence_status_transition,
 )
 from aigear.management.v2.records.operation import OperationRecord, validate_operation_phase_transition
+from aigear.management.v2.records.import_operation import ImportOperationRecord
 from aigear.management.v2.records.outbox import OutboxEventRecord, OutboxStatus
 from aigear.management.v2.records.run import (
     AttemptRecord,
@@ -153,6 +154,7 @@ class FakeRegistryV2:
         self._steps: Dict[Tuple[str, str], StepRecord] = {}
         self._attempts: Dict[Tuple[str, str, int], AttemptRecord] = {}
         self._operations: Dict[str, OperationRecord] = {}
+        self._import_operations: Dict[str, ImportOperationRecord] = {}
         self._blob_claims: Dict[TypedId, BlobClaim] = {}
         self._lineage_edges: Dict[TypedId, LineageEdge] = {}
         self._component_edges: Dict[TypedId, ComponentEdge] = {}
@@ -424,6 +426,15 @@ class FakeRegistryV2:
 
     def get_operation(self, idempotency_key_hash: str) -> Optional[OperationRecord]:
         return self._operations.get(idempotency_key_hash)
+
+    def put_import_operation(self, record: ImportOperationRecord) -> ImportOperationRecord:
+        self._import_operations[record.idempotency_key_hash] = record
+        return record
+
+    def get_import_operation(
+        self, idempotency_key_hash: str
+    ) -> Optional[ImportOperationRecord]:
+        return self._import_operations.get(idempotency_key_hash)
 
     # ── BlobClaim ────────────────────────────────────────────────────────
 
