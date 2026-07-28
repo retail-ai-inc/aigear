@@ -27,6 +27,11 @@ from aigear.management.v2.import_adoption import (
     ImportAdoptionError,
     adopt_import_blobs,
 )
+from aigear.management.v2.import_identity_reservation import (
+    ImportIdentityReservationError,
+    import_identity_journal_prefix,
+    reserve_import_identity,
+)
 from aigear.management.v2.import_prepare import (
     ImportPrepareError,
     prepare_external_import,
@@ -40,6 +45,11 @@ from aigear.management.v2.records.import_operation import (
 )
 from aigear.management.v2.records.blob_claim import BlobClaim, ClaimState
 from aigear.management.v2.fake_registry import FakeRegistryV2
+from aigear.management.v2.security_journal import (
+    SecurityJournal,
+    SecurityJournalConflictError,
+)
+from aigear.management.v2.records.label import compute_label_id
 
 _FP = TypedId.from_bare("aa" * 32)
 _ZERO = TypedId.from_bare("00" * 32)
@@ -106,9 +116,9 @@ class Scanner:
         )
 
 
-def _setup(*, declaration=None):
+def _setup(*, declaration=None, model_data=b"model"):
     source_gcs = FakeGcsClient()
-    model = source_gcs.put_object("bundle/model.onnx", b"model")
+    model = source_gcs.put_object("bundle/model.onnx", model_data)
     schema = source_gcs.put_object("bundle/schema.json", b'{"type":"object"}')
     source_manifest = source_gcs.put_object(
         "bundle/source-manifest.json",
@@ -480,3 +490,63 @@ def test_existing_blob_requires_verified_current_location_chain():
             existing_location_verifier=verifier,
             now="2026-07-28T00:03:00+00:00",
         )
+
+
+def _identity_journal(gcs, prepared):
+    label_id = compute_label_id(
+        prepared.declaration.asset_type,
+        prepared.declaration.name,
+        prepared.declaration.display_version,
+    )
+    return SecurityJournal(
+        gcs=gcs,
+        object_prefix=import_identity_journal_prefix("security", label_id),
+        environment_fingerprint=_FP,
+        signer=HmacTestSigner(b"journal", key_version="test/journal/1"),
+        verifier=HmacTestVerifier(b"journal", key_version="test/journal/1"),
+    )
+
+
+def test_import_identity_reservation_is_journal_first_and_ack_loss_idempotent():
+    operation, completion, inspection, quarantine = _setup()
+    prepared = _prepare(operation, completion, inspection, quarantine)
+    journal = _identity_journal(FakeGcsClient(), prepared)
+
+    first = reserve_import_identity(prepared, journal=journal, issued_at=_AT)
+    retry = reserve_import_identity(prepared, journal=journal, issued_at=_AT)
+
+    assert retry == first
+    assert first.asset_version_id == prepared.asset_version_id
+    assert journal.read_head().entry_id == first.journal_entry_id
+
+
+def test_same_label_cannot_be_reinterpreted_after_registry_rollback():
+    operation, completion, inspection, quarantine = _setup()
+    prepared = _prepare(operation, completion, inspection, quarantine)
+    journal = _identity_journal(FakeGcsClient(), prepared)
+    reserve_import_identity(prepared, journal=journal, issued_at=_AT)
+    other_operation, other_completion, other_inspection, other_quarantine = _setup(
+        model_data=b"different-model"
+    )
+    changed = _prepare(
+        other_operation, other_completion, other_inspection, other_quarantine
+    )
+
+    with pytest.raises(SecurityJournalConflictError, match="different evidence"):
+        reserve_import_identity(changed, journal=journal, issued_at=_AT)
+
+
+def test_identity_reservation_rejects_wrong_per_label_journal():
+    operation, completion, inspection, quarantine = _setup()
+    prepared = _prepare(operation, completion, inspection, quarantine)
+    wrong_label = TypedId.from_bare("99" * 32)
+    journal = SecurityJournal(
+        gcs=FakeGcsClient(),
+        object_prefix=import_identity_journal_prefix("security", wrong_label),
+        environment_fingerprint=_FP,
+        signer=HmacTestSigner(),
+        verifier=HmacTestVerifier(),
+    )
+
+    with pytest.raises(ImportIdentityReservationError, match="prefix"):
+        reserve_import_identity(prepared, journal=journal, issued_at=_AT)

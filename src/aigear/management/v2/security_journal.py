@@ -143,6 +143,10 @@ class SecurityJournal:
     def head_object_name(self) -> str:
         return f"{self._prefix}/head.json"
 
+    @property
+    def object_prefix(self) -> str:
+        return self._prefix
+
     def read_head(self) -> Optional[SecurityJournalHead]:
         snapshot = self._gcs.get_live_object(self.head_object_name)
         if snapshot is None:
