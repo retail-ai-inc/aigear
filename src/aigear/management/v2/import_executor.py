@@ -34,6 +34,7 @@ __all__ = [
     "ImportPayloadSource",
     "QuarantineObjectDescriptor",
     "ImportExecutorCompletion",
+    "compute_import_payload_set_digest",
     "execute_import_to_quarantine",
 ]
 
@@ -166,7 +167,9 @@ class ImportExecutorCompletion:
         _aware("completed_at", self.completed_at)
         if not self.payloads:
             raise ImportExecutionError("completion must contain at least one payload")
-        expected = _payload_set_digest(self.source_manifest, self.payloads)
+        expected = compute_import_payload_set_digest(
+            self.source_manifest, self.payloads
+        )
         if self.payload_set_digest != expected:
             raise ImportExecutionError("payload_set_digest does not match descriptors")
 
@@ -290,7 +293,7 @@ def _descriptor(
     )
 
 
-def _payload_set_digest(
+def compute_import_payload_set_digest(
     source_manifest: QuarantineObjectDescriptor,
     payloads: Tuple[QuarantineObjectDescriptor, ...],
 ) -> TypedId:
@@ -425,6 +428,8 @@ def execute_import_to_quarantine(
         fencing_token=ticket.fencing_token,
         source_manifest=manifest_descriptor,
         payloads=descriptors,
-        payload_set_digest=_payload_set_digest(manifest_descriptor, descriptors),
+        payload_set_digest=compute_import_payload_set_digest(
+            manifest_descriptor, descriptors
+        ),
         completed_at=at,
     )
