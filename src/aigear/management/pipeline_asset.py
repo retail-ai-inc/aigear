@@ -33,12 +33,11 @@ resolve it from Registry, so controller restarts and horizontal replicas do
 not depend on process memory. ``self._run_specs`` remains only as a backwards-
 compatible fallback for third-party test doubles written before RunSpec CRUD.
 
-Out of scope for T28 (spec 24.1's ``upload_asset``/``upload_bundle``/
-``import_external``): manual asset ingestion is a distinct workflow (spec
-2200: "人工 upload/import CLI 同样创建受审计 operation，由 finalizer 提交"), not
-part of the Run/Step/Attempt execution lifecycle this task wires up, and no
-Phase B task builds its underlying operation-creation helper. These three
-still fail loudly with :class:`NotImplementedError`.
+Manual ``upload_asset``/``upload_bundle`` and external ``import_external``
+requests use the same Phase C import operation. Local bytes first enter an
+operation-scoped, create-only quarantine; external requests pin one exact GCS
+generation. All three return the authoritative operation (and immutable result
+when already committed) without bypassing asynchronous inspection/finalization.
 """
 
 from __future__ import annotations
@@ -46,7 +45,8 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Dict, Optional, Tuple, TypeVar
+from typing import Callable, Dict, Mapping, Optional, Sequence, Tuple, TypeVar
+from urllib.parse import urlsplit
 
 from aigear.management.v2 import attempt_fail, resolve_inputs as resolve_inputs_module, run_cancel
 from aigear.management.v2.attempt_heartbeat import heartbeat_attempt as _heartbeat_attempt
@@ -77,7 +77,32 @@ from aigear.management.v2.finalizer import (
 from aigear.management.v2.gcs_layout import GcsLayoutV2
 from aigear.management.v2.gcs_client import GcsClientV2, GoogleGcsClientV2
 from aigear.management.v2.identifiers import SHA256_TYPED_PREFIX, TypedId
+from aigear.management.v2.external_source import (
+    ExternalSourcePolicy,
+    parse_exact_external_source,
+)
+from aigear.management.v2.import_api import (
+    DEFAULT_MAX_LOCAL_IMPORT_BYTES,
+    DEFAULT_MAX_LOCAL_IMPORT_PAYLOADS,
+    ExternalObjectMetadata,
+    ExternalSourceInspector,
+    GoogleExternalSourceInspector,
+    ImportSubmission,
+    LocalImportPayload,
+    compute_import_operation_id,
+    stage_local_import_bundle,
+)
+from aigear.management.v2.import_recovery import reconcile_import_once
+from aigear.management.v2.import_reservation import (
+    compute_import_idempotency_key_hash,
+    reserve_import_operation,
+)
 from aigear.management.v2.records.asset_version import AssetVersionRecord, LifecycleState, TrustState
+from aigear.management.v2.records.import_operation import (
+    ExactImportSource,
+    ImportOperationRecord,
+    ImportPhase,
+)
 from aigear.management.v2.records.occurrence import (
     OccurrenceRecord,
     OccurrenceStatus,
@@ -97,18 +122,19 @@ from aigear.management.v2.run_trigger import begin_run_trigger
 from aigear.management.v2.staging_upload import StepCompletionMessage
 from aigear.management.v2.step_lease import acquire_step_lease
 
-__all__ = ["PipelineAssetManagementError", "PipelineAssetManagement"]
-
-_NOT_IMPLEMENTED_HINT = (
-    "requires Phase B/C execution machinery not yet implemented; see "
-    "docs/pipeline-v2-migration-guide.md for the current migration status."
-)
+__all__ = [
+    "PipelineAssetManagementError",
+    "LocalImportPayload",
+    "ImportSubmission",
+    "PipelineAssetManagement",
+]
 
 # Every RunSpec accepted by begin_run uses this schema_version end to end
 # (RunRecord/StepRecord/AttemptRecord/OccurrenceRecord all key off it); no
 # Phase B module makes it configurable yet, so it is a module constant here
 # too rather than a per-instance guess.
 _SCHEMA_VERSION = "2.0"
+_IMPORT_CAPABILITY = "asset_import_v2"
 _T = TypeVar("_T")
 
 
@@ -172,6 +198,10 @@ class PipelineAssetManagement:
         attestation_verifier: Optional[AttestationVerifier] = None,
         allowed_completion_publishers: Tuple[str, ...] = (),
         completion_oidc_audience: Optional[str] = None,
+        external_source_policy: Optional[ExternalSourcePolicy] = None,
+        external_source_inspector: Optional[ExternalSourceInspector] = None,
+        max_local_import_payloads: int = DEFAULT_MAX_LOCAL_IMPORT_PAYLOADS,
+        max_local_import_bytes: int = DEFAULT_MAX_LOCAL_IMPORT_BYTES,
         production: bool = False,
     ) -> None:
         self.environment_identity = environment_identity
@@ -195,6 +225,10 @@ class PipelineAssetManagement:
         self.production = production
         self.allowed_completion_publishers = tuple(allowed_completion_publishers)
         self.completion_oidc_audience = completion_oidc_audience
+        self.external_source_policy = external_source_policy
+        self.external_source_inspector = external_source_inspector
+        self.max_local_import_payloads = max_local_import_payloads
+        self.max_local_import_bytes = max_local_import_bytes
         self._run_specs: Dict[str, RunSpec] = {}
         if production:
             missing = [
@@ -284,6 +318,7 @@ class PipelineAssetManagement:
         occurrence_finalization_key_version: str,
         allowed_completion_publishers: Tuple[str, ...],
         completion_oidc_audience: str,
+        external_source_policy: Optional[ExternalSourcePolicy] = None,
         firestore_client: object = None,
         storage_client: object = None,
         kms_client: object = None,
@@ -326,6 +361,12 @@ class PipelineAssetManagement:
             ),
             allowed_completion_publishers=allowed_completion_publishers,
             completion_oidc_audience=completion_oidc_audience,
+            external_source_policy=external_source_policy,
+            external_source_inspector=(
+                None
+                if external_source_policy is None
+                else GoogleExternalSourceInspector(client=storage_client)
+            ),
             production=True,
         )
 
@@ -466,12 +507,133 @@ class PipelineAssetManagement:
     def _require_control_document(self) -> ControlDocument:
         if self.control_document is None:
             raise PipelineAssetManagementError(
-                "download_exact requires control_document to be set on this "
+                "this operation requires control_document to be set on this "
                 "PipelineAssetManagement instance"
             )
         if self.production:
             return self._validate_current_control(self.registry)
         return self.control_document
+
+    def _require_import_control(self) -> ControlDocument:
+        control = self._require_control_document()
+        if control.authority != "v2" or control.phase not in {
+            "v2_authoritative",
+            "compatibility_window",
+            "complete",
+        }:
+            raise PipelineAssetManagementError(
+                f"V2 import is not writable in control phase {control.phase!r}"
+            )
+        if (
+            control.environment_id != self.environment_identity.environment_id
+            or control.environment_fingerprint != self.environment_fingerprint
+        ):
+            raise PipelineAssetManagementError(
+                "import control document does not belong to this environment"
+            )
+        if _IMPORT_CAPABILITY not in control.required_capabilities:
+            raise PipelineAssetManagementError(
+                f"import requires control capability {_IMPORT_CAPABILITY!r}"
+            )
+        missing_registry_methods = [
+            name
+            for name in ("get_control_document", "get_import_operation", "run_atomic")
+            if not callable(getattr(self.registry, name, None))
+        ]
+        if missing_registry_methods:
+            raise PipelineAssetManagementError(
+                "configured Registry lacks import capabilities: "
+                + ", ".join(missing_registry_methods)
+            )
+        current = self.registry.get_control_document()
+        if current != control:
+            raise PipelineAssetManagementError(
+                "Registry control/binding changed before import submission"
+            )
+        return control
+
+    @staticmethod
+    def _import_now(value: Optional[datetime]) -> str:
+        instant = value if value is not None else datetime.now(timezone.utc)
+        if (
+            not isinstance(instant, datetime)
+            or instant.tzinfo is None
+            or instant.utcoffset() is None
+        ):
+            raise PipelineAssetManagementError("import now must be timezone-aware")
+        return instant.isoformat()
+
+    @staticmethod
+    def _validate_import_request(
+        *,
+        idempotency_key: str,
+        owner_principal: str,
+        write_budget: int,
+        lease_ttl_seconds: int,
+    ) -> None:
+        if not isinstance(idempotency_key, str) or not idempotency_key:
+            raise PipelineAssetManagementError("idempotency_key must be a non-empty str")
+        if not isinstance(owner_principal, str) or not owner_principal:
+            raise PipelineAssetManagementError("owner_principal must be a non-empty str")
+        if (
+            isinstance(write_budget, bool)
+            or not isinstance(write_budget, int)
+            or write_budget < 1
+            or write_budget >= 500
+        ):
+            raise PipelineAssetManagementError(
+                "write_budget must be a positive int below 500"
+            )
+        if (
+            isinstance(lease_ttl_seconds, bool)
+            or not isinstance(lease_ttl_seconds, int)
+            or lease_ttl_seconds < 1
+        ):
+            raise PipelineAssetManagementError("lease_ttl_seconds must be positive")
+
+    def _reserve_import(
+        self,
+        *,
+        control: ControlDocument,
+        source: ExactImportSource,
+        operation_id: str,
+        idempotency_key: str,
+        owner_principal: str,
+        target_quarantine_prefix: str,
+        write_budget: int,
+        lease_ttl_seconds: int,
+        now: str,
+    ) -> ImportOperationRecord:
+        return reserve_import_operation(
+            self.registry,
+            control=control,
+            source=source,
+            idempotency_key=idempotency_key,
+            operation_id=operation_id,
+            owner_principal=owner_principal,
+            target_quarantine_prefix=target_quarantine_prefix,
+            write_budget=write_budget,
+            lease_ttl_seconds=lease_ttl_seconds,
+            now=now,
+        )
+
+    def _import_submission(
+        self, operation: ImportOperationRecord, *, now: str
+    ) -> ImportSubmission:
+        if operation.phase is not ImportPhase.SUCCEEDED:
+            return ImportSubmission(operation)
+        outcome = reconcile_import_once(
+            self.registry,
+            idempotency_key_hash=operation.idempotency_key_hash,
+            expected_request_fingerprint=operation.request_fingerprint,
+            expected_fencing_token=operation.fencing_token,
+            now=now,
+        )
+        if outcome.result is None:
+            raise PipelineAssetManagementError(
+                "succeeded import has no reconstructable immutable result"
+            )
+        return ImportSubmission(outcome.operation, outcome.result)
 
     # ── read-only lookups (implemented) ─────────────────────────────────
 
@@ -885,20 +1047,204 @@ class PipelineAssetManagement:
             )
         )
 
-    # ── asset ingestion (not yet implemented) ───────────────────────────
+    # ── asset import submission ─────────────────────────────────────────
 
-    def upload_asset(self, *args, **kwargs):
-        raise NotImplementedError(f"PipelineAssetManagement.upload_asset {_NOT_IMPLEMENTED_HINT}")
+    def upload_asset(
+        self,
+        path: Path,
+        *,
+        declaration: Mapping[str, object],
+        payload_key: str,
+        media_type: str,
+        idempotency_key: str,
+        owner_principal: str,
+        file_name: Optional[str] = None,
+        write_budget: int = 100,
+        lease_ttl_seconds: int = 300,
+        now: Optional[datetime] = None,
+    ) -> ImportSubmission:
+        """Stage one component in quarantine and reserve its import operation."""
 
-    def upload_bundle(self, *args, **kwargs):
-        raise NotImplementedError(
-            f"PipelineAssetManagement.upload_bundle {_NOT_IMPLEMENTED_HINT}"
+        source_path = Path(path)
+        return self.upload_bundle(
+            (
+                LocalImportPayload(
+                    path=source_path,
+                    payload_kind="components",
+                    payload_key=payload_key,
+                    file_name=file_name or source_path.name,
+                    media_type=media_type,
+                ),
+            ),
+            declaration=declaration,
+            idempotency_key=idempotency_key,
+            owner_principal=owner_principal,
+            write_budget=write_budget,
+            lease_ttl_seconds=lease_ttl_seconds,
+            now=now,
         )
 
-    def import_external(self, *args, **kwargs):
-        raise NotImplementedError(
-            f"PipelineAssetManagement.import_external {_NOT_IMPLEMENTED_HINT}"
+    def upload_bundle(
+        self,
+        payloads: Sequence[LocalImportPayload],
+        *,
+        declaration: Mapping[str, object],
+        idempotency_key: str,
+        owner_principal: str,
+        write_budget: int = 100,
+        lease_ttl_seconds: int = 300,
+        now: Optional[datetime] = None,
+    ) -> ImportSubmission:
+        """Stage a complete local bundle create-only, then reserve its operation."""
+
+        self._validate_import_request(
+            idempotency_key=idempotency_key,
+            owner_principal=owner_principal,
+            write_budget=write_budget,
+            lease_ttl_seconds=lease_ttl_seconds,
         )
+        control = self._require_import_control()
+        missing_gcs_methods = [
+            name
+            for name in (
+                "upload_file",
+                "put_object",
+                "get_object",
+                "get_live_object",
+            )
+            if not callable(getattr(self.gcs, name, None))
+        ]
+        if missing_gcs_methods:
+            raise PipelineAssetManagementError(
+                "configured GCS backend lacks local import capabilities: "
+                + ", ".join(missing_gcs_methods)
+            )
+        now_text = self._import_now(now)
+        staged = stage_local_import_bundle(
+            gcs=self.gcs,
+            layout=self.layout,
+            environment_identity=self.environment_identity,
+            environment_fingerprint=self.environment_fingerprint.typed,
+            declaration=declaration,
+            payloads=payloads,
+            idempotency_key=idempotency_key,
+            max_payloads=self.max_local_import_payloads,
+            max_total_size_bytes=self.max_local_import_bytes,
+        )
+        operation = self._reserve_import(
+            control=control,
+            source=staged.source,
+            operation_id=staged.operation_id,
+            idempotency_key=idempotency_key,
+            owner_principal=owner_principal,
+            target_quarantine_prefix=staged.target_quarantine_prefix,
+            write_budget=write_budget,
+            lease_ttl_seconds=lease_ttl_seconds,
+            now=now_text,
+        )
+        return self._import_submission(operation, now=now_text)
+
+    def import_external(
+        self,
+        source_uri: str,
+        *,
+        idempotency_key: str,
+        owner_principal: str,
+        write_budget: int = 100,
+        lease_ttl_seconds: int = 300,
+        now: Optional[datetime] = None,
+    ) -> ImportSubmission:
+        """Reserve an allowlisted, exact-generation external GCS import."""
+
+        self._validate_import_request(
+            idempotency_key=idempotency_key,
+            owner_principal=owner_principal,
+            write_budget=write_budget,
+            lease_ttl_seconds=lease_ttl_seconds,
+        )
+        control = self._require_import_control()
+        policy = self.external_source_policy
+        inspector = self.external_source_inspector
+        if policy is None or inspector is None:
+            raise PipelineAssetManagementError(
+                "import_external requires an external_source_policy and trusted "
+                "external_source_inspector"
+            )
+        if policy.target_environment_id != self.environment_identity.environment_id:
+            raise PipelineAssetManagementError(
+                "external source policy belongs to another environment"
+            )
+
+        bucket = urlsplit(source_uri).netloc if isinstance(source_uri, str) else ""
+        allowed = next(
+            (value for value in policy.allowed_buckets if value.bucket == bucket),
+            None,
+        )
+        if allowed is None:
+            raise ExternalSourceError("external source bucket is not allowlisted")
+        operation_id = compute_import_operation_id(
+            self.environment_fingerprint.typed, idempotency_key
+        )
+        target_prefix = self.layout.quarantine_manifest(operation_id).removesuffix(
+            "source-manifest.json"
+        )
+        now_text = self._import_now(now)
+        existing = self.registry.get_import_operation(
+            compute_import_idempotency_key_hash(idempotency_key)
+        )
+        if existing is not None:
+            replay_source = parse_exact_external_source(
+                source_uri,
+                policy=policy,
+                observed_region=existing.source.region,
+                observed_size_bytes=existing.source.size_bytes,
+            )
+            if replay_source != existing.source:
+                raise PipelineAssetManagementError(
+                    "idempotency key is bound to a different exact external source"
+                )
+            operation = self._reserve_import(
+                control=control,
+                source=replay_source,
+                operation_id=operation_id,
+                idempotency_key=idempotency_key,
+                owner_principal=owner_principal,
+                target_quarantine_prefix=target_prefix,
+                write_budget=write_budget,
+                lease_ttl_seconds=lease_ttl_seconds,
+                now=now_text,
+            )
+            return self._import_submission(operation, now=now_text)
+
+        provisional = parse_exact_external_source(
+            source_uri,
+            policy=policy,
+            observed_region=allowed.region,
+            observed_size_bytes=0,
+        )
+        metadata = inspector.inspect(provisional)
+        if not isinstance(metadata, ExternalObjectMetadata):
+            raise PipelineAssetManagementError(
+                "external source inspector returned invalid metadata"
+            )
+        source = parse_exact_external_source(
+            source_uri,
+            policy=policy,
+            observed_region=metadata.region,
+            observed_size_bytes=metadata.size_bytes,
+        )
+        operation = self._reserve_import(
+            control=control,
+            source=source,
+            operation_id=operation_id,
+            idempotency_key=idempotency_key,
+            owner_principal=owner_principal,
+            target_quarantine_prefix=target_prefix,
+            write_budget=write_budget,
+            lease_ttl_seconds=lease_ttl_seconds,
+            now=now_text,
+        )
+        return self._import_submission(operation, now=now_text)
 
     def download_exact(
         self,

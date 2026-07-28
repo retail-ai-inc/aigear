@@ -268,21 +268,6 @@ def test_get_occurrence_returns_registered_record():
 # ── everything else fails loudly instead of degrading to V1 behavior ─────────────
 
 
-@pytest.mark.parametrize(
-    "method_name,args",
-    [
-        ("upload_asset", ()),
-        ("upload_bundle", ()),
-        ("import_external", ()),
-    ],
-)
-def test_unimplemented_methods_raise_not_implemented_error(method_name, args):
-    manager = PipelineAssetManagement(_environment_identity())
-    method = getattr(manager, method_name)
-    with pytest.raises(NotImplementedError):
-        method(*args)
-
-
 # ── execution lifecycle wiring (T28) ──────────────────────────────────────────────
 
 
