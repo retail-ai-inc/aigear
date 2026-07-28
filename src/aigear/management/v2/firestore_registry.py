@@ -39,6 +39,7 @@ from aigear.management.v2.records.import_operation import (
     ImportOperationRecord,
     ImportProvenanceIndexRecord,
 )
+from aigear.management.v2.import_recovery import ImportCleanupIntent
 from aigear.management.v2.records.outbox import OutboxEventRecord, OutboxStatus
 from aigear.management.v2.records.run import (
     AttemptRecord,
@@ -383,6 +384,25 @@ class FirestoreRegistryV2:
         return self._get(
             self.paths.import_provenance_document(asset_version_id, attestation_id),
             ImportProvenanceIndexRecord,
+        )
+
+    def put_import_cleanup_intent(
+        self, record: ImportCleanupIntent
+    ) -> ImportCleanupIntent:
+        path = self.paths.import_cleanup_intent_document(record.intent_id)
+        existing = self._get(path, ImportCleanupIntent)
+        if existing is not None:
+            if existing != record:
+                raise IdentityConflict("import cleanup intent conflict")
+            return existing
+        return self._put(path, record, create_only=True)
+
+    def get_import_cleanup_intent(
+        self, intent_id: TypedId
+    ) -> Optional[ImportCleanupIntent]:
+        return self._get(
+            self.paths.import_cleanup_intent_document(intent_id),
+            ImportCleanupIntent,
         )
 
     def get_blob_claim(self, blob_id: TypedId) -> Optional[BlobClaim]:

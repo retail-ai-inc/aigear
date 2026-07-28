@@ -273,6 +273,11 @@ class FirestorePathsV2:
             "tombstones", validate_segment(identity_hash, field_name="identity_hash")
         )
 
+    def import_cleanup_intent_document(self, intent_id: "TypedId | str") -> str:
+        return self._under_root(
+            "import_cleanup_intents", _coerce_typed_id(intent_id).bare
+        )
+
     def migration_map_document(self, legacy_doc_id_hash: str) -> str:
         return self._under_root(
             "migration_map",

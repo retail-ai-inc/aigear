@@ -156,6 +156,7 @@ class FakeRegistryV2:
         self._operations: Dict[str, OperationRecord] = {}
         self._import_operations: Dict[str, ImportOperationRecord] = {}
         self._import_provenance: Dict[Tuple[TypedId, TypedId], object] = {}
+        self._import_cleanup_intents: Dict[TypedId, object] = {}
         self._blob_claims: Dict[TypedId, BlobClaim] = {}
         self._lineage_edges: Dict[TypedId, LineageEdge] = {}
         self._component_edges: Dict[TypedId, ComponentEdge] = {}
@@ -447,6 +448,16 @@ class FakeRegistryV2:
 
     def get_import_provenance(self, asset_version_id, attestation_id):
         return self._import_provenance.get((asset_version_id, attestation_id))
+
+    def put_import_cleanup_intent(self, record):
+        existing = self._import_cleanup_intents.get(record.intent_id)
+        if existing is not None and existing != record:
+            raise IdentityConflict("import cleanup intent conflict")
+        self._import_cleanup_intents[record.intent_id] = record
+        return record
+
+    def get_import_cleanup_intent(self, intent_id):
+        return self._import_cleanup_intents.get(intent_id)
 
     # ── BlobClaim ────────────────────────────────────────────────────────
 

@@ -37,6 +37,13 @@ from aigear.management.v2.import_commit import (
     commit_external_import,
     verify_import_commit_evidence,
 )
+from aigear.management.v2.import_recovery import (
+    ImportRecoveryAction,
+    StaleImportFenceError,
+    build_import_cleanup_intent,
+    fail_import_with_cleanup,
+    reconcile_import_once,
+)
 from aigear.management.v2.import_prepare import (
     ImportPrepareError,
     prepare_external_import,
@@ -651,3 +658,88 @@ def test_write_budget_rejection_leaves_registry_business_facts_uncommitted():
         registry.get_blob(material.blob.blob_id) is None
         for material in evidence.adopted.materials
     )
+
+
+def test_recovery_rebuilds_ack_lost_success_only_from_operation_result_refs():
+    registry, operation, evidence = _commit_setup()
+    succeeded = commit_external_import(
+        registry,
+        _LAYOUT,
+        operation,
+        evidence,
+        committed_at="2026-07-28T00:03:00+00:00",
+    )
+
+    recovered = reconcile_import_once(
+        registry,
+        idempotency_key_hash=succeeded.idempotency_key_hash,
+        expected_request_fingerprint=succeeded.request_fingerprint,
+        expected_fencing_token=succeeded.fencing_token,
+        now="2026-07-28T00:03:01+00:00",
+    )
+
+    assert recovered.action is ImportRecoveryAction.REBUILT_SUCCEEDED
+    assert recovered.result.asset_version.asset_version_id == succeeded.result_asset_version_id
+    assert recovered.result.label.label_id == succeeded.result_label_id
+
+
+def test_canonical_side_effect_without_registry_commit_is_not_guessed_as_success():
+    registry, operation, evidence = _commit_setup()
+
+    recovered = reconcile_import_once(
+        registry,
+        idempotency_key_hash=operation.idempotency_key_hash,
+        expected_request_fingerprint=operation.request_fingerprint,
+        expected_fencing_token=operation.fencing_token,
+        now="2026-07-28T00:03:01+00:00",
+    )
+
+    assert recovered.action is ImportRecoveryAction.RECONCILING
+    assert recovered.operation.phase is ImportPhase.RECONCILING
+    assert registry.get_asset_version(evidence.prepared.asset_version_id) is None
+
+
+def test_recovery_rejects_stale_fence():
+    registry, operation, _ = _commit_setup()
+    with pytest.raises(StaleImportFenceError, match="stale"):
+        reconcile_import_once(
+            registry,
+            idempotency_key_hash=operation.idempotency_key_hash,
+            expected_request_fingerprint=operation.request_fingerprint,
+            expected_fencing_token=operation.fencing_token - 1,
+            now="2026-07-28T00:03:01+00:00",
+        )
+
+
+def test_failure_atomically_persists_generation_bound_cleanup_intent():
+    operation, completion, inspection, quarantine = _setup()
+    intent = build_import_cleanup_intent(
+        operation,
+        quarantine_bucket="target-bucket",
+        completion=completion,
+        created_at="2026-07-28T00:02:00+00:00",
+        eligible_after="2026-07-29T00:02:00+00:00",
+    )
+    registry = FakeRegistryV2()
+    registry.put_import_operation(operation)
+
+    failed = fail_import_with_cleanup(
+        registry,
+        operation,
+        intent,
+        error_class="ContentRejected",
+        error_summary="scanner policy rejected payload",
+        failed_at="2026-07-28T00:02:00+00:00",
+    )
+
+    assert failed.phase is ImportPhase.FAILED
+    assert registry.get_import_cleanup_intent(intent.intent_id) == intent
+    assert all(value.generation for value in intent.objects)
+    assert fail_import_with_cleanup(
+        registry,
+        failed,
+        intent,
+        error_class="ignored",
+        error_summary="ignored",
+        failed_at="2026-07-28T00:02:01+00:00",
+    ) == failed
