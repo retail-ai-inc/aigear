@@ -581,6 +581,7 @@ def prepare_external_import(
             "ticket_digest": operation.ticket.ticket_digest.typed,
             "completion_payload_set_digest": completion.payload_set_digest.typed,
             "inspection_evidence_digest": inspection.evidence_digest.typed,
+            "inspection_evidence": inspection.canonical_dict(),
             "declaration_digest": declaration.declaration_digest.typed,
             "source_manifest": {
                 "environment_id": operation.source.environment_id,

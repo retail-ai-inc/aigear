@@ -8,6 +8,7 @@ even when domain code uses a natural read/validate/stage sequence.
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime
 from typing import Any, Callable, Dict, Iterator, Optional, TypeVar
 
 from aigear.management.v2.attestation import AttestationRecord, same_attestation_identity
@@ -69,6 +70,7 @@ class FirestoreRegistryV2:
         client: Any | None = None,
         transaction: Any | None = None,
         transaction_runner: Optional[Callable[[Any, Callable[[Any], _T]], _T]] = None,
+        read_time: Optional[datetime] = None,
     ) -> None:
         if client is None:
             try:
@@ -81,12 +83,23 @@ class FirestoreRegistryV2:
         self.paths = FirestorePathsV2(project_name, pipeline_version)
         self._transaction = transaction
         self._transaction_runner = transaction_runner
+        if transaction is not None and read_time is not None:
+            raise ValueError("transaction and read_time are mutually exclusive")
+        if read_time is not None and (
+            not isinstance(read_time, datetime)
+            or read_time.tzinfo is None
+            or read_time.utcoffset() is None
+        ):
+            raise ValueError("read_time must be timezone-aware")
+        self.read_time = read_time
         self._cache: Dict[str, Optional[dict]] = {}
         self._writes: Dict[str, tuple[dict, bool]] = {}
 
     # ── atomic execution / raw IO ───────────────────────────────────────
 
     def run_atomic(self, work: Callable[["FirestoreRegistryV2"], _T]) -> _T:
+        if self.read_time is not None:
+            raise ValueError("fixed read-time Registry views are read-only")
         if self._transaction is not None:
             return work(self)
         transaction = self.client.transaction(max_attempts=5)
@@ -112,6 +125,17 @@ class FirestoreRegistryV2:
             raise RuntimeError("FirestoreRegistryV2 requires google-cloud-firestore") from exc
         return firestore.transactional(callback)(transaction)
 
+    def at_read_time(self, read_time: datetime) -> "FirestoreRegistryV2":
+        """Return a read-only view whose point reads and queries share one timestamp."""
+
+        return FirestoreRegistryV2(
+            self.paths.project_name,
+            self.paths.pipeline_version,
+            database_id=self.database_id,
+            client=self.client,
+            read_time=read_time,
+        )
+
     def _doc(self, path: str):
         return self.client.document(path)
 
@@ -122,7 +146,12 @@ class FirestoreRegistryV2:
             cached = self._cache[path]
             return None if cached is None else dict(cached)
         ref = self._doc(path)
-        snapshot = self._transaction.get(ref) if self._transaction is not None else ref.get()
+        if self._transaction is not None:
+            snapshot = self._transaction.get(ref)
+        elif self.read_time is None:
+            snapshot = ref.get()
+        else:
+            snapshot = ref.get(read_time=self.read_time)
         if isinstance(snapshot, (list, tuple)):
             snapshot = snapshot[0]
         data = snapshot.to_dict() if getattr(snapshot, "exists", False) else None
@@ -130,6 +159,8 @@ class FirestoreRegistryV2:
         return None if data is None else dict(data)
 
     def _write_data(self, path: str, data: dict, *, create_only: bool = False) -> None:
+        if self.read_time is not None:
+            raise ValueError("fixed read-time Registry views are read-only")
         if self._transaction is not None:
             previous = self._writes.get(path)
             self._writes[path] = (
@@ -300,6 +331,30 @@ class FirestoreRegistryV2:
     def get_occurrence(self, occurrence_id: TypedId) -> Optional[OccurrenceRecord]:
         return self._get(self.paths.occurrence_document(occurrence_id), OccurrenceRecord)
 
+    def query_occurrences_by_asset(
+        self, *, asset_version_id: TypedId, cursor: Optional[str], limit: int
+    ):
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            raise ValueError("limit must be positive")
+        query = (
+            self.client.collection(self.paths._under_root("occurrences"))
+            .where("asset_version_id", "==", asset_version_id.typed)
+            .where("status", "==", OccurrenceStatus.COMMITTED.value)
+            .order_by("occurrence_id")
+        )
+        if cursor is not None:
+            query = query.start_after({"occurrence_id": cursor})
+        query = query.limit(limit)
+        snapshots = (
+            query.stream()
+            if self.read_time is None
+            else query.stream(read_time=self.read_time)
+        )
+        return tuple(
+            decode_record(OccurrenceRecord, snapshot.to_dict())
+            for snapshot in snapshots
+        )
+
     def get_committed_occurrence_by_output_key(self, key: TypedId) -> Optional[OccurrenceRecord]:
         # The run_id is not derivable from the digest, so exact callers should
         # use a query.  A collection-group equality query remains bounded to 1.
@@ -384,6 +439,33 @@ class FirestoreRegistryV2:
         return self._get(
             self.paths.import_provenance_document(asset_version_id, attestation_id),
             ImportProvenanceIndexRecord,
+        )
+
+    def query_import_provenance_by_asset(
+        self, *, asset_version_id: TypedId, cursor: Optional[str], limit: int
+    ):
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            raise ValueError("limit must be positive")
+        query = self.client.collection(
+            self.paths._under_root(
+                "asset_import_provenance",
+                asset_version_id.bare,
+                "entries",
+            )
+        ).order_by("source_provenance_attestation_ref")
+        if cursor is not None:
+            query = query.start_after(
+                {"source_provenance_attestation_ref": cursor}
+            )
+        query = query.limit(limit)
+        snapshots = (
+            query.stream()
+            if self.read_time is None
+            else query.stream(read_time=self.read_time)
+        )
+        return tuple(
+            decode_record(ImportProvenanceIndexRecord, snapshot.to_dict())
+            for snapshot in snapshots
         )
 
     def put_import_cleanup_intent(

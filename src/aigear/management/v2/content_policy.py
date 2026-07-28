@@ -13,6 +13,7 @@ from aigear.management.v2.canonical import canonicalize_json
 from aigear.management.v2.gcs_client import GcsClientV2
 from aigear.management.v2.identifiers import TypedId
 from aigear.management.v2.import_executor import ImportExecutorCompletion
+from aigear.management.v2.naming import validate_segment
 
 __all__ = [
     "ContentPolicyError",
@@ -314,7 +315,58 @@ class InspectionPayloadEvidence:
     format_name: str
     scanner_id: str
     scanner_version: str
+    scanner_verdict: ScanVerdict
+    scanner_finding_codes: Tuple[str, ...]
+    scanner_completed_at: str
     scanner_report_digest: TypedId
+
+    def __post_init__(self) -> None:
+        if self.payload_kind not in ("components", "attachments"):
+            raise ContentPolicyError("inspection payload_kind is invalid")
+        validate_segment(self.payload_key, field_name="payload_key")
+        for field_name in (
+            "quarantine_object_name",
+            "quarantine_generation",
+            "format_name",
+            "scanner_id",
+            "scanner_version",
+        ):
+            _non_empty(field_name, getattr(self, field_name))
+        if (
+            len(self.sha256) != 64
+            or self.sha256 != self.sha256.lower()
+            or any(value not in "0123456789abcdef" for value in self.sha256)
+        ):
+            raise ContentPolicyError("inspection sha256 must be lowercase SHA-256 hex")
+        if (
+            isinstance(self.size_bytes, bool)
+            or not isinstance(self.size_bytes, int)
+            or self.size_bytes < 0
+        ):
+            raise ContentPolicyError("inspection size_bytes must be non-negative")
+        if self.scanner_verdict is not ScanVerdict.CLEAN:
+            raise ContentPolicyError("accepted inspection evidence must be clean")
+        if isinstance(self.scanner_finding_codes, list):
+            object.__setattr__(
+                self, "scanner_finding_codes", tuple(self.scanner_finding_codes)
+            )
+        if not all(
+            isinstance(value, str) and value and len(value) <= 128
+            for value in self.scanner_finding_codes
+        ):
+            raise ContentPolicyError("scanner_finding_codes contain invalid rule IDs")
+        _aware("scanner_completed_at", self.scanner_completed_at)
+        if self.scanner_report_digest != _scanner_result_digest(
+            scanner_id=self.scanner_id,
+            scanner_version=self.scanner_version,
+            payload_sha256=self.sha256,
+            verdict=self.scanner_verdict,
+            finding_codes=self.scanner_finding_codes,
+            completed_at=self.scanner_completed_at,
+        ):
+            raise ContentPolicyError(
+                "scanner_report_digest does not match embedded scanner result"
+            )
 
     def canonical_dict(self) -> dict:
         return {
@@ -327,6 +379,9 @@ class InspectionPayloadEvidence:
             "format_name": self.format_name,
             "scanner_id": self.scanner_id,
             "scanner_version": self.scanner_version,
+            "scanner_verdict": self.scanner_verdict.value,
+            "scanner_finding_codes": list(self.scanner_finding_codes),
+            "scanner_completed_at": self.scanner_completed_at,
             "scanner_report_digest": self.scanner_report_digest.typed,
         }
 
@@ -362,6 +417,23 @@ class ContentInspectionEvidence:
             inspected_at=self.inspected_at,
         ):
             raise ContentPolicyError("inspection evidence_digest does not match fields")
+
+    def canonical_dict(self) -> dict:
+        """Return the complete, self-verifying evidence stored in provenance."""
+
+        return {
+            "operation_id": self.operation_id,
+            "ticket_digest": self.ticket_digest.typed,
+            "environment_fingerprint": self.environment_fingerprint.typed,
+            "fencing_token": self.fencing_token,
+            "payload_set_digest": self.payload_set_digest.typed,
+            "policy_digest": self.policy_digest.typed,
+            "producer_evidence_digest": self.producer_evidence_digest.typed,
+            "governance_digest": self.governance_digest.typed,
+            "payloads": [value.canonical_dict() for value in self.payloads],
+            "inspected_at": self.inspected_at,
+            "evidence_digest": self.evidence_digest.typed,
+        }
 
 
 def _scanner_result_digest(
@@ -559,6 +631,9 @@ def inspect_import_content(
                 format_name=rule.format_name,
                 scanner_id=result.scanner_id,
                 scanner_version=result.scanner_version,
+                scanner_verdict=result.verdict,
+                scanner_finding_codes=result.finding_codes,
+                scanner_completed_at=result.completed_at,
                 scanner_report_digest=result.report_digest,
             )
         )

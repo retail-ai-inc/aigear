@@ -190,6 +190,23 @@ class FakeRegistryV2:
                     setattr(self, name, value)
                 raise
 
+    def at_read_time(self, read_time: datetime) -> "FakeRegistryV2":
+        """Return a point-in-time copy used by bounded policy evidence reads."""
+
+        if (
+            not isinstance(read_time, datetime)
+            or read_time.tzinfo is None
+            or read_time.utcoffset() is None
+        ):
+            raise ValueError("read_time must be timezone-aware")
+        view = FakeRegistryV2()
+        with self._transaction_lock:
+            for name, value in self.__dict__.items():
+                if name != "_transaction_lock" and isinstance(value, dict):
+                    setattr(view, name, deepcopy(value))
+        view.read_time = read_time
+        return view
+
     # ── Blob ─────────────────────────────────────────────────────────────
 
     def put_blob(self, record: BlobRecord) -> BlobRecord:
@@ -313,6 +330,26 @@ class FakeRegistryV2:
 
     def get_occurrence(self, occurrence_id: TypedId) -> Optional[OccurrenceRecord]:
         return self._occurrences.get(occurrence_id)
+
+    def query_occurrences_by_asset(
+        self, *, asset_version_id: TypedId, cursor: Optional[str], limit: int
+    ):
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            raise ValueError("limit must be positive")
+        records = sorted(
+            (
+                value
+                for value in self._occurrences.values()
+                if value.asset_version_id == asset_version_id
+                and value.status is OccurrenceStatus.COMMITTED
+            ),
+            key=lambda value: value.occurrence_id.typed,
+        )
+        if cursor is not None:
+            records = [
+                value for value in records if value.occurrence_id.typed > cursor
+            ]
+        return tuple(records[:limit])
 
     def get_committed_occurrence_by_output_key(
         self, committed_output_key: TypedId
@@ -448,6 +485,27 @@ class FakeRegistryV2:
 
     def get_import_provenance(self, asset_version_id, attestation_id):
         return self._import_provenance.get((asset_version_id, attestation_id))
+
+    def query_import_provenance_by_asset(
+        self, *, asset_version_id: TypedId, cursor: Optional[str], limit: int
+    ):
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            raise ValueError("limit must be positive")
+        records = sorted(
+            (
+                record
+                for (candidate, _), record in self._import_provenance.items()
+                if candidate == asset_version_id
+            ),
+            key=lambda value: value.source_provenance_attestation_ref.typed,
+        )
+        if cursor is not None:
+            records = [
+                value
+                for value in records
+                if value.source_provenance_attestation_ref.typed > cursor
+            ]
+        return tuple(records[:limit])
 
     def put_import_cleanup_intent(self, record):
         existing = self._import_cleanup_intents.get(record.intent_id)
