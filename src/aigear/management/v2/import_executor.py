@@ -32,15 +32,17 @@ __all__ = [
     "ImportExecutionError",
     "PartialImportCopyError",
     "ImportPayloadSource",
+    "ImportSourceManifest",
     "QuarantineObjectDescriptor",
     "ImportExecutorCompletion",
     "compute_import_payload_set_digest",
+    "parse_import_source_manifest",
     "execute_import_to_quarantine",
 ]
 
 DEFAULT_MAX_IMPORT_BYTES = 10 * 1024 * 1024 * 1024
 DEFAULT_MAX_IMPORT_PAYLOADS = 100
-_MANIFEST_KEYS = frozenset({"schema_version", "payloads"})
+_MANIFEST_KEYS = frozenset({"schema_version", "declaration", "payloads"})
 _PAYLOAD_KEYS = frozenset(
     {
         "payload_kind",
@@ -122,6 +124,24 @@ class ImportPayloadSource:
 
 
 @dataclass(frozen=True)
+class ImportSourceManifest:
+    declaration: Mapping[str, object]
+    payloads: Tuple[ImportPayloadSource, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.declaration, dict) or not self.declaration:
+            raise ImportExecutionError("source manifest declaration must be an object")
+        try:
+            canonicalize_json(self.declaration)
+        except Exception as exc:
+            raise ImportExecutionError(
+                "source manifest declaration is not canonicalizable"
+            ) from exc
+        if not self.payloads:
+            raise ImportExecutionError("source manifest must contain payloads")
+
+
+@dataclass(frozen=True)
 class QuarantineObjectDescriptor:
     payload_kind: str
     payload_key: str
@@ -186,9 +206,9 @@ class ImportExecutorCompletion:
         )
 
 
-def _parse_source_manifest(
+def parse_import_source_manifest(
     data: bytes, *, ticket_source: ExactImportSource
-) -> Tuple[ImportPayloadSource, ...]:
+) -> ImportSourceManifest:
     try:
         value = json.loads(data.decode("utf-8"), object_pairs_hook=_unique_object)
     except ImportExecutionError:
@@ -229,7 +249,10 @@ def _parse_source_manifest(
             )
         logical_paths.add(payload.logical_path)
         payloads.append(payload)
-    return tuple(payloads)
+    return ImportSourceManifest(
+        declaration=value["declaration"],
+        payloads=tuple(payloads),
+    )
 
 
 def _verify_snapshot(source: ExactImportSource, snapshot: GcsObjectSnapshot) -> None:
@@ -346,7 +369,10 @@ def execute_import_to_quarantine(
         ticket.source.object_name, generation=ticket.source.generation
     )
     _verify_snapshot(ticket.source, manifest_source)
-    payloads = _parse_source_manifest(manifest_source.data, ticket_source=ticket.source)
+    source_manifest = parse_import_source_manifest(
+        manifest_source.data, ticket_source=ticket.source
+    )
+    payloads = source_manifest.payloads
     if len(payloads) > max_payloads:
         raise ImportExecutionError("source manifest exceeds payload count limit")
     total_size = sum(payload.source.size_bytes for payload in payloads)

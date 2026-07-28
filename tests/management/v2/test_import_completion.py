@@ -35,7 +35,8 @@ def _setup():
     source_gcs = FakeGcsClient()
     payload = source_gcs.put_object("bundle/model.onnx", b"model")
     manifest_bytes = (
-        b'{"payloads":[{"file_name":"model.onnx","generation":"'
+        b'{"declaration":{"asset_type":"model"},"payloads":'
+        b'[{"file_name":"model.onnx","generation":"'
         + payload.generation.encode()
         + b'","media_type":"application/octet-stream",'
         b'"object_name":"bundle/model.onnx","payload_key":"primary",'

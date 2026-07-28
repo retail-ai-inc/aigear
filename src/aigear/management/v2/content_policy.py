@@ -26,6 +26,7 @@ __all__ = [
     "InspectionPayloadEvidence",
     "ContentInspectionEvidence",
     "create_scanner_result",
+    "compute_governance_digest",
     "inspect_import_content",
 ]
 
@@ -222,6 +223,21 @@ class ContentGovernance:
             "legal_hold": self.legal_hold,
             "policy_version": self.policy_version,
         }
+
+
+def compute_governance_digest(governance: ContentGovernance) -> TypedId:
+    if not isinstance(governance, ContentGovernance):
+        raise ContentPolicyError("governance must be ContentGovernance")
+    return TypedId.from_bare(
+        hashlib.sha256(
+            canonicalize_json(
+                {
+                    "domain": "aigear.content-governance.v2",
+                    **governance.canonical_dict(),
+                }
+            )
+        ).hexdigest()
+    )
 
 
 @dataclass(frozen=True)
@@ -547,16 +563,7 @@ def inspect_import_content(
             )
         )
 
-    governance_digest = TypedId.from_bare(
-        hashlib.sha256(
-            canonicalize_json(
-                {
-                    "domain": "aigear.content-governance.v2",
-                    **governance.canonical_dict(),
-                }
-            )
-        ).hexdigest()
-    )
+    governance_digest = compute_governance_digest(governance)
     values = {
         "operation_id": completion.operation_id,
         "ticket_digest": completion.ticket_digest,

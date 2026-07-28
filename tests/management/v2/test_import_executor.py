@@ -31,7 +31,11 @@ _PREFIX = "project/pipeline/registry/v2/_quarantine/import-1/"
 
 def _manifest(payloads):
     return json.dumps(
-        {"schema_version": "2.0", "payloads": payloads},
+        {
+            "schema_version": "2.0",
+            "declaration": {"asset_type": "model"},
+            "payloads": payloads,
+        },
         sort_keys=True,
         separators=(",", ":"),
     ).encode()
