@@ -80,7 +80,10 @@ class AttestationRecord:
             for key, value in expected_envelope.items()
         ):
             raise AttestationError("unsigned_envelope metadata does not match the record")
-        if not isinstance(self.unsigned_envelope.get("subject"), Mapping):
+        if (
+            self.attestation_kind != "policy_decision"
+            and not isinstance(self.unsigned_envelope.get("subject"), Mapping)
+        ):
             raise AttestationError("unsigned_envelope subject must be a mapping")
         expected = TypedId.from_bare(hashlib.sha256(canonicalize_json(self.unsigned_envelope)).hexdigest())
         if expected != self.attestation_id:

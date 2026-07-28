@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 from dataclasses import replace
 
 import pytest
 
 from aigear.management.v2.attestation import (
+    AttestationRecord,
     AttestationError,
     CloudKmsAttestationVerifier,
     CloudKmsAsymmetricSigner,
@@ -13,6 +16,7 @@ from aigear.management.v2.attestation import (
     create_attestation,
     verify_attestation,
 )
+from aigear.management.v2.canonical import canonicalize_json
 from aigear.management.v2.fake_registry import FakeRegistryV2
 from aigear.management.v2.identifiers import TypedId
 
@@ -52,6 +56,39 @@ def test_attestation_rejects_envelope_key_version_mismatch():
                 "key_version": "different/key/cryptoKeyVersions/9",
             },
         )
+
+
+def test_policy_decision_attestation_accepts_flat_signed_envelope():
+    signer = HmacTestSigner(
+        b"policy",
+        key_version="projects/p/cryptoKeys/policy/cryptoKeyVersions/1",
+    )
+    envelope = {
+        "domain": "aigear.attestation.policy_decision.v2",
+        "schema_version": "2.0",
+        "attestation_kind": "policy_decision",
+        "environment_fingerprint": _FP.typed,
+        "key_version": signer.key_version,
+        "operation_id": "policy-1",
+    }
+    canonical = canonicalize_json(envelope)
+    digest = hashlib.sha256(canonical).digest()
+    record = AttestationRecord(
+        schema_version="2.0",
+        attestation_kind="policy_decision",
+        attestation_id=TypedId.from_bare(digest.hex()),
+        environment_fingerprint=_FP,
+        unsigned_envelope=envelope,
+        key_version=signer.key_version,
+        signature_b64=base64.b64encode(
+            signer.sign_sha256_digest(digest)
+        ).decode("ascii"),
+    )
+
+    verify_attestation(
+        record,
+        HmacTestVerifier(b"policy", key_version=signer.key_version),
+    )
 
 
 def test_registry_converges_same_envelope_with_different_signature_bytes():
