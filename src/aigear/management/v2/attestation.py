@@ -247,6 +247,20 @@ class CloudKmsAttestationVerifier:
         for key_version in sorted(self._allowed_key_versions):
             self._public_key(key_version)
 
+    @property
+    def is_warm(self) -> bool:
+        return self._allowed_key_versions.issubset(self._public_keys)
+
+    def algorithm_for(self, key_version: str) -> str:
+        if key_version not in self._allowed_key_versions:
+            raise AttestationError("attestation key version is not allowlisted")
+        cached = self._public_keys.get(key_version)
+        if cached is None:
+            raise AttestationError(
+                "attestation public key was not prewarmed"
+            )
+        return cached[1]
+
     def verify_sha256_digest(
         self, *, key_version: str, digest: bytes, signature: bytes
     ) -> None:

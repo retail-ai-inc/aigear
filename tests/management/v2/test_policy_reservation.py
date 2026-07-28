@@ -206,20 +206,14 @@ def test_expired_early_reservation_is_cancelled_and_fenced():
     )
 
 
-def test_verified_expired_reservation_requires_reconciliation():
+def test_reconciling_expired_reservation_cannot_be_taken_over():
     registry = FakeRegistryV2(server_read_time=_SERVER_TIME)
     operation = _reserve(registry, idempotency_key="approve")
-    attesting = replace(
-        operation,
-        phase=PolicyDecisionOperationPhase.ATTESTING,
-        revision=2,
-    )
-    registry.put_policy_decision_operation(attesting)
     registry.put_policy_decision_operation(
         replace(
-            attesting,
-            phase=PolicyDecisionOperationPhase.VERIFIED,
-            revision=3,
+            operation,
+            phase=PolicyDecisionOperationPhase.RECONCILING,
+            revision=2,
         )
     )
     registry._server_read_time = _SERVER_TIME + timedelta(seconds=61)

@@ -410,16 +410,16 @@ def test_untrusted_key_resource_version_or_algorithm_fails_closed(
 
 def test_attestor_refuses_post_attestation_operation_phase(monkeypatch):
     _, operation, snapshot, closure, _, _ = _sign(monkeypatch)
-    verified = replace(
+    reconciling = replace(
         operation,
-        phase=PolicyDecisionOperationPhase.VERIFIED,
+        phase=PolicyDecisionOperationPhase.RECONCILING,
         revision=operation.revision + 1,
     )
 
     with pytest.raises(PolicyAttestorError, match="reserved or attesting"):
         sign_policy_decision(
-            verified.request,
-            reservation=verified,
+            reconciling.request,
+            reservation=reconciling,
             registry=object(),
             policy_snapshot=snapshot,
             signer=_Signer(),

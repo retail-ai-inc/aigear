@@ -22,6 +22,7 @@ __all__ = [
     "PolicyDecisionUnsignedEnvelope",
     "PolicyDecisionRequest",
     "PolicyDecisionReservationLock",
+    "PolicyDecisionVerificationRecord",
     "PolicyDecisionOperationRecord",
     "PolicyDecisionEpochBinding",
     "PolicyDecisionHead",
@@ -347,6 +348,57 @@ class PolicyDecisionReservationLock:
 
 
 @dataclass(frozen=True)
+class PolicyDecisionVerificationRecord:
+    schema_version: str
+    operation_id: str
+    request_fingerprint: TypedId
+    fencing_token: int
+    attestation_id: TypedId
+    message_id: str
+    publisher_principal: str
+    verified_at: str
+    verification_digest: TypedId
+
+    def __post_init__(self) -> None:
+        parse_schema_version(self.schema_version)
+        object.__setattr__(
+            self,
+            "operation_id",
+            validate_segment(self.operation_id, field_name="operation_id"),
+        )
+        _typed_id("request_fingerprint", self.request_fingerprint)
+        _positive("fencing_token", self.fencing_token)
+        _typed_id("attestation_id", self.attestation_id)
+        object.__setattr__(
+            self,
+            "message_id",
+            validate_segment(self.message_id, field_name="message_id"),
+        )
+        _non_empty("publisher_principal", self.publisher_principal)
+        _aware_timestamp("verified_at", self.verified_at)
+        _typed_id("verification_digest", self.verification_digest)
+        expected = TypedId.from_bare(
+            digest_sha256_of_jcs(
+                {
+                    "domain": "aigear.policy-completion-verification.v2",
+                    "schema_version": self.schema_version,
+                    "operation_id": self.operation_id,
+                    "request_fingerprint": self.request_fingerprint.typed,
+                    "fencing_token": self.fencing_token,
+                    "attestation_id": self.attestation_id.typed,
+                    "message_id": self.message_id,
+                    "publisher_principal": self.publisher_principal,
+                    "verified_at": self.verified_at,
+                }
+            )
+        )
+        if expected != self.verification_digest:
+            raise InvalidPolicyRecordError(
+                "verification_digest does not match completion verification"
+            )
+
+
+@dataclass(frozen=True)
 class PolicyDecisionOperationRecord:
     schema_version: str
     operation_id: str
@@ -365,6 +417,7 @@ class PolicyDecisionOperationRecord:
     finished_at: Optional[str] = None
     error_class: Optional[str] = None
     error_summary: Optional[str] = None
+    verified_completion: Optional[PolicyDecisionVerificationRecord] = None
 
     def __post_init__(self) -> None:
         parse_schema_version(self.schema_version)
@@ -448,6 +501,30 @@ class PolicyDecisionOperationRecord:
             raise InvalidPolicyRecordError(
                 "active policy operations cannot retain an error"
             )
+        requires_completion = self.phase in {
+            PolicyDecisionOperationPhase.VERIFIED,
+            PolicyDecisionOperationPhase.JOURNALING,
+            PolicyDecisionOperationPhase.COMMITTING,
+            PolicyDecisionOperationPhase.SUCCEEDED,
+        }
+        if requires_completion != (self.verified_completion is not None):
+            raise InvalidPolicyRecordError(
+                "verified and later policy phases require verified completion"
+            )
+        if self.verified_completion is not None:
+            completion = self.verified_completion
+            if (
+                not isinstance(completion, PolicyDecisionVerificationRecord)
+                or completion.schema_version != self.schema_version
+                or completion.operation_id != self.operation_id
+                or completion.request_fingerprint != self.request_fingerprint
+                or completion.fencing_token != self.fencing_token
+                or completion.attestation_id
+                != self.request.unsigned_envelope_digest
+            ):
+                raise InvalidPolicyRecordError(
+                    "verified completion is not bound to policy operation"
+                )
 
 
 @dataclass(frozen=True)
