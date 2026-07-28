@@ -72,8 +72,8 @@ def test_asset_version_and_attestation_and_policy_documents(paths):
     assert paths.policy_decision_head_document(_HEX) == (
         f"{paths.control_document}/policy_decision_heads/{_HEX}"
     )
-    assert paths.policy_decision_epoch_document("subject-1") == (
-        f"{paths.control_document}/policy_decision_epochs/subject-1"
+    assert paths.policy_decision_epoch_document(_HEX) == (
+        f"{paths.control_document}/policy_decision_epochs/{_HEX}"
     )
 
 
@@ -118,14 +118,21 @@ def test_occurrence_and_edge_documents(paths):
 
 def test_alias_release_and_service_documents(paths):
     assert paths.alias_document("alias-1") == f"{paths.control_document}/aliases/alias-1"
-    assert paths.release_document("release-1") == (
-        f"{paths.control_document}/releases/release-1"
+    assert paths.release_document(_HEX) == (
+        f"{paths.control_document}/releases/{_HEX}"
     )
     assert paths.service_release_state_document("model-service") == (
         f"{paths.control_document}/services/model-service/release_state/current"
     )
     assert paths.release_operation_document("op-1") == (
         f"{paths.control_document}/release_operations/op-1"
+    )
+    assert paths.service_runtime_evidence_document("model-service", _HEX) == (
+        f"{paths.control_document}/services/model-service/runtime_evidence/{_HEX}"
+    )
+    assert paths.service_runtime_authorization_lease_document("model-service", _HEX) == (
+        f"{paths.control_document}/services/model-service/"
+        f"runtime_authorization_leases/{_HEX}"
     )
     assert paths.restore_operation_document("op-2") == (
         f"{paths.control_document}/restore_operations/op-2"
@@ -138,6 +145,9 @@ def test_alias_release_and_service_documents(paths):
 
 def test_operation_outbox_event_tombstone_migration_reconcile_documents(paths):
     assert paths.operation_document(_HEX) == f"{paths.control_document}/operations/{_HEX}"
+    assert paths.import_operation_document(_HEX) == (
+        f"{paths.control_document}/operations/{_HEX}"
+    )
     assert paths.outbox_document(_HEX) == f"{paths.control_document}/outbox/{_HEX}"
     assert paths.event_document(_HEX) == f"{paths.control_document}/events/{_HEX}"
     assert paths.tombstone_document(_HEX) == f"{paths.control_document}/tombstones/{_HEX}"

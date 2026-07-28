@@ -105,10 +105,10 @@ class FirestorePathsV2:
             "policy_decision_heads", _coerce_typed_id(asset_version_id).bare
         )
 
-    def policy_decision_epoch_document(self, subject_epoch_key: str) -> str:
+    def policy_decision_epoch_document(self, subject_epoch_key: "TypedId | str") -> str:
         return self._under_root(
             "policy_decision_epochs",
-            validate_segment(subject_epoch_key, field_name="subject_epoch_key"),
+            _coerce_typed_id(subject_epoch_key).bare,
         )
 
     # ── labels ───────────────────────────────────────────────────────────
@@ -185,9 +185,9 @@ class FirestorePathsV2:
     def alias_document(self, alias_id: str) -> str:
         return self._under_root("aliases", validate_segment(alias_id, field_name="alias_id"))
 
-    def release_document(self, release_id: str) -> str:
+    def release_document(self, release_id: "TypedId | str") -> str:
         return self._under_root(
-            "releases", validate_segment(release_id, field_name="release_id")
+            "releases", _coerce_typed_id(release_id).bare
         )
 
     def service_release_state_document(self, service_name: str) -> str:
@@ -202,6 +202,26 @@ class FirestorePathsV2:
         return self._under_root(
             "release_operations",
             validate_segment(operation_id, field_name="operation_id"),
+        )
+
+    def service_runtime_evidence_document(
+        self, service_name: str, evidence_id: "TypedId | str"
+    ) -> str:
+        return self._under_root(
+            "services",
+            validate_segment(service_name, field_name="service_name"),
+            "runtime_evidence",
+            _coerce_typed_id(evidence_id).bare,
+        )
+
+    def service_runtime_authorization_lease_document(
+        self, service_name: str, lease_id: "TypedId | str"
+    ) -> str:
+        return self._under_root(
+            "services",
+            validate_segment(service_name, field_name="service_name"),
+            "runtime_authorization_leases",
+            _coerce_typed_id(lease_id).bare,
         )
 
     def restore_operation_document(self, operation_id: str) -> str:
@@ -225,6 +245,10 @@ class FirestorePathsV2:
             "operations",
             validate_segment(idempotency_key_hash, field_name="idempotency_key_hash"),
         )
+
+    def import_operation_document(self, idempotency_key_hash: str) -> str:
+        """Import operations share the authoritative ``operations`` collection."""
+        return self.operation_document(idempotency_key_hash)
 
     def outbox_document(self, event_id: str) -> str:
         return self._under_root("outbox", validate_segment(event_id, field_name="event_id"))

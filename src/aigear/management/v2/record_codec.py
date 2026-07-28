@@ -9,6 +9,7 @@ from enum import Enum
 from typing import Any, Dict, Mapping, Tuple, Union, get_args, get_origin, get_type_hints
 
 from aigear.management.v2.identifiers import TypedId
+from aigear.management.v2.control_document import parse_schema_version
 
 __all__ = ["RecordCodecError", "encode_record", "decode_record"]
 
@@ -94,5 +95,27 @@ def _decode(annotation: Any, value: Any) -> Any:
     return value
 
 
-def decode_record(record_type: type, value: Mapping[str, Any]):
-    return _decode(record_type, value)
+def decode_record(
+    record_type: type,
+    value: Mapping[str, Any],
+    *,
+    expected_environment_fingerprint: TypedId | None = None,
+):
+    schema_version = value.get("schema_version")
+    if schema_version is not None:
+        try:
+            major, _ = parse_schema_version(schema_version)
+        except (TypeError, ValueError) as exc:
+            raise RecordCodecError("record schema_version is invalid") from exc
+        if major != 2:
+            raise RecordCodecError(
+                f"unsupported Pipeline V2 record schema major: {major}"
+            )
+    decoded = _decode(record_type, value)
+    if expected_environment_fingerprint is not None:
+        actual = getattr(decoded, "environment_fingerprint", None)
+        if actual != expected_environment_fingerprint:
+            raise RecordCodecError(
+                "record environment_fingerprint does not match the active environment"
+            )
+    return decoded
