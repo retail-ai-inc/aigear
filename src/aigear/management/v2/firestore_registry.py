@@ -41,7 +41,11 @@ from aigear.management.v2.records.import_operation import (
     ImportProvenanceIndexRecord,
 )
 from aigear.management.v2.import_recovery import ImportCleanupIntent
-from aigear.management.v2.records.outbox import OutboxEventRecord, OutboxStatus
+from aigear.management.v2.records.outbox import (
+    OutboxEventRecord,
+    OutboxStatus,
+    ProjectionKind,
+)
 from aigear.management.v2.records.policy import (
     PolicyDecisionEpochBinding,
     PolicyDecisionHead,
@@ -664,36 +668,68 @@ class FirestoreRegistryV2:
     def get_outbox_event(self, event_id: TypedId) -> Optional[OutboxEventRecord]:
         return self._get(self.paths.outbox_document(event_id.bare), OutboxEventRecord)
 
-    def query_due_outbox_events(self, *, now: str, limit: int):
+    def query_due_outbox_events(self, *, now: str, limit: int, kinds=None):
         """Return a bounded batch of retryable or lease-expired projection work."""
         collection = self.client.collection(self.paths._under_root("outbox"))
-        retryable = (
-            collection.where(
+        selected_kinds = None if kinds is None else tuple(dict.fromkeys(kinds))
+        if selected_kinds is not None and (
+            not selected_kinds
+            or any(not isinstance(kind, ProjectionKind) for kind in selected_kinds)
+        ):
+            raise ValueError("kinds must contain ProjectionKind values")
+
+        def retryable_query(*, kind=None):
+            query = collection.where(
                 "status",
                 "in",
                 [OutboxStatus.PENDING.value, OutboxStatus.FAILED.value],
             )
-            .where("next_attempt_at", "<=", now)
-            .order_by("next_attempt_at")
-            .order_by("created_at")
-            .order_by("event_id")
-            .limit(limit)
-        )
-        expired = (
-            collection.where("status", "==", OutboxStatus.DELIVERING.value)
-            .where("lease_expires_at", "<=", now)
-            .order_by("lease_expires_at")
-            .order_by("created_at")
-            .order_by("event_id")
-            .limit(limit)
-        )
-        records = [
-            decode_record(OutboxEventRecord, snapshot.to_dict())
-            for query in (retryable, expired)
-            for snapshot in query.stream()
-        ]
+            if kind is not None:
+                query = query.where("kind", "==", kind.value)
+            return (
+                query
+                .where("next_attempt_at", "<=", now)
+                .order_by("next_attempt_at")
+                .order_by("created_at")
+                .order_by("event_id")
+                .limit(limit)
+            )
+
+        def expired_query(*, kind=None):
+            query = collection.where("status", "==", OutboxStatus.DELIVERING.value)
+            if kind is not None:
+                query = query.where("kind", "==", kind.value)
+            return (
+                query
+                .where("lease_expires_at", "<=", now)
+                .order_by("lease_expires_at")
+                .order_by("created_at")
+                .order_by("event_id")
+                .limit(limit)
+            )
+
+        if selected_kinds is None:
+            queries = (
+                retryable_query(kind=ProjectionKind.POLICY_REVOCATION_EMERGENCY),
+                expired_query(kind=ProjectionKind.POLICY_REVOCATION_EMERGENCY),
+                retryable_query(),
+                expired_query(),
+            )
+        else:
+            queries = tuple(
+                query
+                for kind in selected_kinds
+                for query in (retryable_query(kind=kind), expired_query(kind=kind))
+            )
+        records_by_id = {}
+        for query in queries:
+            for snapshot in query.stream():
+                record = decode_record(OutboxEventRecord, snapshot.to_dict())
+                records_by_id[record.event_id] = record
+        records = list(records_by_id.values())
         records.sort(
             key=lambda record: (
+                -record.priority,
                 record.next_attempt_at or record.lease_expires_at or record.created_at or "",
                 record.event_id.typed,
             )

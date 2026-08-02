@@ -244,6 +244,15 @@ def test_bounded_outbox_worker_isolates_poison_event_and_continues_batch():
     output = _produce_committed_output(registry, gcs, layout)
     asset_object = layout.asset_projection("model", "weights", "run-1")
     gcs.put_object(asset_object, b"foreign-content", if_generation_match=0)
+    emergency = OutboxEventRecord.pending(
+        schema_version="2.0",
+        kind=ProjectionKind.POLICY_REVOCATION_EMERGENCY,
+        subject_id=output.occurrence.asset_version_id,
+        projection_schema_version="1.0",
+        projection_source_revision=1,
+        created_at=_NOW.isoformat(),
+    )
+    registry.put_outbox_event(emergency)
 
     result = drain_projection_outbox(
         registry,
@@ -266,6 +275,7 @@ def test_bounded_outbox_worker_isolates_poison_event_and_continues_batch():
         projection_source_revision=1,
     )
     assert registry.get_outbox_event(run_event.event_id).status == OutboxStatus.DELIVERED
+    assert registry.get_outbox_event(emergency.event_id).status == OutboxStatus.PENDING
 
 
 def test_consume_asset_manifest_event_cas_updates_on_new_desired_revision():

@@ -12,12 +12,18 @@ from aigear.management.v2.control_document import parse_schema_version
 from aigear.management.v2.identifiers import TypedId
 
 __all__ = [
+    "OUTBOX_PRIORITY_DEFAULT",
+    "OUTBOX_PRIORITY_EMERGENCY",
     "InvalidOutboxRecordError",
     "ProjectionKind",
     "OutboxStatus",
     "compute_projection_event_id",
     "OutboxEventRecord",
 ]
+
+
+OUTBOX_PRIORITY_DEFAULT = 0
+OUTBOX_PRIORITY_EMERGENCY = 1000
 
 
 class InvalidOutboxRecordError(ValueError):
@@ -28,6 +34,7 @@ class ProjectionKind(str, Enum):
     ASSET_MANIFEST = "asset_manifest"
     COMMITTED_RUN_OUTPUT = "committed_run_output"
     POLICY_DECISION_AUDIT = "policy_decision_audit"
+    POLICY_REVOCATION_EMERGENCY = "policy_revocation_emergency"
 
 
 class OutboxStatus(str, Enum):
@@ -90,6 +97,7 @@ class OutboxEventRecord:
     last_error: Optional[str] = None
     created_at: Optional[str] = None
     delivered_at: Optional[str] = None
+    priority: int = OUTBOX_PRIORITY_DEFAULT
 
     def __post_init__(self) -> None:
         parse_schema_version(self.schema_version)
@@ -104,6 +112,7 @@ class OutboxEventRecord:
         _non_negative("projection_repair_epoch", self.projection_repair_epoch)
         _non_negative("delivery_attempts", self.delivery_attempts)
         _non_negative("delivery_fencing_token", self.delivery_fencing_token)
+        _non_negative("priority", self.priority)
         for field_name in (
             "lease_expires_at",
             "next_attempt_at",
@@ -156,6 +165,7 @@ class OutboxEventRecord:
             self.projection_schema_version,
             self.projection_source_revision,
             self.projection_repair_epoch,
+            self.priority,
         )
 
     @classmethod
@@ -169,6 +179,7 @@ class OutboxEventRecord:
         projection_source_revision: int,
         projection_repair_epoch: int = 0,
         created_at: Optional[str] = None,
+        priority: int = OUTBOX_PRIORITY_DEFAULT,
     ) -> "OutboxEventRecord":
         event_id = compute_projection_event_id(
             kind,
@@ -188,4 +199,5 @@ class OutboxEventRecord:
             status=OutboxStatus.PENDING,
             next_attempt_at=created_at,
             created_at=created_at,
+            priority=priority,
         )

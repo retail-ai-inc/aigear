@@ -62,7 +62,7 @@ def test_firestore_asset_query_pushes_cursor_cutoff_and_limit_server_side():
     assert actions[-1] == ("limit", 51)
 
 
-def test_firestore_outbox_query_is_two_bounded_index_scans():
+def test_firestore_outbox_query_uses_bounded_priority_index_scans():
     client = _Client()
     registry = FirestoreRegistryV2("proj", "v1", client=client)
 
@@ -70,7 +70,7 @@ def test_firestore_outbox_query_is_two_bounded_index_scans():
         now="2026-07-27T00:00:00+00:00", limit=100
     ) == ()
 
-    assert len(client.queries) == 2
+    assert len(client.queries) == 4
     assert all(actions[-1] == ("limit", 100) for actions in client.queries)
     assert any(
         ("where", "next_attempt_at", "<=", "2026-07-27T00:00:00+00:00")

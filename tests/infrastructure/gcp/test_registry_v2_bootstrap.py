@@ -56,6 +56,8 @@ def test_default_index_definitions_cover_blobs_labels_occurrences_runs():
     ]
     assert ("status", "next_attempt_at", "created_at", "event_id") in outbox_fields
     assert ("status", "lease_expires_at", "created_at", "event_id") in outbox_fields
+    assert ("status", "kind", "next_attempt_at", "created_at", "event_id") in outbox_fields
+    assert ("status", "kind", "lease_expires_at", "created_at", "event_id") in outbox_fields
 
 
 @patch(f"{_MODULE}.run_sh")

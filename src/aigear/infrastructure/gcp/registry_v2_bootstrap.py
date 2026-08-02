@@ -184,6 +184,26 @@ class RegistryV2FirestoreIndexes:
                     ("event_id", _ASCENDING),
                 ),
             ),
+            FirestoreCompositeIndex(
+                collection_group="outbox",
+                fields=(
+                    ("status", _ASCENDING),
+                    ("kind", _ASCENDING),
+                    ("next_attempt_at", _ASCENDING),
+                    ("created_at", _ASCENDING),
+                    ("event_id", _ASCENDING),
+                ),
+            ),
+            FirestoreCompositeIndex(
+                collection_group="outbox",
+                fields=(
+                    ("status", _ASCENDING),
+                    ("kind", _ASCENDING),
+                    ("lease_expires_at", _ASCENDING),
+                    ("created_at", _ASCENDING),
+                    ("event_id", _ASCENDING),
+                ),
+            ),
         )
 
     def create(self, index: FirestoreCompositeIndex) -> None:

@@ -55,7 +55,7 @@ def _journal(gcs=None):
     )
 
 
-def _setup(*, epoch=1, subject=_SUBJECT):
+def _setup(*, epoch=1, subject=_SUBJECT, decision=PolicyDecision.APPROVED):
     envelope = PolicyDecisionUnsignedEnvelope(
         schema_version="2.0",
         operation_id=f"policy-{epoch}",
@@ -63,7 +63,7 @@ def _setup(*, epoch=1, subject=_SUBJECT):
         environment_id="production",
         environment_fingerprint=_FP,
         subject_asset_version_id=subject,
-        decision=PolicyDecision.APPROVED,
+        decision=decision,
         decision_epoch=epoch,
         policy_version="policy-2026-07",
         policy_snapshot_digest=_POLICY,

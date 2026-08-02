@@ -17,7 +17,11 @@ from aigear.management.v2.records.asset_version import (
     TrustState,
     validate_trust_transition,
 )
-from aigear.management.v2.records.outbox import OutboxEventRecord, ProjectionKind
+from aigear.management.v2.records.outbox import (
+    OUTBOX_PRIORITY_EMERGENCY,
+    OutboxEventRecord,
+    ProjectionKind,
+)
 from aigear.management.v2.records.policy import (
     PolicyDecision,
     PolicyDecisionEpochBinding,
@@ -261,6 +265,18 @@ def commit_policy_decision_registry(
                 created_at=committed_at,
             )
         )
+        if envelope.decision is PolicyDecision.REVOKED:
+            tx.put_outbox_event(
+                OutboxEventRecord.pending(
+                    schema_version=operation.schema_version,
+                    kind=ProjectionKind.POLICY_REVOCATION_EMERGENCY,
+                    subject_id=envelope.subject_asset_version_id,
+                    projection_schema_version="1.0",
+                    projection_source_revision=updated_asset.record_revision,
+                    created_at=committed_at,
+                    priority=OUTBOX_PRIORITY_EMERGENCY,
+                )
+            )
         tx.put_policy_decision_operation(committing)
         return PolicyRegistryCommit(
             operation=committing,

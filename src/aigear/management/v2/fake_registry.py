@@ -69,7 +69,11 @@ from aigear.management.v2.records.occurrence import (
 )
 from aigear.management.v2.records.operation import OperationRecord, validate_operation_phase_transition
 from aigear.management.v2.records.import_operation import ImportOperationRecord
-from aigear.management.v2.records.outbox import OutboxEventRecord, OutboxStatus
+from aigear.management.v2.records.outbox import (
+    OutboxEventRecord,
+    OutboxStatus,
+    ProjectionKind,
+)
 from aigear.management.v2.records.policy import (
     PolicyDecisionEpochBinding,
     PolicyDecisionHead,
@@ -698,11 +702,19 @@ class FakeRegistryV2:
     def iter_outbox_events(self) -> Iterator[OutboxEventRecord]:
         return iter(self._outbox_events.values())
 
-    def query_due_outbox_events(self, *, now: str, limit: int):
+    def query_due_outbox_events(self, *, now: str, limit: int, kinds=None):
         """Bounded fake equivalent of the production outbox work query."""
         now_value = datetime.fromisoformat(now)
+        allowed_kinds = None if kinds is None else frozenset(kinds)
+        if allowed_kinds is not None and (
+            not allowed_kinds
+            or any(not isinstance(kind, ProjectionKind) for kind in allowed_kinds)
+        ):
+            raise ValueError("kinds must contain ProjectionKind values")
 
         def due(record: OutboxEventRecord) -> bool:
+            if allowed_kinds is not None and record.kind not in allowed_kinds:
+                return False
             if record.status in (OutboxStatus.PENDING, OutboxStatus.FAILED):
                 return record.next_attempt_at is None or datetime.fromisoformat(
                     record.next_attempt_at
@@ -716,6 +728,7 @@ class FakeRegistryV2:
         records = sorted(
             (record for record in self._outbox_events.values() if due(record)),
             key=lambda record: (
+                -record.priority,
                 record.next_attempt_at or record.lease_expires_at or record.created_at or "",
                 record.event_id.typed,
             ),

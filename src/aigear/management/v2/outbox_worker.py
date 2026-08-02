@@ -9,6 +9,7 @@ from typing import Tuple
 from aigear.management.v2.gcs_client import GcsClientV2
 from aigear.management.v2.gcs_layout import GcsLayoutV2
 from aigear.management.v2.projection_consumer import ProjectionEvent, consume_projection_event
+from aigear.management.v2.records.outbox import ProjectionKind
 
 __all__ = ["OutboxDrainError", "OutboxDrainResult", "drain_projection_outbox"]
 
@@ -50,7 +51,16 @@ def drain_projection_outbox(
     if query is None:
         raise OutboxDrainError("Registry has no bounded outbox work query")
 
-    records = tuple(query(now=now.isoformat(), limit=batch_size))
+    records = tuple(
+        query(
+            now=now.isoformat(),
+            limit=batch_size,
+            kinds=(
+                ProjectionKind.ASSET_MANIFEST,
+                ProjectionKind.COMMITTED_RUN_OUTPUT,
+            ),
+        )
+    )
     failures = []
     succeeded = 0
     for record in records:
