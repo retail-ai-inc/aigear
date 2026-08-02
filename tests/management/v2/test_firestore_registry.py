@@ -84,6 +84,46 @@ def test_firestore_outbox_query_uses_bounded_priority_index_scans():
     )
 
 
+@pytest.mark.parametrize(
+    "method,kwargs,cutoff_field",
+    (
+        ("query_releases", {"service_name": "predictor"}, "created_at"),
+        ("query_aliases", {"service_name": "predictor"}, "updated_at"),
+        ("query_release_operations", {"service_name": "predictor"}, "created_at"),
+        ("query_runtime_evidence", {"service_name": "predictor"}, "issued_at"),
+        ("query_runtime_authorization_leases", {"service_name": "predictor"}, "issued_at"),
+    ),
+)
+def test_firestore_release_queries_push_cutoff_cursor_and_limit(method, kwargs, cutoff_field):
+    client = _Client()
+    registry = FirestoreRegistryV2("proj", "v1", client=client)
+    cutoff = "2026-07-28T00:00:00+00:00"
+
+    assert getattr(registry, method)(
+        **kwargs, cutoff=cutoff, cursor=(cutoff, "cursor"), limit=17
+    ) == ()
+
+    actions = client.queries[-1]
+    assert ("where", cutoff_field, "<=", cutoff) in actions
+    assert any(action[0] == "start_after" for action in actions)
+    assert actions[-1] == ("limit", 17)
+
+
+def test_firestore_release_queries_reject_non_utc_cutoff_before_querying():
+    client = _Client()
+    registry = FirestoreRegistryV2("proj", "v1", client=client)
+
+    with pytest.raises(ValueError, match="canonical UTC"):
+        registry.query_releases(
+            service_name="predictor",
+            cutoff="2026-07-28T08:00:00+08:00",
+            cursor=None,
+            limit=17,
+        )
+
+    assert client.queries == []
+
+
 class _ReadTimeQuery:
     def __init__(self, sink, actions=()):
         self.sink = sink

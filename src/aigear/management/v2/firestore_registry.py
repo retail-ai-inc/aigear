@@ -8,7 +8,7 @@ even when domain code uses a natural read/validate/stage sequence.
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Iterator, Optional, TypeVar
 
 from aigear.management.v2.attestation import AttestationRecord, same_attestation_identity
@@ -65,6 +65,17 @@ from aigear.management.v2.records.run import (
     validate_step_status_transition,
 )
 from aigear.management.v2.records.run_spec import RunSpec, compute_run_spec_digest
+from aigear.management.v2.records.release import (
+    AliasRecord,
+    ReleaseOperationRecord,
+    ReleaseRecord,
+    ServiceReleaseState,
+    validate_release_phase_transition,
+)
+from aigear.management.v2.records.runtime_evidence import (
+    RuntimeAuthorizationLease,
+    RuntimeEvidenceRecord,
+)
 
 __all__ = ["FirestoreRegistryV2"]
 
@@ -653,6 +664,231 @@ class FirestoreRegistryV2:
 
     def get_attachment_edge(self, edge_id: TypedId) -> Optional[AttachmentEdge]:
         return self._get(self.paths.attachment_edge_document(edge_id.bare), AttachmentEdge)
+
+    def put_release(self, record: ReleaseRecord) -> ReleaseRecord:
+        path = self.paths.release_document(record.release_id)
+        existing = self._get(path, ReleaseRecord)
+        if existing is not None:
+            if existing.immutable_identity != record.immutable_identity:
+                raise IdentityConflict("release_id has conflicting immutable content")
+            return existing
+        return self._put(path, record, create_only=True)
+
+    def get_release(self, release_id: TypedId) -> Optional[ReleaseRecord]:
+        return self._get(self.paths.release_document(release_id), ReleaseRecord)
+
+    def put_alias(self, record: AliasRecord) -> AliasRecord:
+        release = self.get_release(record.release_id)
+        if release is None or release.service_name != record.service_name:
+            raise IdentityConflict("alias release does not belong to service")
+        path = self.paths.service_alias_document(record.service_name, record.alias_name)
+        existing = self._get(path, AliasRecord)
+        if (
+            existing is not None
+            and existing != record
+            and record.revision != existing.revision + 1
+        ):
+            raise IdentityConflict("alias revision CAS failed")
+        return self._put(path, record, create_only=existing is None)
+
+    def get_alias(self, service_name: str, alias_name: str) -> Optional[AliasRecord]:
+        return self._get(self.paths.service_alias_document(service_name, alias_name), AliasRecord)
+
+    def put_service_release_state(self, record: ServiceReleaseState) -> ServiceReleaseState:
+        path = self.paths.service_release_state_document(record.service_name)
+        existing = self._get(path, ServiceReleaseState)
+        if (
+            existing is not None
+            and existing != record
+            and record.revision != existing.revision + 1
+        ):
+            raise IdentityConflict("service release state revision CAS failed")
+        return self._put(path, record, create_only=existing is None)
+
+    def get_service_release_state(self, service_name: str) -> Optional[ServiceReleaseState]:
+        return self._get(self.paths.service_release_state_document(service_name), ServiceReleaseState)
+
+    def put_release_operation(self, record: ReleaseOperationRecord) -> ReleaseOperationRecord:
+        path = self.paths.release_operation_document(record.operation_id)
+        existing = self._get(path, ReleaseOperationRecord)
+        if existing is not None and existing != record:
+            if (
+                existing.idempotency_key_hash != record.idempotency_key_hash
+                or existing.request_fingerprint != record.request_fingerprint
+                or existing.service_name != record.service_name
+                or existing.target_release_id != record.target_release_id
+                or record.revision != existing.revision + 1
+            ):
+                raise IdentityConflict("release operation identity or revision conflict")
+            if existing.phase is not record.phase:
+                validate_release_phase_transition(existing.phase, record.phase)
+        return self._put(path, record, create_only=existing is None)
+
+    def get_release_operation(self, operation_id: str) -> Optional[ReleaseOperationRecord]:
+        return self._get(self.paths.release_operation_document(operation_id), ReleaseOperationRecord)
+
+    def put_runtime_evidence(
+        self, service_name: str, record: RuntimeEvidenceRecord
+    ) -> RuntimeEvidenceRecord:
+        release = self.get_release(record.release_id)
+        if release is None or release.service_name != service_name:
+            raise IdentityConflict("runtime evidence release does not belong to service")
+        path = self.paths.service_runtime_evidence_document(service_name, record.evidence_id)
+        existing = self._get(path, RuntimeEvidenceRecord)
+        if existing is not None:
+            if existing != record:
+                raise IdentityConflict("runtime evidence is create-only")
+            return existing
+        return self._put(path, record, create_only=True)
+
+    def get_runtime_evidence(
+        self, service_name: str, evidence_id: TypedId
+    ) -> Optional[RuntimeEvidenceRecord]:
+        return self._get(
+            self.paths.service_runtime_evidence_document(service_name, evidence_id),
+            RuntimeEvidenceRecord,
+        )
+
+    def put_runtime_authorization_lease(
+        self, service_name: str, record: RuntimeAuthorizationLease
+    ) -> RuntimeAuthorizationLease:
+        release = self.get_release(record.release_id)
+        if release is None or release.service_name != service_name:
+            raise IdentityConflict("runtime lease release does not belong to service")
+        path = self.paths.service_runtime_authorization_lease_document(service_name, record.lease_id)
+        existing = self._get(path, RuntimeAuthorizationLease)
+        if existing is not None:
+            if existing != record:
+                raise IdentityConflict("runtime authorization lease is create-only")
+            return existing
+        return self._put(path, record, create_only=True)
+
+    def get_runtime_authorization_lease(
+        self, service_name: str, lease_id: TypedId
+    ) -> Optional[RuntimeAuthorizationLease]:
+        return self._get(
+            self.paths.service_runtime_authorization_lease_document(service_name, lease_id),
+            RuntimeAuthorizationLease,
+        )
+
+    def _query_release_records(
+        self, collection_path, record_type, *, filters, timestamp_field,
+        identity_field, cutoff, cursor, limit,
+    ):
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 500:
+            raise ValueError("limit must be an int in [1, 500]")
+        try:
+            cutoff_value = datetime.fromisoformat(cutoff)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("cutoff must be a canonical UTC timestamp") from exc
+        if (
+            cutoff_value.tzinfo is None
+            or cutoff_value.utcoffset() != timezone.utc.utcoffset(cutoff_value)
+            or cutoff_value.isoformat() != cutoff
+        ):
+            raise ValueError("cutoff must be a canonical UTC timestamp")
+        if cursor is not None and (
+            not isinstance(cursor, tuple)
+            or len(cursor) != 2
+            or not all(isinstance(value, str) and value for value in cursor)
+        ):
+            raise ValueError("cursor must be a (UTC timestamp, identity) tuple")
+        if cursor is not None:
+            try:
+                cursor_time = datetime.fromisoformat(cursor[0])
+            except ValueError as exc:
+                raise ValueError(
+                    "cursor must be a (UTC timestamp, identity) tuple"
+                ) from exc
+            if (
+                cursor_time.tzinfo is None
+                or cursor_time.utcoffset() != timezone.utc.utcoffset(cursor_time)
+                or cursor_time.isoformat() != cursor[0]
+            ):
+                raise ValueError("cursor must be a (UTC timestamp, identity) tuple")
+        query = self.client.collection(collection_path)
+        for field, value in filters:
+            query = query.where(field, "==", value)
+        query = (
+            query.where(timestamp_field, "<=", cutoff)
+            .order_by(timestamp_field)
+            .order_by(identity_field)
+        )
+        if cursor is not None:
+            query = query.start_after(
+                {timestamp_field: cursor[0], identity_field: cursor[1]}
+            )
+        query = query.limit(limit)
+        snapshots = (
+            query.stream()
+            if self.read_time is None
+            else query.stream(read_time=self.read_time)
+        )
+        return tuple(
+            decode_record(record_type, snapshot.to_dict()) for snapshot in snapshots
+        )
+
+    def query_releases(self, *, service_name, cutoff, cursor, limit):
+        return self._query_release_records(
+            self.paths._under_root("releases"),
+            ReleaseRecord,
+            filters=(("service_name", service_name),),
+            timestamp_field="created_at",
+            identity_field="release_id",
+            cutoff=cutoff,
+            cursor=cursor,
+            limit=limit,
+        )
+
+    def query_aliases(self, *, service_name, cutoff, cursor, limit):
+        return self._query_release_records(
+            self.paths._under_root("services", service_name, "aliases"),
+            AliasRecord,
+            filters=(),
+            timestamp_field="updated_at",
+            identity_field="alias_name",
+            cutoff=cutoff,
+            cursor=cursor,
+            limit=limit,
+        )
+
+    def query_release_operations(self, *, service_name, cutoff, cursor, limit):
+        return self._query_release_records(
+            self.paths._under_root("release_operations"),
+            ReleaseOperationRecord,
+            filters=(("service_name", service_name),),
+            timestamp_field="created_at",
+            identity_field="operation_id",
+            cutoff=cutoff,
+            cursor=cursor,
+            limit=limit,
+        )
+
+    def query_runtime_evidence(self, *, service_name, cutoff, cursor, limit):
+        return self._query_release_records(
+            self.paths._under_root("services", service_name, "runtime_evidence"),
+            RuntimeEvidenceRecord,
+            filters=(),
+            timestamp_field="issued_at",
+            identity_field="evidence_id",
+            cutoff=cutoff,
+            cursor=cursor,
+            limit=limit,
+        )
+
+    def query_runtime_authorization_leases(self, *, service_name, cutoff, cursor, limit):
+        return self._query_release_records(
+            self.paths._under_root(
+                "services", service_name, "runtime_authorization_leases"
+            ),
+            RuntimeAuthorizationLease,
+            filters=(),
+            timestamp_field="issued_at",
+            identity_field="lease_id",
+            cutoff=cutoff,
+            cursor=cursor,
+            limit=limit,
+        )
 
     # ── transactional outbox ───────────────────────────────────────────
 

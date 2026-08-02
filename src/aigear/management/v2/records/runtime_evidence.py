@@ -59,6 +59,10 @@ def _aware_timestamp(field_name: str, value: str) -> datetime:
         raise InvalidRuntimeEvidenceError(f"{field_name} must be an ISO timestamp") from exc
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise InvalidRuntimeEvidenceError(f"{field_name} must be timezone-aware")
+    if parsed.utcoffset() != timedelta(0) or parsed.isoformat() != value:
+        raise InvalidRuntimeEvidenceError(
+            f"{field_name} must be a canonical UTC timestamp"
+        )
     return parsed
 
 

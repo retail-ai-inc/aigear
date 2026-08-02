@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 from typing import Optional
 
@@ -124,6 +124,10 @@ def _optional_timestamp(field_name: str, value: Optional[str]) -> None:
         raise InvalidReleaseRecordError(f"{field_name} must be an ISO timestamp") from exc
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise InvalidReleaseRecordError(f"{field_name} must be timezone-aware")
+    if parsed.utcoffset() != timedelta(0) or parsed.isoformat() != value:
+        raise InvalidReleaseRecordError(
+            f"{field_name} must be a canonical UTC timestamp"
+        )
 
 
 @dataclass(frozen=True)

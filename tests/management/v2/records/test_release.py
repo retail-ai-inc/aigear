@@ -162,6 +162,11 @@ def test_release_operation_rejects_naive_lease():
         _operation(lease_expires_at="2026-07-28T00:02:00")
 
 
+def test_release_record_requires_canonical_utc_time():
+    with pytest.raises(InvalidReleaseRecordError, match="canonical UTC"):
+        _operation(lease_expires_at="2026-07-28T08:02:00+08:00")
+
+
 def test_terminal_release_operation_requires_finished_at():
     with pytest.raises(InvalidReleaseRecordError, match="finished_at"):
         _operation(phase=ReleasePhase.SUCCEEDED)

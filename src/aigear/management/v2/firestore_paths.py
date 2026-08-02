@@ -213,6 +213,14 @@ class FirestorePathsV2:
     def alias_document(self, alias_id: str) -> str:
         return self._under_root("aliases", validate_segment(alias_id, field_name="alias_id"))
 
+    def service_alias_document(self, service_name: str, alias_name: str) -> str:
+        return self._under_root(
+            "services",
+            validate_segment(service_name, field_name="service_name"),
+            "aliases",
+            validate_segment(alias_name, field_name="alias_name"),
+        )
+
     def release_document(self, release_id: "TypedId | str") -> str:
         return self._under_root(
             "releases", _coerce_typed_id(release_id).bare

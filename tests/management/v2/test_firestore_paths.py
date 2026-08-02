@@ -124,6 +124,9 @@ def test_occurrence_and_edge_documents(paths):
 
 def test_alias_release_and_service_documents(paths):
     assert paths.alias_document("alias-1") == f"{paths.control_document}/aliases/alias-1"
+    assert paths.service_alias_document("model-service", "champion") == (
+        f"{paths.control_document}/services/model-service/aliases/champion"
+    )
     assert paths.release_document(_HEX) == (
         f"{paths.control_document}/releases/{_HEX}"
     )

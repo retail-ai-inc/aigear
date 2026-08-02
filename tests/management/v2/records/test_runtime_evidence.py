@@ -116,6 +116,11 @@ def test_runtime_evidence_rejects_naive_time():
         _evidence(expires_at="2026-07-28T00:05:00")
 
 
+def test_runtime_evidence_requires_canonical_utc_time():
+    with pytest.raises(InvalidRuntimeEvidenceError, match="canonical UTC"):
+        _evidence(expires_at="2026-07-28T08:05:00+08:00")
+
+
 def test_runtime_lease_accepts_minimum_security_bound():
     lease = _lease()
     assert lease.expires_at == "2026-07-28T00:05:00+00:00"

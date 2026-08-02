@@ -167,6 +167,34 @@ class RegistryV2FirestoreIndexes:
                 fields=(("status", _ASCENDING), ("run_id", _ASCENDING)),
             ),
             FirestoreCompositeIndex(
+                collection_group="releases",
+                fields=(
+                    ("service_name", _ASCENDING),
+                    ("created_at", _ASCENDING),
+                    ("release_id", _ASCENDING),
+                ),
+            ),
+            FirestoreCompositeIndex(
+                collection_group="release_operations",
+                fields=(
+                    ("service_name", _ASCENDING),
+                    ("created_at", _ASCENDING),
+                    ("operation_id", _ASCENDING),
+                ),
+            ),
+            FirestoreCompositeIndex(
+                collection_group="aliases",
+                fields=(("updated_at", _ASCENDING), ("alias_name", _ASCENDING)),
+            ),
+            FirestoreCompositeIndex(
+                collection_group="runtime_evidence",
+                fields=(("issued_at", _ASCENDING), ("evidence_id", _ASCENDING)),
+            ),
+            FirestoreCompositeIndex(
+                collection_group="runtime_authorization_leases",
+                fields=(("issued_at", _ASCENDING), ("lease_id", _ASCENDING)),
+            ),
+            FirestoreCompositeIndex(
                 collection_group="outbox",
                 fields=(
                     ("status", _ASCENDING),

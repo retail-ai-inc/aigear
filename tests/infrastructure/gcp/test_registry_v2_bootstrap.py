@@ -47,6 +47,11 @@ def test_default_index_definitions_cover_blobs_labels_occurrences_runs():
         "labels",
         "occurrences",
         "outbox",
+        "releases",
+        "release_operations",
+        "aliases",
+        "runtime_evidence",
+        "runtime_authorization_leases",
         "runs",
     }
     outbox_fields = [
