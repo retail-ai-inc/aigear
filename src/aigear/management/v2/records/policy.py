@@ -23,6 +23,7 @@ __all__ = [
     "PolicyDecisionRequest",
     "PolicyDecisionReservationLock",
     "PolicyDecisionVerificationRecord",
+    "PolicyDecisionJournalReceipt",
     "PolicyDecisionOperationRecord",
     "PolicyDecisionEpochBinding",
     "PolicyDecisionHead",
@@ -399,6 +400,26 @@ class PolicyDecisionVerificationRecord:
 
 
 @dataclass(frozen=True)
+class PolicyDecisionJournalReceipt:
+    schema_version: str
+    entry_id: TypedId
+    sequence: int
+    object_name: str
+    generation: str
+    evidence_digest: TypedId
+    issued_at: str
+
+    def __post_init__(self) -> None:
+        parse_schema_version(self.schema_version)
+        _typed_id("entry_id", self.entry_id)
+        _positive("sequence", self.sequence)
+        _non_empty("object_name", self.object_name)
+        _non_empty("generation", self.generation)
+        _typed_id("evidence_digest", self.evidence_digest)
+        _aware_timestamp("issued_at", self.issued_at)
+
+
+@dataclass(frozen=True)
 class PolicyDecisionOperationRecord:
     schema_version: str
     operation_id: str
@@ -418,6 +439,7 @@ class PolicyDecisionOperationRecord:
     error_class: Optional[str] = None
     error_summary: Optional[str] = None
     verified_completion: Optional[PolicyDecisionVerificationRecord] = None
+    prepared_journal: Optional[PolicyDecisionJournalReceipt] = None
 
     def __post_init__(self) -> None:
         parse_schema_version(self.schema_version)
@@ -525,6 +547,21 @@ class PolicyDecisionOperationRecord:
                 raise InvalidPolicyRecordError(
                     "verified completion is not bound to policy operation"
                 )
+        requires_prepared_journal = self.phase in {
+            PolicyDecisionOperationPhase.JOURNALING,
+            PolicyDecisionOperationPhase.COMMITTING,
+            PolicyDecisionOperationPhase.SUCCEEDED,
+        }
+        if requires_prepared_journal != (self.prepared_journal is not None):
+            raise InvalidPolicyRecordError(
+                "journaling and later policy phases require prepared journal"
+            )
+        if self.prepared_journal is not None and not isinstance(
+            self.prepared_journal, PolicyDecisionJournalReceipt
+        ):
+            raise InvalidPolicyRecordError(
+                "prepared_journal must be PolicyDecisionJournalReceipt"
+            )
 
 
 @dataclass(frozen=True)
