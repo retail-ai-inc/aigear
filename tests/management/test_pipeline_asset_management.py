@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -7,7 +8,11 @@ from datetime import datetime, timezone
 import pytest
 
 from aigear.management.pipeline_asset import PipelineAssetManagement, PipelineAssetManagementError
-from aigear.management.v2.attestation import HmacTestSigner
+from aigear.management.v2.attestation import (
+    AttestationRecord,
+    HmacTestSigner,
+    HmacTestVerifier,
+)
 from aigear.management.v2.control_document import ControlDocument
 from aigear.management.v2.environment import (
     EnvironmentIdentity,
@@ -40,6 +45,13 @@ from aigear.management.v2.records.run_spec import (
     RunSpec,
     SeedInputBinding,
     StepSpec,
+)
+from aigear.management.v2.records.policy import (
+    PolicyDecision,
+    PolicyDecisionEpochBinding,
+    PolicyDecisionHead,
+    PolicyDecisionUnsignedEnvelope,
+    compute_subject_epoch_key,
 )
 from aigear.management.v2.staging_upload import StagingOutputDescriptor, StepCompletionMessage
 from aigear.management.v2.step_lease import compute_attempt_finalize_operation_id
@@ -321,6 +333,81 @@ def _fully_configured_manager() -> PipelineAssetManagement:
         runtime_contract_digest=TypedId.from_bare("ee" * 32),
         policy_version="policy-v1",
         control_document=control_document,
+        attestation_signer=HmacTestSigner(),
+        attestation_verifier=HmacTestVerifier(),
+    )
+
+
+def _approve_asset(manager: PipelineAssetManagement, asset: AssetVersionRecord) -> None:
+    envelope = PolicyDecisionUnsignedEnvelope(
+        schema_version="2.0",
+        operation_id="approve-seed",
+        fencing_token=1,
+        environment_id="production",
+        environment_fingerprint=manager.environment_fingerprint,
+        subject_asset_version_id=asset.asset_version_id,
+        decision=PolicyDecision.APPROVED,
+        decision_epoch=1,
+        policy_version="policy-v1",
+        policy_snapshot_digest=TypedId.from_bare("91" * 32),
+        evidence_digests=(
+            TypedId.from_bare("92" * 32),
+            TypedId.from_bare("93" * 32),
+        ),
+        evidence_closure_digest=TypedId.from_bare("94" * 32),
+        firestore_read_time="2026-07-23T23:59:00+00:00",
+        issued_at="2026-07-23T23:59:01+00:00",
+        not_before="2026-07-23T23:59:01+00:00",
+        valid_until="2099-07-24T01:00:00+00:00",
+        key_version="test-only",
+    )
+    signer = HmacTestSigner()
+    attestation = AttestationRecord(
+        schema_version="2.0",
+        attestation_kind="policy_decision",
+        attestation_id=envelope.digest,
+        environment_fingerprint=manager.environment_fingerprint,
+        unsigned_envelope=envelope.to_jcs_dict(),
+        key_version=signer.key_version,
+        signature_b64=base64.b64encode(
+            signer.sign_sha256_digest(bytes.fromhex(envelope.digest.bare))
+        ).decode("ascii"),
+    )
+    manager.registry.put_attestation(attestation)
+    manager.registry.put_policy_decision_epoch(
+        PolicyDecisionEpochBinding(
+            schema_version="2.0",
+            environment_fingerprint=manager.environment_fingerprint,
+            subject_epoch_key=compute_subject_epoch_key(asset.asset_version_id, 1),
+            subject_asset_version_id=asset.asset_version_id,
+            decision_epoch=1,
+            attestation_id=attestation.attestation_id,
+            decision=PolicyDecision.APPROVED,
+            policy_version="policy-v1",
+            not_before=envelope.not_before,
+            valid_until=envelope.valid_until,
+        )
+    )
+    manager.registry.put_policy_decision_head(
+        PolicyDecisionHead(
+            schema_version="2.0",
+            environment_fingerprint=manager.environment_fingerprint,
+            subject_asset_version_id=asset.asset_version_id,
+            current_epoch=1,
+            revision=1,
+            attestation_id=attestation.attestation_id,
+            decision=PolicyDecision.APPROVED,
+            policy_version="policy-v1",
+            not_before=envelope.not_before,
+            valid_until=envelope.valid_until,
+        )
+    )
+    manager.registry.put_asset_version(
+        replace(
+            asset,
+            trust_state=TrustState.APPROVED,
+            policy_decision_head_ref=attestation.attestation_id,
+        )
     )
 
 
@@ -393,13 +480,7 @@ def test_legacy_seed_input_is_sealed_onto_root_step_and_revalidated_at_lease():
     source = _run_step_to_completion(
         manager, source_run.run_id, "prep", "features", b"seed-features"
     ).outputs[0]
-    manager.registry.put_asset_version(
-        replace(
-            source.asset_version,
-            trust_state=TrustState.APPROVED,
-            policy_decision_head_ref=TypedId.from_bare("98" * 32),
-        )
-    )
+    _approve_asset(manager, source.asset_version)
     seeded_spec = RunSpec(
         trigger_principal="scheduler@aigear",
         trigger_source="schedule",
@@ -436,6 +517,59 @@ def test_legacy_seed_input_is_sealed_onto_root_step_and_revalidated_at_lease():
         seeded_run.run_id, "train", owner_principal="worker@test", now=_NOW
     )
     assert attempt.attempt_no == 1
+
+
+def test_begin_run_rechecks_current_policy_head_inside_atomic_commit():
+    manager = _fully_configured_manager()
+    source_run = manager.begin_run(
+        _two_step_run_spec(), _IDEMPOTENCY_KEY, owner_principal="scheduler@aigear"
+    )
+    source = _run_step_to_completion(
+        manager, source_run.run_id, "prep", "features", b"seed-features"
+    ).outputs[0]
+    _approve_asset(manager, source.asset_version)
+    seeded_spec = RunSpec(
+        trigger_principal="scheduler@aigear",
+        trigger_source="schedule",
+        graph_digest=TypedId.from_bare("41" * 32),
+        code_digest=TypedId.from_bare("42" * 32),
+        config_digest=TypedId.from_bare("43" * 32),
+        producer_image_digest=TypedId.from_bare("44" * 32),
+        steps=(
+            StepSpec(
+                step_name="train",
+                outputs=(OutputSlotSpec("model", "model", "weights"),),
+            ),
+        ),
+        seed_inputs=(
+            SeedInputBinding(
+                binding_name="features",
+                asset_version_id=source.asset_version.asset_version_id,
+                occurrence_id=source.occurrence.occurrence_id,
+                source_label_id=source.label.label_id,
+            ),
+        ),
+    )
+    original_run_atomic = manager.registry.run_atomic
+
+    def revoke_before_callback(work):
+        asset_id = source.asset_version.asset_version_id
+        head = manager.registry.get_policy_decision_head(asset_id)
+        manager.registry._policy_decision_heads[asset_id] = replace(
+            head, decision=PolicyDecision.REVOKED
+        )
+        return original_run_atomic(work)
+
+    manager.registry.run_atomic = revoke_before_callback
+    run_count = len(manager.registry._runs)
+
+    with pytest.raises(PipelineAssetManagementError, match="policy head"):
+        manager.begin_run(
+            seeded_spec,
+            TypedId.from_bare("96" * 32),
+            owner_principal="scheduler@aigear",
+        )
+    assert len(manager.registry._runs) == run_count
 
 
 def test_full_run_lifecycle_through_finalize_and_download(tmp_path):

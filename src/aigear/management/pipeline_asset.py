@@ -116,7 +116,7 @@ from aigear.management.v2.records.run_spec import (
     seed_inputs_for_step,
 )
 from aigear.management.v2.pubsub_auth import verify_pubsub_oidc_token
-from aigear.management.v2.resolver import Selector, UsageContext
+from aigear.management.v2.resolver import ResolverError, Selector, UsageContext
 from aigear.management.v2.resolver import resolve as _resolve_selector
 from aigear.management.v2.run_trigger import begin_run_trigger
 from aigear.management.v2.staging_upload import StepCompletionMessage
@@ -316,6 +316,7 @@ class PipelineAssetManagement:
         manifest_integrity_key_version: str,
         blob_location_key_version: str,
         occurrence_finalization_key_version: str,
+        policy_decision_key_versions: Tuple[str, ...],
         allowed_completion_publishers: Tuple[str, ...],
         completion_oidc_audience: str,
         external_source_policy: Optional[ExternalSourcePolicy] = None,
@@ -324,6 +325,19 @@ class PipelineAssetManagement:
         kms_client: object = None,
     ) -> "PipelineAssetManagement":
         """Construct a fail-closed production manager for the current GCP binding."""
+        if not policy_decision_key_versions:
+            raise PipelineAssetManagementError(
+                "for_gcp requires at least one pinned policy decision key version"
+            )
+        integrity_key_versions = {
+            manifest_integrity_key_version,
+            blob_location_key_version,
+            occurrence_finalization_key_version,
+        }
+        if integrity_key_versions.intersection(policy_decision_key_versions):
+            raise PipelineAssetManagementError(
+                "policy decision verification keys must be independent from integrity keys"
+            )
         registry = FirestoreRegistryV2(
             environment_identity.project_name,
             environment_identity.pipeline_version,
@@ -356,6 +370,7 @@ class PipelineAssetManagement:
                     manifest_integrity_key_version,
                     blob_location_key_version,
                     occurrence_finalization_key_version,
+                    *policy_decision_key_versions,
                 ),
                 client=kms_client,
             ),
@@ -693,26 +708,39 @@ class PipelineAssetManagement:
                         f"seed input {seed.binding_name!r} source label is missing or rebound"
                     )
 
-    def _verify_seed_input_attestations(self, run_spec: RunSpec) -> None:
-        if self.attestation_verifier is None or not run_spec.seed_inputs:
+    def _verify_seed_input_attestations(
+        self, run_spec: RunSpec, *, registry=None, now: Optional[datetime] = None
+    ) -> None:
+        if not run_spec.seed_inputs:
             return
+        if self.attestation_verifier is None or not self.policy_version:
+            raise PipelineAssetManagementError(
+                "seed inputs require an attestation verifier and current policy version"
+            )
         control = self._require_control_document()
-        now = datetime.now(timezone.utc)
+        resolve_time = now or datetime.now(timezone.utc)
+        active_registry = self.registry if registry is None else registry
         for seed in run_spec.seed_inputs:
             selector = (
                 Selector.by_occurrence(seed.occurrence_id)
                 if seed.occurrence_id is not None
                 else Selector.by_asset_version(seed.asset_version_id)
             )
-            handle = _resolve_selector(
-                self.registry,
-                control,
-                self.layout,
-                selector,
-                UsageContext.NEW_RUN_SEED,
-                now,
-                attestation_verifier=self.attestation_verifier,
-            )
+            try:
+                handle = _resolve_selector(
+                    active_registry,
+                    control,
+                    self.layout,
+                    selector,
+                    UsageContext.NEW_RUN_SEED,
+                    resolve_time,
+                    attestation_verifier=self.attestation_verifier,
+                    required_policy_version=self.policy_version,
+                )
+            except ResolverError as exc:
+                raise PipelineAssetManagementError(
+                    f"seed input {seed.binding_name!r} policy resolution failed: {exc}"
+                ) from exc
             if handle.asset_version_id != seed.asset_version_id:
                 raise PipelineAssetManagementError(
                     f"seed input {seed.binding_name!r} resolved to another AssetVersion"
@@ -737,15 +765,20 @@ class PipelineAssetManagement:
         ``RunTriggerIdempotencyConflict``, exactly spec 10.1's rule.
         """
         run_spec_digest = compute_run_spec_digest(run_spec)
+        authorization_time = datetime.now(timezone.utc)
         self._validate_seed_input_state(
             self.registry, run_spec, self.environment_fingerprint
         )
-        self._verify_seed_input_attestations(run_spec)
+        self._verify_seed_input_attestations(run_spec, now=authorization_time)
 
         def _work(registry) -> object:
             self._validate_seed_input_state(
                 registry, run_spec, self.environment_fingerprint
             )
+            self._verify_seed_input_attestations(
+                run_spec, registry=registry, now=authorization_time
+            )
+
             def _create_run() -> str:
                 run_id = f"run-{uuid.uuid4().hex}"
                 registry.create_run(

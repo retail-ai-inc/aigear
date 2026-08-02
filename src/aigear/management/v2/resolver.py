@@ -13,17 +13,11 @@ Deliberately out of scope:
 - Raw projection-URI selectors (spec 6.4 bullet 1) and projection-freshness
   repair (bullet 6): both need a real GCS projection read, which is T26's
   job, not this module's.
-- ``export``/``promotion``/``alias``/``release``/``service_runtime`` usage
-  contexts (see the phase-b task doc's scope boundary).
+- ``export`` and cross-environment ``promotion`` usage contexts.
 - Firestore read-time snapshots: this module takes ``now`` as a plain
   parameter and uses it as the handle's ``resolved_at``, since
   :class:`~aigear.management.v2.fake_registry.FakeRegistryV2` has no
   transaction/snapshot concept to read a real ``read_time`` from.
-- A real policy-decision engine: no ``PolicyDecision`` record type exists yet
-  anywhere in this package, so "验证当前 approved policy head/epoch
-  binding/attestation" is approximated by checking
-  ``AssetVersionRecord.policy_decision_head_ref is not None`` alongside
-  ``trust_state=approved``; tighten this once that record type exists.
 
 ``same_run_direct_upstream``'s relaxed trust bar needs proof that the
 *consumer* actually declared this exact Occurrence as one of its own inputs.
@@ -50,10 +44,22 @@ from aigear.management.v2.fake_registry import FakeRegistryV2
 from aigear.management.v2.gcs_layout import GcsLayoutV2
 from aigear.management.v2.identifiers import TypedId
 from aigear.management.v2.naming import validate_segment
+from aigear.management.v2.record_codec import RecordCodecError, decode_record
 from aigear.management.v2.records.asset_version import AssetVersionRecord, LifecycleState, TrustState
 from aigear.management.v2.records.blob import AvailabilityState
 from aigear.management.v2.records.label import compute_label_id
 from aigear.management.v2.records.occurrence import OccurrenceStatus, compute_committed_output_key
+from aigear.management.v2.records.policy import (
+    PolicyDecision,
+    PolicyDecisionHead,
+    PolicyDecisionUnsignedEnvelope,
+    compute_subject_epoch_key,
+    require_effective_policy_head,
+)
+from aigear.management.v2.revocation import (
+    RevocationUsage,
+    require_non_revoked_policy_head,
+)
 
 __all__ = [
     "ResolverError",
@@ -63,6 +69,7 @@ __all__ = [
     "DEFAULT_RESOLVE_TTL",
     "ResolvedBlobHandle",
     "ResolvedHandle",
+    "require_handle_usage_context",
     "validate_same_run_upstream",
     "resolve",
 ]
@@ -73,14 +80,15 @@ class ResolverError(ValueError):
 
 
 class UsageContext(str, Enum):
-    """The subset of spec 6.4's closed ``usage_context`` values this module
-    implements (export/promotion/alias/release/service_runtime are out of
-    scope, see module docstring)."""
+    """Closed authorization purposes implemented by this resolver."""
 
     SAME_RUN_DIRECT_UPSTREAM = "same_run_direct_upstream"
     NEW_RUN_SEED = "new_run_seed"
     CROSS_RUN = "cross_run"
     MANUAL_DOWNLOAD = "manual_download"
+    ALIAS = "alias"
+    RELEASE = "release"
+    SERVICE_RUNTIME = "service_runtime"
 
 
 class SelectorKind(str, Enum):
@@ -192,10 +200,47 @@ class ResolvedHandle:
     asset_record_revision: int
     policy_decision_head_ref: Optional[TypedId]
     blobs: Tuple[ResolvedBlobHandle, ...]
+    policy_decision_epoch: Optional[int] = None
+    policy_version: Optional[str] = None
+    policy_valid_until: Optional[str] = None
     occurrence_id: Optional[TypedId] = None
     occurrence_reference_epoch: Optional[int] = None
     label_id: Optional[TypedId] = None
     label_display_version: Optional[str] = None
+
+
+_STRICT_POLICY_CONTEXTS = frozenset(
+    {
+        UsageContext.NEW_RUN_SEED,
+        UsageContext.CROSS_RUN,
+        UsageContext.ALIAS,
+        UsageContext.RELEASE,
+        UsageContext.SERVICE_RUNTIME,
+    }
+)
+
+_REVOCATION_USAGE = {
+    UsageContext.NEW_RUN_SEED: RevocationUsage.NEW_RUN_SEED,
+    UsageContext.CROSS_RUN: RevocationUsage.NEW_RUN_SEED,
+    UsageContext.ALIAS: RevocationUsage.ALIAS,
+    UsageContext.RELEASE: RevocationUsage.RELEASE,
+    UsageContext.SERVICE_RUNTIME: RevocationUsage.RUNTIME_LEASE,
+}
+
+
+def require_handle_usage_context(
+    handle: ResolvedHandle, expected: UsageContext
+) -> ResolvedHandle:
+    """Reject attempts to reuse a handle for a different authorization purpose."""
+
+    if not isinstance(handle, ResolvedHandle) or not isinstance(expected, UsageContext):
+        raise ResolverError("handle and expected usage context are invalid")
+    if handle.usage_context is not expected:
+        raise ResolverError(
+            f"resolved handle is bound to {handle.usage_context.value!r}, "
+            f"not {expected.value!r}"
+        )
+    return handle
 
 
 def _resolve_asset_version_by_label(
@@ -350,6 +395,92 @@ def _check_trust_and_lifecycle(asset_version: AssetVersionRecord, usage_context:
             f"{asset_version.trust_state.value!r}, policy_decision_head_ref="
             f"{asset_version.policy_decision_head_ref!r}"
         )
+
+
+def _verify_current_policy_decision(
+    registry,
+    control_document: ControlDocument,
+    asset_version: AssetVersionRecord,
+    usage_context: UsageContext,
+    *,
+    now: datetime,
+    required_policy_version: Optional[str],
+    verifier: Optional[AttestationVerifier],
+) -> PolicyDecisionHead:
+    if required_policy_version is None or not required_policy_version:
+        raise ResolverError(
+            f"{usage_context.value} resolution requires the current policy version"
+        )
+    if verifier is None:
+        raise ResolverError(
+            f"{usage_context.value} resolution requires an attestation verifier"
+        )
+    head = registry.get_policy_decision_head(asset_version.asset_version_id)
+    try:
+        require_non_revoked_policy_head(
+            head, usage=_REVOCATION_USAGE[usage_context]
+        )
+        require_effective_policy_head(
+            head,
+            at=now.isoformat(),
+            required_policy_version=required_policy_version,
+        )
+    except ValueError as exc:
+        raise ResolverError("current policy head is not effective") from exc
+    if (
+        head.environment_fingerprint != control_document.environment_fingerprint
+        or head.subject_asset_version_id != asset_version.asset_version_id
+        or head.attestation_id != asset_version.policy_decision_head_ref
+    ):
+        raise ResolverError("policy head does not match the current asset projection")
+
+    binding = registry.get_policy_decision_epoch(
+        compute_subject_epoch_key(asset_version.asset_version_id, head.current_epoch)
+    )
+    if (
+        binding is None
+        or binding.environment_fingerprint != head.environment_fingerprint
+        or binding.subject_asset_version_id != head.subject_asset_version_id
+        or binding.decision_epoch != head.current_epoch
+        or binding.attestation_id != head.attestation_id
+        or binding.decision is not PolicyDecision.APPROVED
+        or binding.policy_version != head.policy_version
+        or binding.not_before != head.not_before
+        or binding.valid_until != head.valid_until
+    ):
+        raise ResolverError("current policy epoch binding is missing or inconsistent")
+
+    record = registry.get_attestation(head.attestation_id)
+    if (
+        record is None
+        or record.attestation_kind != "policy_decision"
+        or record.environment_fingerprint != head.environment_fingerprint
+    ):
+        raise ResolverError("current policy attestation is missing or inconsistent")
+    envelope_values = dict(record.unsigned_envelope)
+    envelope_values.pop("domain", None)
+    envelope_values.pop("attestation_kind", None)
+    try:
+        envelope = decode_record(PolicyDecisionUnsignedEnvelope, envelope_values)
+    except (RecordCodecError, TypeError, ValueError) as exc:
+        raise ResolverError("current policy attestation envelope is invalid") from exc
+    if (
+        envelope.digest != record.attestation_id
+        or envelope.environment_id != control_document.environment_id
+        or envelope.environment_fingerprint != head.environment_fingerprint
+        or envelope.subject_asset_version_id != head.subject_asset_version_id
+        or envelope.decision is not PolicyDecision.APPROVED
+        or envelope.decision_epoch != head.current_epoch
+        or envelope.policy_version != head.policy_version
+        or envelope.not_before != head.not_before
+        or envelope.valid_until != head.valid_until
+    ):
+        raise ResolverError("current policy attestation does not match its head")
+    try:
+        verify_attestation(record, verifier)
+    except ValueError as exc:
+        raise ResolverError("current policy attestation signature is invalid") from exc
+    return head
 
 
 def _resolve_blob_handles(
@@ -518,8 +649,15 @@ def resolve(
     consumer_occurrence_id: Optional[TypedId] = None,
     consumer_binding_name: Optional[str] = None,
     attestation_verifier: Optional[AttestationVerifier] = None,
+    required_policy_version: Optional[str] = None,
 ) -> ResolvedHandle:
     """Resolve one closed selector branch into an immutable, short-TTL handle (spec 6.4)."""
+    if not isinstance(selector, Selector) or not isinstance(usage_context, UsageContext):
+        raise ResolverError("selector and usage_context must use the closed resolver types")
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ResolverError("now must be timezone-aware")
+    if not isinstance(ttl, timedelta) or ttl <= timedelta(0):
+        raise ResolverError("ttl must be a positive timedelta")
     if control_document.authority != "v2":
         raise ResolverError(
             f"control document authority is {control_document.authority!r}, not 'v2'; refusing to resolve"
@@ -545,6 +683,18 @@ def resolve(
         )
 
     _check_trust_and_lifecycle(asset_version, usage_context)
+
+    policy_head = None
+    if usage_context in _STRICT_POLICY_CONTEXTS:
+        policy_head = _verify_current_policy_decision(
+            registry,
+            control_document,
+            asset_version,
+            usage_context,
+            now=now,
+            required_policy_version=required_policy_version,
+            verifier=attestation_verifier,
+        )
 
     if attestation_verifier is not None:
         _verify_registry_attestation(
@@ -612,10 +762,14 @@ def resolve(
 
     blobs = _resolve_blob_handles(registry, layout, asset_version, attestation_verifier)
 
+    expires_at = now + ttl
+    if policy_head is not None:
+        expires_at = min(expires_at, datetime.fromisoformat(policy_head.valid_until))
+
     return ResolvedHandle(
         usage_context=usage_context,
         resolved_at=now,
-        expires_at=now + ttl,
+        expires_at=expires_at,
         environment_fingerprint=control_document.environment_fingerprint,
         registry_binding_id=control_document.registry_binding.registry_binding_id,
         write_epoch=control_document.write_epoch,
@@ -623,6 +777,11 @@ def resolve(
         asset_record_revision=asset_version.record_revision,
         policy_decision_head_ref=asset_version.policy_decision_head_ref,
         blobs=blobs,
+        policy_decision_epoch=(
+            None if policy_head is None else policy_head.current_epoch
+        ),
+        policy_version=None if policy_head is None else policy_head.policy_version,
+        policy_valid_until=None if policy_head is None else policy_head.valid_until,
         occurrence_id=occurrence_id,
         occurrence_reference_epoch=occurrence_reference_epoch,
         label_id=label_id,

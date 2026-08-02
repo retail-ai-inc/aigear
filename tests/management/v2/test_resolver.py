@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from aigear.management.v2.attestation import HmacTestVerifier
+from aigear.management.v2.attestation import (
+    AttestationRecord,
+    HmacTestSigner,
+    HmacTestVerifier,
+)
 from aigear.management.v2.control_document import ControlDocument
 from aigear.management.v2.environment import RegistryBinding, generate_registry_binding_id
 from aigear.management.v2.fake_gcs import FakeGcsClient
@@ -17,9 +22,23 @@ from aigear.management.v2.identifiers import TypedId
 from aigear.management.v2.records.asset_version import TrustState
 from aigear.management.v2.records.blob import AvailabilityState
 from aigear.management.v2.records.occurrence import ResolvedInputBinding
+from aigear.management.v2.records.policy import (
+    PolicyDecision,
+    PolicyDecisionEpochBinding,
+    PolicyDecisionHead,
+    PolicyDecisionUnsignedEnvelope,
+    compute_subject_epoch_key,
+)
 from aigear.management.v2.records.run import RunRecord, RunStatus, StepRecord, StepStatus
 from aigear.management.v2.records.run_spec import OutputSlotSpec, RunSpec, StepSpec
-from aigear.management.v2.resolver import ResolverError, Selector, SelectorKind, UsageContext, resolve
+from aigear.management.v2.resolver import (
+    ResolverError,
+    Selector,
+    SelectorKind,
+    UsageContext,
+    require_handle_usage_context,
+    resolve,
+)
 from aigear.management.v2.staging_upload import StagingOutputDescriptor, StepCompletionMessage
 from aigear.management.v2.step_lease import acquire_step_lease, compute_attempt_finalize_operation_id
 
@@ -167,10 +186,75 @@ def _produce_committed_output(
 def _approve(registry, asset_version):
     verified = replace(asset_version, trust_state=TrustState.VERIFIED, record_revision=asset_version.record_revision)
     registry.put_asset_version(verified)
+    envelope = PolicyDecisionUnsignedEnvelope(
+        schema_version="2.0",
+        operation_id="approve-1",
+        fencing_token=1,
+        environment_id="test-env",
+        environment_fingerprint=_FP,
+        subject_asset_version_id=asset_version.asset_version_id,
+        decision=PolicyDecision.APPROVED,
+        decision_epoch=1,
+        policy_version="policy-v1",
+        policy_snapshot_digest=TypedId.from_bare("91" * 32),
+        evidence_digests=(
+            TypedId.from_bare("92" * 32),
+            TypedId.from_bare("93" * 32),
+        ),
+        evidence_closure_digest=TypedId.from_bare("94" * 32),
+        firestore_read_time="2026-07-23T23:59:00+00:00",
+        issued_at="2026-07-23T23:59:01+00:00",
+        not_before="2026-07-23T23:59:01+00:00",
+        valid_until="2026-07-24T01:00:00+00:00",
+        key_version="test-only",
+    )
+    signer = HmacTestSigner()
+    attestation = AttestationRecord(
+        schema_version="2.0",
+        attestation_kind="policy_decision",
+        attestation_id=envelope.digest,
+        environment_fingerprint=_FP,
+        unsigned_envelope=envelope.to_jcs_dict(),
+        key_version=signer.key_version,
+        signature_b64=base64.b64encode(
+            signer.sign_sha256_digest(bytes.fromhex(envelope.digest.bare))
+        ).decode("ascii"),
+    )
     approved = replace(
-        verified, trust_state=TrustState.APPROVED, policy_decision_head_ref=TypedId.from_bare("99" * 32)
+        verified,
+        trust_state=TrustState.APPROVED,
+        policy_decision_head_ref=attestation.attestation_id,
     )
     registry.put_asset_version(approved)
+    registry.put_attestation(attestation)
+    registry.put_policy_decision_epoch(
+        PolicyDecisionEpochBinding(
+            schema_version="2.0",
+            environment_fingerprint=_FP,
+            subject_epoch_key=compute_subject_epoch_key(asset_version.asset_version_id, 1),
+            subject_asset_version_id=asset_version.asset_version_id,
+            decision_epoch=1,
+            attestation_id=attestation.attestation_id,
+            decision=PolicyDecision.APPROVED,
+            policy_version="policy-v1",
+            not_before=envelope.not_before,
+            valid_until=envelope.valid_until,
+        )
+    )
+    registry.put_policy_decision_head(
+        PolicyDecisionHead(
+            schema_version="2.0",
+            environment_fingerprint=_FP,
+            subject_asset_version_id=asset_version.asset_version_id,
+            current_epoch=1,
+            revision=1,
+            attestation_id=attestation.attestation_id,
+            decision=PolicyDecision.APPROVED,
+            policy_version="policy-v1",
+            not_before=envelope.not_before,
+            valid_until=envelope.valid_until,
+        )
+    )
     return approved
 
 
@@ -235,6 +319,8 @@ def test_resolve_by_run_output_uses_occurrences_sealed_label():
         registry, _control_document(), layout,
         Selector.by_run_output("run-1", "train", "model"),
         UsageContext.CROSS_RUN, _NOW,
+        attestation_verifier=HmacTestVerifier(),
+        required_policy_version="policy-v1",
     )
 
     assert handle.occurrence_id == output.occurrence.occurrence_id
@@ -252,6 +338,7 @@ def test_resolve_by_occurrence_id():
         Selector.by_occurrence(output.occurrence.occurrence_id),
         UsageContext.NEW_RUN_SEED, _NOW,
         attestation_verifier=HmacTestVerifier(),
+        required_policy_version="policy-v1",
     )
     assert handle.occurrence_id == output.occurrence.occurrence_id
 
@@ -269,6 +356,184 @@ def test_resolve_raw_asset_version_has_no_occurrence_or_label():
     assert handle.occurrence_id is None
     assert handle.label_id is None
     assert handle.asset_version_id == approved.asset_version_id
+
+
+@pytest.mark.parametrize(
+    "usage_context",
+    (
+        UsageContext.NEW_RUN_SEED,
+        UsageContext.CROSS_RUN,
+        UsageContext.ALIAS,
+        UsageContext.RELEASE,
+        UsageContext.SERVICE_RUNTIME,
+    ),
+)
+def test_strict_contexts_verify_current_policy_chain(usage_context):
+    registry, gcs, layout = FakeRegistryV2(), FakeGcsClient(), _layout()
+    output = _produce_committed_output(registry, gcs, layout)
+    approved = _approve(registry, output.asset_version)
+
+    handle = resolve(
+        registry,
+        _control_document(),
+        layout,
+        Selector.by_asset_version(approved.asset_version_id),
+        usage_context,
+        _NOW,
+        ttl=timedelta(hours=2),
+        attestation_verifier=HmacTestVerifier(),
+        required_policy_version="policy-v1",
+    )
+
+    assert handle.policy_decision_epoch == 1
+    assert handle.policy_version == "policy-v1"
+    assert handle.policy_valid_until == "2026-07-24T01:00:00+00:00"
+    assert handle.expires_at == datetime.fromisoformat(handle.policy_valid_until)
+
+
+def test_approved_projection_alone_cannot_bypass_missing_policy_head():
+    registry, gcs, layout = FakeRegistryV2(), FakeGcsClient(), _layout()
+    output = _produce_committed_output(registry, gcs, layout)
+    registry.put_asset_version(
+        replace(
+            output.asset_version,
+            trust_state=TrustState.APPROVED,
+            policy_decision_head_ref=TypedId.from_bare("99" * 32),
+        )
+    )
+
+    with pytest.raises(ResolverError, match="policy head is not effective"):
+        resolve(
+            registry,
+            _control_document(),
+            layout,
+            Selector.by_asset_version(output.asset_version.asset_version_id),
+            UsageContext.NEW_RUN_SEED,
+            _NOW,
+            attestation_verifier=HmacTestVerifier(),
+            required_policy_version="policy-v1",
+        )
+
+
+def test_strict_context_requires_verifier_and_current_policy_version():
+    registry, gcs, layout = FakeRegistryV2(), FakeGcsClient(), _layout()
+    output = _produce_committed_output(registry, gcs, layout)
+    approved = _approve(registry, output.asset_version)
+    selector = Selector.by_asset_version(approved.asset_version_id)
+
+    with pytest.raises(ResolverError, match="attestation verifier"):
+        resolve(
+            registry,
+            _control_document(),
+            layout,
+            selector,
+            UsageContext.RELEASE,
+            _NOW,
+            required_policy_version="policy-v1",
+        )
+    with pytest.raises(ResolverError, match="current policy version"):
+        resolve(
+            registry,
+            _control_document(),
+            layout,
+            selector,
+            UsageContext.RELEASE,
+            _NOW,
+            attestation_verifier=HmacTestVerifier(),
+        )
+
+
+def test_strict_context_rejects_policy_signature_or_version_mismatch():
+    registry, gcs, layout = FakeRegistryV2(), FakeGcsClient(), _layout()
+    output = _produce_committed_output(registry, gcs, layout)
+    approved = _approve(registry, output.asset_version)
+    selector = Selector.by_asset_version(approved.asset_version_id)
+
+    with pytest.raises(ResolverError, match="not effective"):
+        resolve(
+            registry,
+            _control_document(),
+            layout,
+            selector,
+            UsageContext.RELEASE,
+            _NOW,
+            attestation_verifier=HmacTestVerifier(),
+            required_policy_version="policy-v2",
+        )
+
+    attestation_id = approved.policy_decision_head_ref
+    registry._attestations[attestation_id] = replace(
+        registry.get_attestation(attestation_id), signature_b64="dGFtcGVyZWQ="
+    )
+    with pytest.raises(ResolverError, match="policy attestation signature"):
+        resolve(
+            registry,
+            _control_document(),
+            layout,
+            selector,
+            UsageContext.RELEASE,
+            _NOW,
+            attestation_verifier=HmacTestVerifier(),
+            required_policy_version="policy-v1",
+        )
+
+
+def test_expired_or_revoked_head_immediately_blocks_new_authorization():
+    registry, gcs, layout = FakeRegistryV2(), FakeGcsClient(), _layout()
+    output = _produce_committed_output(registry, gcs, layout)
+    approved = _approve(registry, output.asset_version)
+    head = registry.get_policy_decision_head(approved.asset_version_id)
+    selector = Selector.by_asset_version(approved.asset_version_id)
+
+    registry._policy_decision_heads[approved.asset_version_id] = replace(
+        head,
+        not_before="2026-07-23T22:00:00+00:00",
+        valid_until="2026-07-23T23:00:00+00:00",
+    )
+    with pytest.raises(ResolverError, match="not effective"):
+        resolve(
+            registry,
+            _control_document(),
+            layout,
+            selector,
+            UsageContext.SERVICE_RUNTIME,
+            _NOW,
+            attestation_verifier=HmacTestVerifier(),
+            required_policy_version="policy-v1",
+        )
+
+    registry._policy_decision_heads[approved.asset_version_id] = replace(
+        head, decision=PolicyDecision.REVOKED
+    )
+    with pytest.raises(ResolverError, match="not effective"):
+        resolve(
+            registry,
+            _control_document(),
+            layout,
+            selector,
+            UsageContext.SERVICE_RUNTIME,
+            _NOW,
+            attestation_verifier=HmacTestVerifier(),
+            required_policy_version="policy-v1",
+        )
+
+
+def test_resolved_handle_cannot_be_reused_for_another_context():
+    registry, gcs, layout = FakeRegistryV2(), FakeGcsClient(), _layout()
+    output = _produce_committed_output(registry, gcs, layout)
+    approved = _approve(registry, output.asset_version)
+    handle = resolve(
+        registry,
+        _control_document(),
+        layout,
+        Selector.by_asset_version(approved.asset_version_id),
+        UsageContext.MANUAL_DOWNLOAD,
+        _NOW,
+    )
+
+    assert require_handle_usage_context(handle, UsageContext.MANUAL_DOWNLOAD) is handle
+    with pytest.raises(ResolverError, match="not 'release'"):
+        require_handle_usage_context(handle, UsageContext.RELEASE)
 
 
 def test_resolve_rejects_non_approved_asset_for_cross_run():
