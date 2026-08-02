@@ -43,6 +43,7 @@ from aigear.management.v2.records.import_operation import (
 from aigear.management.v2.import_recovery import ImportCleanupIntent
 from aigear.management.v2.records.outbox import OutboxEventRecord, OutboxStatus
 from aigear.management.v2.records.policy import (
+    PolicyDecisionEpochBinding,
     PolicyDecisionHead,
     PolicyDecisionOperationRecord,
     PolicyDecisionReservationLock,
@@ -275,6 +276,26 @@ class FirestoreRegistryV2:
             self.paths.policy_decision_head_document(subject_asset_version_id),
             PolicyDecisionHead,
         )
+
+    def get_policy_decision_epoch(
+        self, subject_epoch_key: TypedId
+    ) -> Optional[PolicyDecisionEpochBinding]:
+        return self._get(
+            self.paths.policy_decision_epoch_document(subject_epoch_key),
+            PolicyDecisionEpochBinding,
+        )
+
+    def put_policy_decision_epoch(
+        self, record: PolicyDecisionEpochBinding
+    ) -> PolicyDecisionEpochBinding:
+        path = self.paths.policy_decision_epoch_document(
+            record.subject_epoch_key
+        )
+        existing = self._get(path, PolicyDecisionEpochBinding)
+        if existing is not None:
+            existing.assert_same_identity(record)
+            return existing
+        return self._put(path, record, create_only=True)
 
     def put_policy_decision_head(
         self, record: PolicyDecisionHead

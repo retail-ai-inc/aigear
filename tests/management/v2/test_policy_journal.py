@@ -55,14 +55,14 @@ def _journal(gcs=None):
     )
 
 
-def _setup(*, epoch=1):
+def _setup(*, epoch=1, subject=_SUBJECT):
     envelope = PolicyDecisionUnsignedEnvelope(
         schema_version="2.0",
         operation_id=f"policy-{epoch}",
         fencing_token=epoch,
         environment_id="production",
         environment_fingerprint=_FP,
-        subject_asset_version_id=_SUBJECT,
+        subject_asset_version_id=subject,
         decision=PolicyDecision.APPROVED,
         decision_epoch=epoch,
         policy_version="policy-2026-07",
@@ -128,7 +128,7 @@ def _setup(*, epoch=1):
     lock = PolicyDecisionReservationLock(
         schema_version="2.0",
         environment_fingerprint=_FP,
-        subject_asset_version_id=_SUBJECT,
+        subject_asset_version_id=subject,
         expected_head_revision=epoch - 1,
         decision_epoch=epoch,
         operation_id=envelope.operation_id,
@@ -274,18 +274,16 @@ def test_committed_journal_binds_registry_commit_and_is_idempotent():
     operation, lock, authenticated = _setup()
     journal = _journal()
     journaled = _prepare(operation, lock, authenticated, journal)
-    succeeded = replace(
+    committing = replace(
         journaled,
-        phase=PolicyDecisionOperationPhase.SUCCEEDED,
+        phase=PolicyDecisionOperationPhase.COMMITTING,
         revision=journaled.revision + 1,
-        lease_expires_at=None,
         updated_at="2026-07-28T00:00:06+00:00",
-        finished_at="2026-07-28T00:00:06+00:00",
     )
     commit_digest = TypedId.from_bare("ee" * 32)
 
     first = append_policy_decision_committed(
-        succeeded,
+        committing,
         journal=journal,
         registry_commit_digest=commit_digest,
         issued_at="2026-07-28T00:00:07+00:00",
@@ -293,7 +291,7 @@ def test_committed_journal_binds_registry_commit_and_is_idempotent():
         expected_previous_entry_id=journaled.prepared_journal.entry_id,
     )
     replay = append_policy_decision_committed(
-        succeeded,
+        committing,
         journal=journal,
         registry_commit_digest=commit_digest,
         issued_at="2026-07-28T00:00:07+00:00",
@@ -310,7 +308,7 @@ def test_committed_journal_binds_registry_commit_and_is_idempotent():
         match="different evidence|committed",
     ):
         append_policy_decision_committed(
-            succeeded,
+            committing,
             journal=journal,
             registry_commit_digest=TypedId.from_bare("ff" * 32),
             issued_at="2026-07-28T00:00:07+00:00",

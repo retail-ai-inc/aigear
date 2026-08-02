@@ -27,6 +27,7 @@ class InvalidOutboxRecordError(ValueError):
 class ProjectionKind(str, Enum):
     ASSET_MANIFEST = "asset_manifest"
     COMMITTED_RUN_OUTPUT = "committed_run_output"
+    POLICY_DECISION_AUDIT = "policy_decision_audit"
 
 
 class OutboxStatus(str, Enum):

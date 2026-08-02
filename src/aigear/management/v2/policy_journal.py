@@ -26,6 +26,7 @@ __all__ = [
     "compute_policy_journal_evidence_digest",
     "prepare_policy_decision_journal",
     "verify_prepared_policy_journal",
+    "compute_policy_committed_journal_digest",
     "append_policy_decision_committed",
 ]
 
@@ -253,29 +254,20 @@ def append_policy_decision_committed(
     expected_previous_sequence: int,
     expected_previous_entry_id: TypedId,
 ) -> SecurityJournalEntry:
-    if operation.phase is not PolicyDecisionOperationPhase.SUCCEEDED:
+    if operation.phase is not PolicyDecisionOperationPhase.COMMITTING:
         raise PolicyJournalError(
-            "committed journal requires a succeeded policy operation"
+            "committed journal requires a committing policy operation"
         )
     prepared = verify_prepared_policy_journal(operation, journal=journal)
     if not isinstance(registry_commit_digest, TypedId):
         raise PolicyJournalError("registry_commit_digest must be TypedId")
     committed_at = _parse_time("issued_at", issued_at)
-    if committed_at < _parse_time("operation.finished_at", operation.finished_at):
+    if committed_at < _parse_time("operation.updated_at", operation.updated_at):
         raise PolicyJournalConflict(
             "committed journal cannot precede Registry commit"
         )
-    committed_digest = TypedId.from_bare(
-        digest_sha256_of_jcs(
-            {
-                "domain": "aigear.policy-decision-journal-committed.v2",
-                "prepared_entry_id": prepared.entry_id.typed,
-                "prepared_evidence_digest": (
-                    operation.prepared_journal.evidence_digest.typed
-                ),
-                "registry_commit_digest": registry_commit_digest.typed,
-            }
-        )
+    committed_digest = compute_policy_committed_journal_digest(
+        operation, registry_commit_digest
     )
     envelope = operation.request.unsigned_envelope
     entry = journal.append(
@@ -299,3 +291,25 @@ def append_policy_decision_committed(
         issued_at=issued_at,
     )
     return entry
+
+
+def compute_policy_committed_journal_digest(
+    operation: PolicyDecisionOperationRecord,
+    registry_commit_digest: TypedId,
+) -> TypedId:
+    if operation.prepared_journal is None:
+        raise PolicyJournalError("policy operation lacks prepared journal")
+    if not isinstance(registry_commit_digest, TypedId):
+        raise PolicyJournalError("registry_commit_digest must be TypedId")
+    return TypedId.from_bare(
+        digest_sha256_of_jcs(
+            {
+                "domain": "aigear.policy-decision-journal-committed.v2",
+                "prepared_entry_id": operation.prepared_journal.entry_id.typed,
+                "prepared_evidence_digest": (
+                    operation.prepared_journal.evidence_digest.typed
+                ),
+                "registry_commit_digest": registry_commit_digest.typed,
+            }
+        )
+    )

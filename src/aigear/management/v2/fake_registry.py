@@ -71,6 +71,7 @@ from aigear.management.v2.records.operation import OperationRecord, validate_ope
 from aigear.management.v2.records.import_operation import ImportOperationRecord
 from aigear.management.v2.records.outbox import OutboxEventRecord, OutboxStatus
 from aigear.management.v2.records.policy import (
+    PolicyDecisionEpochBinding,
     PolicyDecisionHead,
     PolicyDecisionOperationRecord,
     PolicyDecisionReservationLock,
@@ -160,6 +161,7 @@ class FakeRegistryV2:
         self._asset_versions: Dict[TypedId, AssetVersionRecord] = {}
         self._attestations: Dict[TypedId, AttestationRecord] = {}
         self._policy_decision_heads: Dict[TypedId, PolicyDecisionHead] = {}
+        self._policy_decision_epochs: Dict[TypedId, PolicyDecisionEpochBinding] = {}
         self._policy_decision_operations: Dict[
             str, PolicyDecisionOperationRecord
         ] = {}
@@ -303,6 +305,21 @@ class FakeRegistryV2:
         self, subject_asset_version_id: TypedId
     ) -> Optional[PolicyDecisionHead]:
         return self._policy_decision_heads.get(subject_asset_version_id)
+
+    def get_policy_decision_epoch(
+        self, subject_epoch_key: TypedId
+    ) -> Optional[PolicyDecisionEpochBinding]:
+        return self._policy_decision_epochs.get(subject_epoch_key)
+
+    def put_policy_decision_epoch(
+        self, record: PolicyDecisionEpochBinding
+    ) -> PolicyDecisionEpochBinding:
+        existing = self._policy_decision_epochs.get(record.subject_epoch_key)
+        if existing is not None:
+            existing.assert_same_identity(record)
+            return existing
+        self._policy_decision_epochs[record.subject_epoch_key] = record
+        return record
 
     def put_policy_decision_head(
         self, record: PolicyDecisionHead
