@@ -73,6 +73,23 @@ def test_release_record_exposes_stable_immutable_identity():
     assert record.release_id in record.immutable_identity
 
 
+def test_release_asset_index_is_sorted_and_timestamped():
+    with pytest.raises(InvalidReleaseRecordError, match="sorted"):
+        ReleaseRecord(
+            schema_version="2.0",
+            environment_fingerprint=_FP,
+            release_id=_RELEASE,
+            service_name="predictor",
+            deployment_target_id="prod-cluster",
+            manifest_digest=_DIGEST,
+            signature_attestation_id=_DIGEST,
+            creation_operation_id="release-op-1",
+            display_version="service-v1",
+            asset_version_ids=(_OLD, _RELEASE),
+            created_at="2026-07-28T00:00:00+00:00",
+        )
+
+
 def test_alias_requires_positive_revision():
     with pytest.raises(InvalidReleaseRecordError, match="revision"):
         AliasRecord(

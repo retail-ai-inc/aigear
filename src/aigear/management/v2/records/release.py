@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Optional
+from typing import Optional, Tuple
 
 from aigear.management.v2.control_document import parse_schema_version
 from aigear.management.v2.identifiers import TypedId
@@ -130,6 +130,20 @@ def _optional_timestamp(field_name: str, value: Optional[str]) -> None:
         )
 
 
+def _sorted_typed_ids(field_name: str, value: object) -> Tuple[TypedId, ...]:
+    if isinstance(value, list):
+        value = tuple(value)
+    if not isinstance(value, tuple) or not all(
+        isinstance(item, TypedId) for item in value
+    ):
+        raise InvalidReleaseRecordError(f"{field_name} must be a tuple of TypedId")
+    if tuple(item.typed for item in value) != tuple(
+        sorted(item.typed for item in value)
+    ) or len(set(value)) != len(value):
+        raise InvalidReleaseRecordError(f"{field_name} must be sorted and unique")
+    return value
+
+
 @dataclass(frozen=True)
 class ReleaseRecord:
     schema_version: str
@@ -141,6 +155,7 @@ class ReleaseRecord:
     signature_attestation_id: TypedId
     creation_operation_id: str
     display_version: str
+    asset_version_ids: Tuple[TypedId, ...] = ()
     created_at: Optional[str] = None
 
     def __post_init__(self) -> None:
@@ -170,6 +185,15 @@ class ReleaseRecord:
             "display_version",
             validate_segment(self.display_version, field_name="display_version"),
         )
+        object.__setattr__(
+            self,
+            "asset_version_ids",
+            _sorted_typed_ids("asset_version_ids", self.asset_version_ids),
+        )
+        if self.asset_version_ids and self.created_at is None:
+            raise InvalidReleaseRecordError(
+                "release asset index requires created_at"
+            )
         _optional_timestamp("created_at", self.created_at)
 
     @property
@@ -183,6 +207,7 @@ class ReleaseRecord:
             self.manifest_digest,
             self.signature_attestation_id,
             self.display_version,
+            self.asset_version_ids,
         )
 
 
