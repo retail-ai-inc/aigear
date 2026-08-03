@@ -807,8 +807,13 @@ class FirestoreRegistryV2:
             ):
                 raise ValueError("cursor must be a (UTC timestamp, identity) tuple")
         query = self.client.collection(collection_path)
-        for field, value in filters:
-            query = query.where(field, "==", value)
+        for predicate in filters:
+            if len(predicate) == 2:
+                field, value = predicate
+                operator = "=="
+            else:
+                field, operator, value = predicate
+            query = query.where(field, operator, value)
         query = (
             query.where(timestamp_field, "<=", cutoff)
             .order_by(timestamp_field)
@@ -833,6 +838,18 @@ class FirestoreRegistryV2:
             self.paths._under_root("releases"),
             ReleaseRecord,
             filters=(("service_name", service_name),),
+            timestamp_field="created_at",
+            identity_field="release_id",
+            cutoff=cutoff,
+            cursor=cursor,
+            limit=limit,
+        )
+
+    def query_releases_by_asset(self, *, asset_version_id, cutoff, cursor, limit):
+        return self._query_release_records(
+            self.paths._under_root("releases"),
+            ReleaseRecord,
+            filters=(("asset_version_ids", "array_contains", asset_version_id.typed),),
             timestamp_field="created_at",
             identity_field="release_id",
             cutoff=cutoff,

@@ -861,6 +861,20 @@ class FakeRegistryV2:
             limit=limit,
         )
 
+    def query_releases_by_asset(self, *, asset_version_id, cutoff, cursor, limit):
+        return self._bounded_release_query(
+            (
+                record
+                for record in self._releases.values()
+                if asset_version_id in record.asset_version_ids
+            ),
+            timestamp_field="created_at",
+            identity=lambda record: record.release_id.typed,
+            cutoff=cutoff,
+            cursor=cursor,
+            limit=limit,
+        )
+
     def query_aliases(self, *, service_name, cutoff, cursor, limit):
         return self._bounded_release_query(
             (r for (service, _), r in self._aliases.items() if service == service_name),
