@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -8,6 +9,7 @@ from aigear.infrastructure.gcp.kubernetes import GkeKubernetesReleaseAdapter
 from aigear.management.v2.identifiers import TypedId
 from aigear.management.v2.release_kubernetes import (
     DeploymentCreateRequest,
+    KubernetesConfigReference,
     KubernetesMutationUncertain,
     KubernetesResourceConflict,
     ServiceTrafficPatch,
@@ -38,6 +40,12 @@ def _deployment_resource(request, *, uid="uid-1", resource_version="11"):
         "aigear.openai.com/fencing-token": str(request.fencing_token),
         "aigear.openai.com/manifest-digest": request.manifest_digest.typed,
         "aigear.openai.com/deployment-spec-digest": request.deployment_spec_digest.typed,
+        "aigear.openai.com/config-references": json.dumps(
+            [value.to_dict() for value in request.config_references],
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+        "aigear.openai.com/runtime-authorization-required": "true",
     }
     return SimpleNamespace(
         metadata=SimpleNamespace(
@@ -51,7 +59,22 @@ def _deployment_resource(request, *, uid="uid-1", resource_version="11"):
             replicas=request.replicas,
             template=SimpleNamespace(
                 spec=SimpleNamespace(
-                    containers=[SimpleNamespace(image=request.image_reference)]
+                    service_account_name=request.service_account_name,
+                    containers=[
+                        SimpleNamespace(
+                            image=request.image_reference,
+                            startup_probe=SimpleNamespace(
+                                http_get=SimpleNamespace(
+                                    path=request.startup_probe_path
+                                )
+                            ),
+                            readiness_probe=SimpleNamespace(
+                                http_get=SimpleNamespace(
+                                    path=request.readiness_probe_path
+                                )
+                            ),
+                        )
+                    ],
                 )
             ),
         ),
@@ -83,6 +106,18 @@ def _request():
         image_reference=f"repo/predictor@{_RELEASE.typed}",
         manifest_digest=_RELEASE,
         deployment_spec_digest=_SPEC,
+        service_account_name="service-runtime-sa",
+        config_references=(
+            KubernetesConfigReference(
+                kind="secret_manager",
+                name="predictor-token",
+                version="7",
+                content_digest=TypedId.from_bare("cc" * 32),
+            ),
+        ),
+        startup_probe_path="/startupz",
+        readiness_probe_path="/readyz",
+        runtime_authorization_required=True,
         replicas=2,
         fencing_token=3,
     )
@@ -157,6 +192,8 @@ def test_create_uses_structured_deployment_with_release_and_fence():
         "aigear.openai.com/fencing-token"
     ] == "3"
     assert apps.created_body.spec.template.spec.containers[0].image == request.image_reference
+    assert apps.created_body.spec.template.spec.service_account_name == "service-runtime-sa"
+    assert apps.created_body.spec.template.spec.containers[0].startup_probe.http_get.path == "/startupz"
 
 
 @pytest.mark.parametrize("status", [429, 500, 503])

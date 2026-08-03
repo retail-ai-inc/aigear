@@ -14,6 +14,7 @@ __all__ = [
     "KubernetesResourceConflict",
     "KubernetesMutationUncertain",
     "MutationFault",
+    "KubernetesConfigReference",
     "DeploymentCreateRequest",
     "DeploymentState",
     "ServiceTrafficPatch",
@@ -57,6 +58,36 @@ def _typed(field_name: str, value: object) -> None:
 
 
 @dataclass(frozen=True)
+class KubernetesConfigReference:
+    kind: str
+    name: str
+    version: str
+    content_digest: TypedId
+
+    def __post_init__(self) -> None:
+        if self.kind not in {
+            "kubernetes_config_map",
+            "kubernetes_secret",
+            "secret_manager",
+        }:
+            raise KubernetesReleaseError("unsupported config reference kind")
+        object.__setattr__(
+            self, "name", validate_segment(self.name, field_name="config name")
+        )
+        if not isinstance(self.version, str) or not self.version:
+            raise KubernetesReleaseError("config version must be a non-empty str")
+        _typed("content_digest", self.content_digest)
+
+    def to_dict(self) -> dict:
+        return {
+            "kind": self.kind,
+            "name": self.name,
+            "version": self.version,
+            "content_digest": self.content_digest.typed,
+        }
+
+
+@dataclass(frozen=True)
 class DeploymentCreateRequest:
     name: str
     service_name: str
@@ -64,6 +95,11 @@ class DeploymentCreateRequest:
     image_reference: str
     manifest_digest: TypedId
     deployment_spec_digest: TypedId
+    service_account_name: str
+    config_references: Tuple[KubernetesConfigReference, ...]
+    startup_probe_path: str
+    readiness_probe_path: str
+    runtime_authorization_required: bool
     replicas: int
     fencing_token: int
 
@@ -74,6 +110,13 @@ class DeploymentCreateRequest:
                 field_name,
                 validate_segment(getattr(self, field_name), field_name=field_name),
             )
+        object.__setattr__(
+            self,
+            "service_account_name",
+            validate_segment(
+                self.service_account_name, field_name="service_account_name"
+            ),
+        )
         for field_name in (
             "release_id",
             "manifest_digest",
@@ -85,6 +128,36 @@ class DeploymentCreateRequest:
             or self.image_reference.count("@sha256:") != 1
         ):
             raise KubernetesReleaseError("image_reference must be digest pinned")
+        if isinstance(self.config_references, list):
+            object.__setattr__(
+                self, "config_references", tuple(self.config_references)
+            )
+        if not all(
+            isinstance(value, KubernetesConfigReference)
+            for value in self.config_references
+        ):
+            raise KubernetesReleaseError(
+                "config_references must contain KubernetesConfigReference values"
+            )
+        keys = [(value.kind, value.name) for value in self.config_references]
+        if keys != sorted(keys) or len(set(keys)) != len(keys):
+            raise KubernetesReleaseError(
+                "config_references must be sorted and unique"
+            )
+        for field_name in ("startup_probe_path", "readiness_probe_path"):
+            value = getattr(self, field_name)
+            if (
+                not isinstance(value, str)
+                or not value.startswith("/")
+                or any(character.isspace() for character in value)
+            ):
+                raise KubernetesReleaseError(
+                    f"{field_name} must be an absolute probe path"
+                )
+        if self.runtime_authorization_required is not True:
+            raise KubernetesReleaseError(
+                "runtime authorization must be required"
+            )
         _positive("replicas", self.replicas)
         _positive("fencing_token", self.fencing_token)
 
@@ -97,6 +170,11 @@ class DeploymentCreateRequest:
             self.image_reference,
             self.manifest_digest,
             self.deployment_spec_digest,
+            self.service_account_name,
+            self.config_references,
+            self.startup_probe_path,
+            self.readiness_probe_path,
+            self.runtime_authorization_required,
             self.replicas,
             self.fencing_token,
         )

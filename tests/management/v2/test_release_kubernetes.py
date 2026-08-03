@@ -9,6 +9,7 @@ from aigear.management.v2.release_kubernetes import (
     DeploymentCreateRequest,
     FakeKubernetesReleasePort,
     KubernetesMutationUncertain,
+    KubernetesConfigReference,
     KubernetesResourceConflict,
     MutationFault,
     ProbeRequest,
@@ -28,6 +29,18 @@ def _deployment(**overrides):
         image_reference=f"repo/predictor@{_RELEASE.typed}",
         manifest_digest=_RELEASE,
         deployment_spec_digest=TypedId.from_bare("bb" * 32),
+        service_account_name="service-runtime-sa",
+        config_references=(
+            KubernetesConfigReference(
+                kind="secret_manager",
+                name="predictor-token",
+                version="7",
+                content_digest=TypedId.from_bare("cc" * 32),
+            ),
+        ),
+        startup_probe_path="/startupz",
+        readiness_probe_path="/readyz",
+        runtime_authorization_required=True,
         replicas=2,
         fencing_token=1,
     )
@@ -151,3 +164,21 @@ def test_drain_reports_deterministic_long_connection_progress():
 def test_deployment_request_rejects_mutable_image_reference():
     with pytest.raises(ValueError, match="digest pinned"):
         replace(_deployment(), image_reference="repo/predictor:latest")
+
+
+def test_deployment_request_requires_runtime_authorization_and_sorted_refs():
+    with pytest.raises(ValueError, match="authorization"):
+        replace(_deployment(), runtime_authorization_required=False)
+    with pytest.raises(ValueError, match="sorted"):
+        replace(
+            _deployment(),
+            config_references=(
+                KubernetesConfigReference(
+                    kind="secret_manager",
+                    name="z-secret",
+                    version="1",
+                    content_digest=TypedId.from_bare("dd" * 32),
+                ),
+                _deployment().config_references[0],
+            ),
+        )

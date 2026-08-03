@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any, Callable, Optional
 
 from aigear.common import run_sh
@@ -11,6 +12,7 @@ from aigear.management.v2.release_kubernetes import (
     DrainResult,
     EndpointSliceState,
     EndpointState,
+    KubernetesConfigReference,
     KubernetesMutationUncertain,
     KubernetesReleaseError,
     KubernetesResourceConflict,
@@ -130,6 +132,9 @@ _RELEASE_LABEL = "aigear.openai.com/release-id"
 _FENCE_ANNOTATION = "aigear.openai.com/fencing-token"
 _MANIFEST_ANNOTATION = "aigear.openai.com/manifest-digest"
 _SPEC_ANNOTATION = "aigear.openai.com/deployment-spec-digest"
+_CONFIG_REFS_ANNOTATION = "aigear.openai.com/config-references"
+_RUNTIME_AUTH_ANNOTATION = "aigear.openai.com/runtime-authorization-required"
+_RUNTIME_PROBE_PORT = 8081
 
 
 class GkeKubernetesReleaseAdapter:
@@ -221,7 +226,17 @@ class GkeKubernetesReleaseAdapter:
                 annotations[_SPEC_ANNOTATION]
             )
             containers = resource.spec.template.spec.containers
+            pod_spec = resource.spec.template.spec
             replicas = int(resource.spec.replicas)
+            config_references = tuple(
+                KubernetesConfigReference(
+                    kind=value["kind"],
+                    name=value["name"],
+                    version=value["version"],
+                    content_digest=TypedId.from_typed(value["content_digest"]),
+                )
+                for value in json.loads(annotations[_CONFIG_REFS_ANNOTATION])
+            )
             request = DeploymentCreateRequest(
                 name=metadata.name,
                 service_name=labels["app.kubernetes.io/name"],
@@ -229,6 +244,13 @@ class GkeKubernetesReleaseAdapter:
                 image_reference=containers[0].image,
                 manifest_digest=manifest_digest,
                 deployment_spec_digest=deployment_spec_digest,
+                service_account_name=pod_spec.service_account_name,
+                config_references=config_references,
+                startup_probe_path=containers[0].startup_probe.http_get.path,
+                readiness_probe_path=containers[0].readiness_probe.http_get.path,
+                runtime_authorization_required=(
+                    annotations[_RUNTIME_AUTH_ANNOTATION] == "true"
+                ),
                 replicas=replicas,
                 fencing_token=fencing_token,
             )
@@ -264,6 +286,12 @@ class GkeKubernetesReleaseAdapter:
             _FENCE_ANNOTATION: str(request.fencing_token),
             _MANIFEST_ANNOTATION: request.manifest_digest.typed,
             _SPEC_ANNOTATION: request.deployment_spec_digest.typed,
+            _CONFIG_REFS_ANNOTATION: json.dumps(
+                [value.to_dict() for value in request.config_references],
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            _RUNTIME_AUTH_ANNOTATION: "true",
         }
         metadata = self.models.V1ObjectMeta(
             name=request.name, labels=labels, annotations=annotations
@@ -271,10 +299,33 @@ class GkeKubernetesReleaseAdapter:
         pod_metadata = self.models.V1ObjectMeta(
             labels=labels, annotations=annotations
         )
+        config_json = annotations[_CONFIG_REFS_ANNOTATION]
         container = self.models.V1Container(
-            name="runtime", image=request.image_reference
+            name="runtime",
+            image=request.image_reference,
+            env=[
+                self.models.V1EnvVar(
+                    name="AIGEAR_RELEASE_ID", value=request.release_id.typed
+                ),
+                self.models.V1EnvVar(
+                    name="AIGEAR_CONFIG_REFERENCES", value=config_json
+                ),
+            ],
+            startup_probe=self.models.V1Probe(
+                http_get=self.models.V1HTTPGetAction(
+                    path=request.startup_probe_path, port=_RUNTIME_PROBE_PORT
+                )
+            ),
+            readiness_probe=self.models.V1Probe(
+                http_get=self.models.V1HTTPGetAction(
+                    path=request.readiness_probe_path, port=_RUNTIME_PROBE_PORT
+                )
+            ),
         )
-        pod_spec = self.models.V1PodSpec(containers=[container])
+        pod_spec = self.models.V1PodSpec(
+            containers=[container],
+            service_account_name=request.service_account_name,
+        )
         template = self.models.V1PodTemplateSpec(
             metadata=pod_metadata, spec=pod_spec
         )
