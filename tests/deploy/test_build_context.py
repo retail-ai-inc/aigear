@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -8,6 +9,9 @@ from aigear.deploy.common.build_context import (
     BuildContextViolation,
     scan_build_context,
 )
+
+
+_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _context(tmp_path, dockerfile="COPY src/ ./src/\n", ignore="env.json\ntests/\n"):
@@ -111,3 +115,65 @@ def test_multistage_copy_does_not_treat_stage_path_as_context_source(tmp_path):
     manifest = _scan(tmp_path)
 
     assert manifest.files
+
+
+def test_secret_literal_in_dockerfile_is_rejected_without_echoing_value(tmp_path):
+    value = "not-a-real-but-long-token"
+    _context(
+        tmp_path,
+        dockerfile=f"ENV API_TOKEN={value}\nCOPY src/ ./src/\n",
+    )
+
+    with pytest.raises(BuildContextViolation) as excinfo:
+        _scan(tmp_path)
+
+    assert "secret_content" in excinfo.value.categories
+    assert value not in str(excinfo.value)
+
+
+@pytest.mark.parametrize("name", ["Dockerfile.pl", "Dockerfile.ms"])
+def test_shipped_dockerfiles_and_ignores_are_allowlisted(name):
+    requirement = "requirements_ms.txt" if name.endswith(".ms") else "requirements_pl.txt"
+    for directory in (
+        _ROOT / "src" / "aigear" / "template",
+        _ROOT / "example" / "aigear_sklearn_pipeline",
+    ):
+        dockerfile = (directory / name).read_text(encoding="utf-8")
+        dockerignore = (directory / f"{name}.dockerignore").read_text(
+            encoding="utf-8"
+        )
+        assert "COPY . ." not in dockerfile
+        assert "COPY src/ ./src/" in dockerfile
+        assert dockerignore.splitlines()[1] == "**"
+        assert "!src/**" in dockerignore
+        assert f"!{requirement}" in dockerignore
+
+
+@pytest.mark.parametrize("name", ["Dockerfile.pl", "Dockerfile.ms"])
+def test_example_build_context_passes_security_scan(name):
+    context = _ROOT / "example" / "aigear_sklearn_pipeline"
+
+    manifest = scan_build_context(
+        context,
+        context / name,
+        allowed_copy_roots=("src", "requirements_pl.txt", "requirements_ms.txt"),
+    )
+
+    assert manifest.files
+    assert all(not item.path.startswith("tests/") for item in manifest.files)
+    assert all(item.path != "env.json" for item in manifest.files)
+
+
+def test_cloud_build_never_materializes_environment_secrets():
+    for path in (
+        _ROOT / "src" / "aigear" / "template" / "cloudbuild.yaml",
+        _ROOT
+        / "example"
+        / "aigear_sklearn_pipeline"
+        / "cloudbuild"
+        / "cloudbuild.yaml",
+    ):
+        content = path.read_text(encoding="utf-8")
+        assert "env.json" not in content
+        assert "kms-decrypt" not in content
+        assert content.count("waitFor: ['-']") == 2

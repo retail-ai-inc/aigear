@@ -35,6 +35,7 @@ _SECRET_CONTENT = tuple(
         rb"-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----",
         rb'"private_key"\s*:',
         rb"^(?:[A-Z0-9_]*(?:API_?KEY|TOKEN|SECRET|PASSWORD))\s*[:=]\s*\S{8,}",
+        rb"^(?:ENV|ARG)\s+[A-Z0-9_]*(?:API_?KEY|TOKEN|SECRET|PASSWORD)\s*=?\s*\S{8,}",
         rb"\bgh[pousr]_[A-Za-z0-9_]{20,}\b",
         rb"\bAKIA[0-9A-Z]{16}\b",
     )
@@ -276,6 +277,11 @@ def scan_build_context(
         raise BuildContextViolation(("dockerignore",))
 
     dockerfile_content = dockerfile.read_text(encoding="utf-8")
+    if any(
+        pattern.search(dockerfile_content.encode("utf-8"))
+        for pattern in _SECRET_CONTENT
+    ):
+        raise BuildContextViolation(("secret_content",))
     _validate_copy_allowlist(dockerfile_content, allowed_copy_roots)
     rules = _ignore_rules(dockerignore)
     violations = []
