@@ -26,6 +26,7 @@ __all__ = [
     "compute_release_idempotency_key_hash",
     "compute_release_request_fingerprint",
     "acquire_release_lease",
+    "takeover_release_lease",
     "heartbeat_release_lease",
     "require_release_lease",
 ]
@@ -356,6 +357,106 @@ def require_release_lease(
     ):
         raise ReleaseLeaseFenced("release lease is stale or no longer owned")
     return operation
+
+
+def takeover_release_lease(
+    registry,
+    *,
+    operation_id: str,
+    owner_principal: str,
+    read_external_state: Callable[[str], ReleaseExternalState],
+    lease_ttl_seconds: int = DEFAULT_RELEASE_LEASE_TTL_SECONDS,
+) -> ReleaseOperationRecord:
+    """Fence and take over one expired non-terminal release operation."""
+
+    _validate_ttl(lease_ttl_seconds)
+    operation = registry.get_release_operation(operation_id)
+    if operation is None:
+        raise ReleaseLeaseConflict("release operation does not exist")
+    state = registry.get_service_release_state(operation.service_name)
+    if (
+        state is None
+        or state.active_operation_id != operation.operation_id
+        or state.revision != operation.expected_service_revision
+        or state.fencing_token != operation.fencing_token
+    ):
+        raise ReleaseLeaseConflict("release operation and service state disagree")
+    if operation.finished_at is not None:
+        return operation
+    now = _server_time(registry)
+    if _lease_expiry(operation) > now:
+        if (
+            operation.owner_principal == owner_principal
+            and operation.phase is ReleasePhase.RECONCILING
+        ):
+            return operation
+        raise ReleaseLeaseBusy("release operation still has a live lease")
+    observation = read_external_state(operation.service_name)
+    if not isinstance(observation, ReleaseExternalState):
+        raise ReleaseLeaseError(
+            "external state reader must return ReleaseExternalState"
+        )
+    expected_identity = (
+        operation.revision,
+        state.revision,
+        operation.fencing_token,
+    )
+
+    def takeover(tx):
+        current = tx.get_release_operation(operation_id)
+        current_state = tx.get_service_release_state(operation.service_name)
+        if current is None or current_state is None:
+            raise ReleaseLeaseConflict("release operation disappeared during takeover")
+        identity = (
+            current.revision,
+            current_state.revision,
+            current.fencing_token,
+        )
+        if (
+            identity != expected_identity
+            or current_state.active_operation_id != current.operation_id
+            or current_state.fencing_token != current.fencing_token
+            or current.finished_at is not None
+            or _lease_expiry(current) > _server_time(tx)
+        ):
+            raise ReleaseLeaseConflict(
+                "release operation changed after external takeover observation"
+            )
+        server_time = _server_time(tx)
+        fencing_token = current_state.fencing_token + 1
+        new_state = replace(
+            current_state,
+            revision=current_state.revision + 1,
+            active_operation_phase=ReleasePhase.RECONCILING,
+            fencing_token=fencing_token,
+            updated_at=server_time.isoformat(),
+        )
+        taken_over = replace(
+            current,
+            phase=ReleasePhase.RECONCILING,
+            owner_principal=owner_principal,
+            fencing_token=fencing_token,
+            revision=current.revision + 1,
+            expected_service_revision=new_state.revision,
+            lease_expires_at=(
+                server_time + timedelta(seconds=lease_ttl_seconds)
+            ).isoformat(),
+            expected_deployment_uid=observation.deployment_uid,
+            expected_deployment_resource_version=(
+                observation.deployment_resource_version
+            ),
+            expected_service_resource_version=(
+                observation.service_resource_version
+            ),
+            error_class="ReleaseLeaseTakenOver",
+            error_summary="expired release operation was fenced for reconciliation",
+            updated_at=server_time.isoformat(),
+        )
+        tx.put_release_operation(taken_over)
+        tx.put_service_release_state(new_state)
+        return taken_over
+
+    return registry.run_atomic(takeover)
 
 
 def heartbeat_release_lease(

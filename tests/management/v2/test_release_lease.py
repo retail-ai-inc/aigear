@@ -15,6 +15,7 @@ from aigear.management.v2.release_lease import (
     acquire_release_lease,
     heartbeat_release_lease,
     require_release_lease,
+    takeover_release_lease,
 )
 from tests.management.v2.test_release_registry import _FP, _release
 
@@ -196,3 +197,73 @@ def test_release_lease_can_reserve_uncommitted_target_and_rejects_bad_ttl():
     assert _acquire(empty_registry, target_release_id=uncommitted).target_release_id == uncommitted
     with pytest.raises(ValueError, match="heartbeat interval"):
         _acquire(registry, lease_ttl_seconds=30)
+
+
+def test_reconciler_takes_over_same_expired_operation_with_new_fence():
+    registry = _registry()
+    old = _acquire(registry, lease_ttl_seconds=31)
+    registry._server_read_time = _NOW + timedelta(seconds=32)
+    calls = []
+
+    def observe(service_name):
+        calls.append(service_name)
+        return ReleaseExternalState(
+            deployment_uid="uid-1",
+            deployment_resource_version="41",
+            service_resource_version="52",
+        )
+
+    taken_over = takeover_release_lease(
+        registry,
+        operation_id=old.operation_id,
+        owner_principal="reconciler@example.test",
+        read_external_state=observe,
+    )
+
+    assert calls == ["predictor"]
+    assert taken_over.operation_id == old.operation_id
+    assert taken_over.phase.value == "reconciling"
+    assert taken_over.fencing_token == old.fencing_token + 1
+    assert taken_over.expected_deployment_uid == "uid-1"
+    assert registry.get_service_release_state("predictor").fencing_token == (
+        taken_over.fencing_token
+    )
+
+    retry = takeover_release_lease(
+        registry,
+        operation_id=old.operation_id,
+        owner_principal="reconciler@example.test",
+        read_external_state=lambda _name: pytest.fail("must not reread on retry"),
+    )
+    assert retry == taken_over
+
+
+def test_reconciler_cannot_take_over_a_live_or_changed_operation():
+    registry = _registry()
+    operation = _acquire(registry, lease_ttl_seconds=31)
+    with pytest.raises(ReleaseLeaseBusy, match="live"):
+        takeover_release_lease(
+            registry,
+            operation_id=operation.operation_id,
+            owner_principal="reconciler@example.test",
+            read_external_state=lambda _name: ReleaseExternalState(),
+        )
+
+    registry._server_read_time = _NOW + timedelta(seconds=32)
+
+    def mutate(_service_name):
+        current = registry.get_service_release_state("predictor")
+        registry.put_service_release_state(
+            type(current)(
+                **{**current.__dict__, "revision": current.revision + 1}
+            )
+        )
+        return ReleaseExternalState()
+
+    with pytest.raises(ReleaseLeaseConflict, match="changed after"):
+        takeover_release_lease(
+            registry,
+            operation_id=operation.operation_id,
+            owner_principal="reconciler@example.test",
+            read_external_state=mutate,
+        )
