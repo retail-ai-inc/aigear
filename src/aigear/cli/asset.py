@@ -5,6 +5,13 @@ import json
 import sys
 from typing import Any, Sequence
 
+from aigear.cli.phase_c import (
+    PhaseCCliError,
+    add_phase_c_parsers,
+    is_phase_c_command,
+    print_phase_c_error,
+    run_phase_c_query,
+)
 from aigear.common.config import get_project_name
 from aigear.management.registry import (
     AssetRecord,
@@ -12,6 +19,7 @@ from aigear.management.registry import (
     AssetType,
     FirestoreAssetRegistry,
 )
+from aigear.management.v2.firestore_registry import FirestoreRegistryV2
 from aigear.management.versioned_asset import VersionedAssetManagement
 
 
@@ -75,6 +83,7 @@ def _get_parser() -> argparse.ArgumentParser:
         "--metadata",
         help="JSON object stored as asset metadata.",
     )
+    add_phase_c_parsers(subparsers)
     return parser
 
 
@@ -82,11 +91,24 @@ def asset_cli(
     argv: Sequence[str] | None = None,
     registry: AssetRegistry | None = None,
     manager: VersionedAssetManagement | None = None,
+    v2_registry=None,
+    page_token_signing_key: bytes | None = None,
+    now=None,
 ) -> None:
     parser = _get_parser()
     args = parser.parse_args(argv)
     try:
-        _run(args, registry=registry, manager=manager)
+        _run(
+            args,
+            registry=registry,
+            manager=manager,
+            v2_registry=v2_registry,
+            page_token_signing_key=page_token_signing_key,
+            now=now,
+        )
+    except PhaseCCliError as exc:
+        print_phase_c_error(exc)
+        raise SystemExit(2) from exc
     except SystemExit as exc:
         if isinstance(exc.code, str):
             _handle_error(exc)
@@ -99,7 +121,24 @@ def _run(
     args: argparse.Namespace,
     registry: AssetRegistry | None = None,
     manager: VersionedAssetManagement | None = None,
+    v2_registry=None,
+    page_token_signing_key: bytes | None = None,
+    now=None,
 ) -> None:
+    if is_phase_c_command(args):
+        phase_c_registry = v2_registry
+        if phase_c_registry is None:
+            phase_c_registry = _create_v2_registry(
+                args.pipeline_version, args.database_id
+            )
+        run_phase_c_query(
+            args,
+            registry=phase_c_registry,
+            page_token_signing_key=page_token_signing_key,
+            now=now,
+        )
+        return
+
     if args.command == "register-external":
         manager = manager or VersionedAssetManagement(
             pipeline_version=args.pipeline_version,
@@ -166,6 +205,14 @@ def _create_registry(pipeline_version: str) -> AssetRegistry:
     return FirestoreAssetRegistry(
         project_name=_project_name(),
         pipeline_version=pipeline_version,
+    )
+
+
+def _create_v2_registry(pipeline_version: str, database_id: str):
+    return FirestoreRegistryV2(
+        _project_name(),
+        pipeline_version,
+        database_id=database_id,
     )
 
 
