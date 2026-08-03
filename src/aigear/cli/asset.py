@@ -9,7 +9,9 @@ from aigear.cli.phase_c import (
     PhaseCCliError,
     add_phase_c_parsers,
     is_phase_c_command,
+    is_phase_c_query,
     print_phase_c_error,
+    run_phase_c_mutation,
     run_phase_c_query,
 )
 from aigear.common.config import get_project_name
@@ -94,6 +96,7 @@ def asset_cli(
     v2_registry=None,
     page_token_signing_key: bytes | None = None,
     now=None,
+    phase_c_mutations=None,
 ) -> None:
     parser = _get_parser()
     args = parser.parse_args(argv)
@@ -105,6 +108,7 @@ def asset_cli(
             v2_registry=v2_registry,
             page_token_signing_key=page_token_signing_key,
             now=now,
+            phase_c_mutations=phase_c_mutations,
         )
     except PhaseCCliError as exc:
         print_phase_c_error(exc)
@@ -124,8 +128,12 @@ def _run(
     v2_registry=None,
     page_token_signing_key: bytes | None = None,
     now=None,
+    phase_c_mutations=None,
 ) -> None:
     if is_phase_c_command(args):
+        if not is_phase_c_query(args):
+            run_phase_c_mutation(args, mutation_port=phase_c_mutations)
+            return
         phase_c_registry = v2_registry
         if phase_c_registry is None:
             phase_c_registry = _create_v2_registry(

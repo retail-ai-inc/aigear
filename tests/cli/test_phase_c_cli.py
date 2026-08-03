@@ -19,6 +19,27 @@ from tests.management.v2.test_release_query import _KEY, _NOW, _registry
 from tests.management.v2.test_release_registry import _state
 
 
+class _Mutations:
+    def __init__(self):
+        self.calls = []
+
+    def _call(self, name, kwargs):
+        self.calls.append((name, kwargs))
+        return _release_operation(operation_id=f"{name}-operation")
+
+    def approve_policy(self, **kwargs):
+        return self._call("approve_policy", kwargs)
+
+    def revoke_policy(self, **kwargs):
+        return self._call("revoke_policy", kwargs)
+
+    def rollback_release(self, **kwargs):
+        return self._call("rollback_release", kwargs)
+
+    def reconcile_release(self, **kwargs):
+        return self._call("reconcile_release", kwargs)
+
+
 def test_import_status_has_stable_json_contract(capsys):
     registry = FakeRegistryV2()
     key = "import-request-1"
@@ -166,3 +187,141 @@ def test_phase_c_query_failure_is_json_and_exit_two(capsys):
             "message": "service release state was not found",
         },
     }
+
+
+@pytest.mark.parametrize("action", ["approve", "revoke"])
+def test_policy_mutations_forward_required_envelope(action, capsys):
+    mutations = _Mutations()
+    asset_id = TypedId.from_bare("44" * 32)
+
+    asset_cli(
+        [
+            "policy",
+            action,
+            "--pipeline-version",
+            "pipeline-v2",
+            "--asset-version-id",
+            asset_id.typed,
+            "--idempotency-key",
+            "policy-request-1",
+            "--actor",
+            "operator@example.com",
+            "--reason",
+            "policy review complete",
+            "--expected-revision",
+            "7",
+        ],
+        phase_c_mutations=mutations,
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    name, kwargs = mutations.calls[0]
+    assert name == f"{action}_policy"
+    assert kwargs == {
+        "asset_version_id": asset_id,
+        "idempotency_key": "policy-request-1",
+        "actor": "operator@example.com",
+        "reason": "policy review complete",
+        "expected_revision": 7,
+    }
+    assert payload["schema_version"] == "2.0"
+    assert payload["kind"] == f"policy_{action}"
+    assert payload["operation"]["operation_id"] == f"{action}_policy-operation"
+
+
+def test_release_rollback_forwards_exact_target(capsys):
+    mutations = _Mutations()
+    target = TypedId.from_bare("55" * 32)
+
+    asset_cli(
+        [
+            "release",
+            "rollback",
+            "--pipeline-version",
+            "pipeline-v2",
+            "--service-name",
+            "predictor",
+            "--target-release-id",
+            target.typed,
+            "--idempotency-key",
+            "rollback-request-1",
+            "--actor",
+            "operator@example.com",
+            "--reason",
+            "restore previous release",
+            "--expected-revision",
+            "8",
+        ],
+        phase_c_mutations=mutations,
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    name, kwargs = mutations.calls[0]
+    assert name == "rollback_release"
+    assert kwargs["service_name"] == "predictor"
+    assert kwargs["target_release_id"] == target
+    assert kwargs["expected_revision"] == 8
+    assert payload["kind"] == "release_rollback"
+
+
+def test_release_reconcile_forwards_action_bound(capsys):
+    mutations = _Mutations()
+
+    asset_cli(
+        [
+            "release",
+            "reconcile",
+            "--pipeline-version",
+            "pipeline-v2",
+            "--service-name",
+            "predictor",
+            "--operation-id",
+            "release-active",
+            "--max-actions",
+            "2",
+            "--idempotency-key",
+            "reconcile-request-1",
+            "--actor",
+            "operator@example.com",
+            "--reason",
+            "controller takeover",
+            "--expected-revision",
+            "9",
+        ],
+        phase_c_mutations=mutations,
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    name, kwargs = mutations.calls[0]
+    assert name == "reconcile_release"
+    assert kwargs["operation_id"] == "release-active"
+    assert kwargs["max_actions"] == 2
+    assert kwargs["expected_revision"] == 9
+    assert payload["kind"] == "release_reconcile"
+
+
+def test_mutation_without_adapter_fails_closed_as_json(capsys):
+    with pytest.raises(SystemExit) as excinfo:
+        asset_cli(
+            [
+                "policy",
+                "approve",
+                "--pipeline-version",
+                "pipeline-v2",
+                "--asset-version-id",
+                TypedId.from_bare("66" * 32).typed,
+                "--idempotency-key",
+                "policy-request-1",
+                "--actor",
+                "operator@example.com",
+                "--reason",
+                "policy review complete",
+                "--expected-revision",
+                "1",
+            ]
+        )
+
+    assert excinfo.value.code == 2
+    payload = json.loads(capsys.readouterr().err)
+    assert payload["kind"] == "error"
+    assert payload["error"]["message"] == "Phase C mutation adapter is not configured"
