@@ -189,9 +189,10 @@ def test_old_owner_is_fenced_from_heartbeat_finalize_and_compensate_guards():
             )
 
 
-def test_release_lease_rejects_bad_target_identity_and_ttl():
+def test_release_lease_can_reserve_uncommitted_target_and_rejects_bad_ttl():
     registry = _registry()
-    with pytest.raises(ReleaseLeaseConflict, match="does not belong"):
-        _acquire(registry, service_name="other")
+    uncommitted = _release().release_id
+    empty_registry = FakeRegistryV2(server_read_time=_NOW)
+    assert _acquire(empty_registry, target_release_id=uncommitted).target_release_id == uncommitted
     with pytest.raises(ValueError, match="heartbeat interval"):
         _acquire(registry, lease_ttl_seconds=30)

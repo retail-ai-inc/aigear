@@ -209,13 +209,6 @@ def acquire_release_lease(
         raise ReleaseLeaseError("Registry lacks the required atomic transaction boundary")
 
     def acquire(tx):
-        release = tx.get_release(target_release_id)
-        if (
-            release is None
-            or release.environment_fingerprint != environment_fingerprint
-            or release.service_name != service_name
-        ):
-            raise ReleaseLeaseConflict("target release does not belong to the service")
         server_time = _server_time(tx)
         state = tx.get_service_release_state(service_name)
         existing = tx.get_release_operation(operation_id)
