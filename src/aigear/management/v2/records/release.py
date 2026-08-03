@@ -341,6 +341,7 @@ class ReleaseOperationRecord:
     expected_deployment_resource_version: Optional[str] = None
     expected_service_resource_version: Optional[str] = None
     traffic_evidence_id: Optional[TypedId] = None
+    drain_evidence_id: Optional[TypedId] = None
     error_class: Optional[str] = None
     error_summary: Optional[str] = None
     created_at: Optional[str] = None
@@ -360,6 +361,8 @@ class ReleaseOperationRecord:
         _typed_id("target_release_id", self.target_release_id)
         if self.traffic_evidence_id is not None:
             _typed_id("traffic_evidence_id", self.traffic_evidence_id)
+        if self.drain_evidence_id is not None:
+            _typed_id("drain_evidence_id", self.drain_evidence_id)
         if not isinstance(self.phase, ReleasePhase):
             raise InvalidReleaseRecordError("phase must be a ReleasePhase")
         _non_empty("owner_principal", self.owner_principal)
