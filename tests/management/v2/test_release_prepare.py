@@ -131,11 +131,31 @@ def _prepare(registry, control, layout, runtime, manifest, **overrides):
         release_attestation_verifier=HmacTestVerifier(key_version=_RELEASE_KEY),
         release_key_versions=(_RELEASE_KEY,),
         non_release_key_versions=("test-only",),
+        verify_current_image=lambda _image, _at: None,
         idempotency_key="publish-1",
         owner_principal="publisher-a@example.test",
     )
     values.update(overrides)
     return prepare_release(registry, **values)
+
+
+def test_prepare_requires_current_image_policy_before_release_commit():
+    registry, control, layout, _asset, runtime, manifest = _inputs()
+
+    def reject(_image, _at):
+        raise ValueError("Critical vulnerability")
+
+    with pytest.raises(ReleasePrepareError, match="verification failed"):
+        _prepare(
+            registry,
+            control,
+            layout,
+            runtime,
+            manifest,
+            verify_current_image=reject,
+        )
+
+    assert registry.get_release(manifest.release_id) is None
 
 
 def test_prepare_allocates_version_and_only_changes_desired_state():

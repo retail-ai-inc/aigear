@@ -141,6 +141,7 @@ def rollback_release(
             release_attestation_verifier=release_attestation_verifier,
             release_key_versions=release_key_versions,
             non_release_key_versions=non_release_key_versions,
+            verify_current_image=verify_current_image,
             idempotency_key=idempotency_key,
             owner_principal=owner_principal,
             read_external_state=read_external_state,

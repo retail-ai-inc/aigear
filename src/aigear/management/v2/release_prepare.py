@@ -16,6 +16,7 @@ from aigear.management.v2.release_lease import (
     require_release_lease,
 )
 from aigear.management.v2.release_manifest import (
+    ReleaseImageBinding,
     RuntimeContract,
     SignedReleaseManifest,
     verify_release_manifest,
@@ -88,6 +89,7 @@ def prepare_release(
     release_attestation_verifier: AttestationVerifier,
     release_key_versions: Sequence[str],
     non_release_key_versions: Sequence[str],
+    verify_current_image: Callable[[ReleaseImageBinding, datetime], None],
     idempotency_key: str,
     owner_principal: str,
     read_external_state: Optional[Callable[[str], ReleaseExternalState]] = None,
@@ -127,6 +129,9 @@ def prepare_release(
     )
     verification_time = datetime.fromisoformat(operation.updated_at)
     try:
+        if not callable(verify_current_image):
+            raise ReleasePrepareError("current image policy verifier is required")
+        verify_current_image(manifest.core.image, verification_time)
         resolved_assets = _resolve_assets(
             registry,
             control=control,

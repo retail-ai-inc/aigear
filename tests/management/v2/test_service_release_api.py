@@ -63,6 +63,7 @@ def _prepare_api(manager, runtime, manifest, **overrides):
         deployment_target_id="prod-cluster",
         release_key_versions=(_RELEASE_KEY,),
         non_release_key_versions=("test-only",),
+        verify_current_image=lambda _image, _at: None,
         idempotency_key="api-publish-1",
         actor="publisher@example.test",
         reason="publish approved release",
