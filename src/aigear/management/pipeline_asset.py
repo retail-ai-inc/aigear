@@ -43,6 +43,7 @@ when already committed) without bypassing asynchronous inspection/finalization.
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Dict, Mapping, Optional, Sequence, Tuple, TypeVar
@@ -116,6 +117,24 @@ from aigear.management.v2.records.run_spec import (
     seed_inputs_for_step,
 )
 from aigear.management.v2.pubsub_auth import verify_pubsub_oidc_token
+from aigear.management.v2.records.release import (
+    ReleaseOperationRecord,
+    ServiceReleaseState,
+)
+from aigear.management.v2.records.runtime_evidence import RuntimeAuthorizationLease
+from aigear.management.v2.release_kubernetes import KubernetesReleasePort
+from aigear.management.v2.release_lease import (
+    ReleaseExternalState,
+    compute_release_idempotency_key_hash,
+)
+from aigear.management.v2.release_manifest import RuntimeContract, SignedReleaseManifest
+from aigear.management.v2.release_prepare import prepare_release as _prepare_release
+from aigear.management.v2.release_reconcile import reconcile_release_once
+from aigear.management.v2.release_rollback import rollback_release as _rollback_release
+from aigear.management.v2.runtime_authorization import (
+    VerifiedJournalWatermark,
+    issue_runtime_authorization,
+)
 from aigear.management.v2.resolver import ResolverError, Selector, UsageContext
 from aigear.management.v2.resolver import resolve as _resolve_selector
 from aigear.management.v2.run_trigger import begin_run_trigger
@@ -126,6 +145,7 @@ __all__ = [
     "PipelineAssetManagementError",
     "LocalImportPayload",
     "ImportSubmission",
+    "ServiceReleaseStatus",
     "PipelineAssetManagement",
 ]
 
@@ -135,6 +155,8 @@ __all__ = [
 # too rather than a per-instance guess.
 _SCHEMA_VERSION = "2.0"
 _IMPORT_CAPABILITY = "asset_import_v2"
+_RELEASE_CAPABILITY = "service_release_v2"
+_RUNTIME_AUTHORIZATION_CAPABILITY = "service_runtime_authorization_v2"
 _T = TypeVar("_T")
 
 
@@ -142,6 +164,12 @@ class PipelineAssetManagementError(ValueError):
     """Raised when a ``PipelineAssetManagement`` call is missing a required,
     caller-supplied cross-cutting input (see module docstring), or names a
     ``run_id``/``step_name`` this instance has no record of."""
+
+
+@dataclass(frozen=True)
+class ServiceReleaseStatus:
+    state: ServiceReleaseState
+    operation: Optional[ReleaseOperationRecord]
 
 
 def _coerce_typed_id(value: "TypedId | str") -> TypedId:
@@ -196,12 +224,14 @@ class PipelineAssetManagement:
         blob_location_signer: Optional[DigestSigner] = None,
         occurrence_finalization_signer: Optional[DigestSigner] = None,
         attestation_verifier: Optional[AttestationVerifier] = None,
+        release_attestation_verifier: Optional[AttestationVerifier] = None,
         allowed_completion_publishers: Tuple[str, ...] = (),
         completion_oidc_audience: Optional[str] = None,
         external_source_policy: Optional[ExternalSourcePolicy] = None,
         external_source_inspector: Optional[ExternalSourceInspector] = None,
         max_local_import_payloads: int = DEFAULT_MAX_LOCAL_IMPORT_PAYLOADS,
         max_local_import_bytes: int = DEFAULT_MAX_LOCAL_IMPORT_BYTES,
+        release_kubernetes: Optional[KubernetesReleasePort] = None,
         production: bool = False,
     ) -> None:
         self.environment_identity = environment_identity
@@ -222,6 +252,9 @@ class PipelineAssetManagement:
         self.blob_location_signer = blob_location_signer or attestation_signer
         self.occurrence_finalization_signer = occurrence_finalization_signer or attestation_signer
         self.attestation_verifier = attestation_verifier
+        self.release_attestation_verifier = (
+            release_attestation_verifier or attestation_verifier
+        )
         self.production = production
         self.allowed_completion_publishers = tuple(allowed_completion_publishers)
         self.completion_oidc_audience = completion_oidc_audience
@@ -229,6 +262,7 @@ class PipelineAssetManagement:
         self.external_source_inspector = external_source_inspector
         self.max_local_import_payloads = max_local_import_payloads
         self.max_local_import_bytes = max_local_import_bytes
+        self.release_kubernetes = release_kubernetes
         self._run_specs: Dict[str, RunSpec] = {}
         if production:
             missing = [
@@ -566,6 +600,76 @@ class PipelineAssetManagement:
                 "Registry control/binding changed before import submission"
             )
         return control
+
+    def _require_service_control(self, capability: str) -> ControlDocument:
+        control = self._require_control_document()
+        if control.authority != "v2" or control.phase not in {
+            "v2_only",
+            "v2_authoritative",
+            "compatibility_window",
+            "complete",
+        }:
+            raise PipelineAssetManagementError(
+                f"service release is not writable in control phase {control.phase!r}"
+            )
+        if (
+            control.environment_id != self.environment_identity.environment_id
+            or control.environment_fingerprint != self.environment_fingerprint
+        ):
+            raise PipelineAssetManagementError(
+                "service release control does not belong to this environment"
+            )
+        if capability not in control.required_capabilities:
+            raise PipelineAssetManagementError(
+                f"service release requires control capability {capability!r}"
+            )
+        getter = getattr(self.registry, "get_control_document", None)
+        if not callable(getter) or getter() != control:
+            raise PipelineAssetManagementError(
+                "Registry control/binding changed before service release call"
+            )
+        return control
+
+    @staticmethod
+    def _require_release_mutation_envelope(
+        *,
+        idempotency_key: str,
+        actor: str,
+        reason: str,
+        expected_revision: int,
+    ) -> None:
+        for field_name, value in (
+            ("idempotency_key", idempotency_key),
+            ("actor", actor),
+            ("reason", reason),
+        ):
+            if not isinstance(value, str) or not value.strip():
+                raise PipelineAssetManagementError(
+                    f"{field_name} must be a non-empty str"
+                )
+        if (
+            isinstance(expected_revision, bool)
+            or not isinstance(expected_revision, int)
+            or expected_revision < 0
+        ):
+            raise PipelineAssetManagementError(
+                "expected_revision must be a non-negative int"
+            )
+
+    def _release_replay(
+        self, service_name: str, idempotency_key: str
+    ) -> Optional[ReleaseOperationRecord]:
+        state = self.registry.get_service_release_state(service_name)
+        if state is None or state.active_operation_id is None:
+            return None
+        operation = self.registry.get_release_operation(state.active_operation_id)
+        if (
+            operation is not None
+            and operation.idempotency_key_hash
+            == compute_release_idempotency_key_hash(idempotency_key)
+        ):
+            return operation
+        return None
 
     @staticmethod
     def _import_now(value: Optional[datetime]) -> str:
@@ -1278,6 +1382,258 @@ class PipelineAssetManagement:
             now=now_text,
         )
         return self._import_submission(operation, now=now_text)
+
+    def get_service_release_status(self, service_name: str) -> ServiceReleaseStatus:
+        self._require_service_control(_RELEASE_CAPABILITY)
+        state = self.registry.get_service_release_state(service_name)
+        if state is None:
+            raise PipelineAssetManagementError(
+                f"service release state {service_name!r} does not exist"
+            )
+        operation = (
+            None
+            if state.active_operation_id is None
+            else self.registry.get_release_operation(state.active_operation_id)
+        )
+        if state.active_operation_id is not None and operation is None:
+            raise PipelineAssetManagementError(
+                "active service release operation is missing"
+            )
+        return ServiceReleaseStatus(state, operation)
+
+    def prepare_service_release(
+        self,
+        manifest: SignedReleaseManifest,
+        *,
+        expected_runtime_contract: RuntimeContract,
+        deployment_target_id: str,
+        release_key_versions: Sequence[str],
+        non_release_key_versions: Sequence[str],
+        idempotency_key: str,
+        actor: str,
+        reason: str,
+        expected_revision: int,
+        read_external_state: Optional[
+            Callable[[str], ReleaseExternalState]
+        ] = None,
+        lease_ttl_seconds: int = 120,
+    ) -> ReleaseOperationRecord:
+        control = self._require_service_control(_RELEASE_CAPABILITY)
+        self._require_release_mutation_envelope(
+            idempotency_key=idempotency_key,
+            actor=actor,
+            reason=reason,
+            expected_revision=expected_revision,
+        )
+        replay = self._release_replay(
+            manifest.core.service_name, idempotency_key
+        )
+        if replay is not None:
+            if (
+                replay.target_release_id != manifest.release_id
+                or replay.owner_principal != actor
+            ):
+                raise PipelineAssetManagementError(
+                    "idempotency key is bound to another release request"
+                )
+            return replay
+        state = self.registry.get_service_release_state(manifest.core.service_name)
+        revision = 0 if state is None else state.revision
+        if revision != expected_revision:
+            raise PipelineAssetManagementError(
+                "service release state does not match expected revision"
+            )
+        if (
+            self.attestation_verifier is None
+            or self.release_attestation_verifier is None
+        ):
+            raise PipelineAssetManagementError(
+                "service release prepare requires an attestation verifier"
+            )
+        return _prepare_release(
+            self.registry,
+            control=control,
+            layout=self.layout,
+            manifest=manifest,
+            service_name=manifest.core.service_name,
+            deployment_target_id=deployment_target_id,
+            expected_runtime_contract=expected_runtime_contract,
+            asset_attestation_verifier=self.attestation_verifier,
+            release_attestation_verifier=self.release_attestation_verifier,
+            release_key_versions=release_key_versions,
+            non_release_key_versions=non_release_key_versions,
+            idempotency_key=idempotency_key,
+            owner_principal=actor,
+            read_external_state=read_external_state,
+            lease_ttl_seconds=lease_ttl_seconds,
+        ).operation
+
+    def rollback_service_release(
+        self,
+        manifest: SignedReleaseManifest,
+        *,
+        expected_runtime_contract: RuntimeContract,
+        deployment_target_id: str,
+        release_key_versions: Sequence[str],
+        non_release_key_versions: Sequence[str],
+        verify_current_image: Callable[[object, datetime], None],
+        verify_current_config_reference: Callable[[object, datetime], None],
+        idempotency_key: str,
+        actor: str,
+        reason: str,
+        expected_revision: int,
+        target_release_id: Optional[TypedId] = None,
+        read_external_state: Optional[
+            Callable[[str], ReleaseExternalState]
+        ] = None,
+        lease_ttl_seconds: int = 120,
+    ) -> ReleaseOperationRecord:
+        control = self._require_service_control(_RELEASE_CAPABILITY)
+        self._require_release_mutation_envelope(
+            idempotency_key=idempotency_key,
+            actor=actor,
+            reason=reason,
+            expected_revision=expected_revision,
+        )
+        replay = self._release_replay(
+            manifest.core.service_name, idempotency_key
+        )
+        if replay is not None:
+            if (
+                replay.target_release_id != manifest.release_id
+                or replay.owner_principal != actor
+            ):
+                raise PipelineAssetManagementError(
+                    "idempotency key is bound to another rollback request"
+                )
+            return replay
+        if (
+            self.attestation_verifier is None
+            or self.release_attestation_verifier is None
+        ):
+            raise PipelineAssetManagementError(
+                "service rollback requires an attestation verifier"
+            )
+        return _rollback_release(
+            self.registry,
+            control=control,
+            layout=self.layout,
+            manifest=manifest,
+            service_name=manifest.core.service_name,
+            deployment_target_id=deployment_target_id,
+            expected_service_revision=expected_revision,
+            expected_runtime_contract=expected_runtime_contract,
+            asset_attestation_verifier=self.attestation_verifier,
+            release_attestation_verifier=self.release_attestation_verifier,
+            release_key_versions=release_key_versions,
+            non_release_key_versions=non_release_key_versions,
+            verify_current_image=verify_current_image,
+            verify_current_config_reference=verify_current_config_reference,
+            idempotency_key=idempotency_key,
+            owner_principal=actor,
+            target_release_id=target_release_id,
+            read_external_state=read_external_state,
+            lease_ttl_seconds=lease_ttl_seconds,
+        ).prepared.operation
+
+    def reconcile_service_release(
+        self,
+        service_name: str,
+        *,
+        operation_id: str,
+        idempotency_key: str,
+        actor: str,
+        reason: str,
+        expected_revision: int,
+        max_actions: int = 3,
+        lease_ttl_seconds: int = 120,
+    ) -> ReleaseOperationRecord:
+        self._require_service_control(_RELEASE_CAPABILITY)
+        self._require_release_mutation_envelope(
+            idempotency_key=idempotency_key,
+            actor=actor,
+            reason=reason,
+            expected_revision=expected_revision,
+        )
+        state = self.registry.get_service_release_state(service_name)
+        if state is None or state.revision != expected_revision:
+            raise PipelineAssetManagementError(
+                "service release state does not match expected revision"
+            )
+        if state.active_operation_id != operation_id:
+            raise PipelineAssetManagementError(
+                "operation is not active for the requested service"
+            )
+        if self.release_kubernetes is None:
+            raise PipelineAssetManagementError(
+                "service release reconcile requires a Kubernetes release port"
+            )
+        return reconcile_release_once(
+            self.registry,
+            self.release_kubernetes,
+            operation_id=operation_id,
+            owner_principal=actor,
+            evidence_issuer_principal=actor,
+            max_actions=max_actions,
+            lease_ttl_seconds=lease_ttl_seconds,
+        ).operation
+
+    def issue_service_runtime_authorization(
+        self,
+        manifest: SignedReleaseManifest,
+        *,
+        deployment_target_id: str,
+        pod_uid: str,
+        expected_runtime_contract: RuntimeContract,
+        release_key_versions: Sequence[str],
+        non_release_key_versions: Sequence[str],
+        journal: VerifiedJournalWatermark,
+        idempotency_key: str,
+        actor: str,
+        reason: str,
+        expected_revision: int,
+        max_ttl_seconds: int = 300,
+    ) -> RuntimeAuthorizationLease:
+        control = self._require_service_control(
+            _RUNTIME_AUTHORIZATION_CAPABILITY
+        )
+        self._require_release_mutation_envelope(
+            idempotency_key=idempotency_key,
+            actor=actor,
+            reason=reason,
+            expected_revision=expected_revision,
+        )
+        state = self.registry.get_service_release_state(
+            manifest.core.service_name
+        )
+        if state is None or state.revision != expected_revision:
+            raise PipelineAssetManagementError(
+                "service release state does not match expected revision"
+            )
+        if (
+            self.attestation_verifier is None
+            or self.release_attestation_verifier is None
+        ):
+            raise PipelineAssetManagementError(
+                "runtime authorization requires an attestation verifier"
+            )
+        return issue_runtime_authorization(
+            self.registry,
+            control=control,
+            layout=self.layout,
+            manifest=manifest,
+            service_name=manifest.core.service_name,
+            deployment_target_id=deployment_target_id,
+            pod_uid=pod_uid,
+            expected_runtime_contract=expected_runtime_contract,
+            asset_attestation_verifier=self.attestation_verifier,
+            release_attestation_verifier=self.release_attestation_verifier,
+            release_key_versions=release_key_versions,
+            non_release_key_versions=non_release_key_versions,
+            journal=journal,
+            issuer_principal=actor,
+            max_ttl_seconds=max_ttl_seconds,
+        )
 
     def download_exact(
         self,
