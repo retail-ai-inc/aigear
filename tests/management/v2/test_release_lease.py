@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -17,6 +18,7 @@ from aigear.management.v2.release_lease import (
     require_release_lease,
     takeover_release_lease,
 )
+from aigear.management.v2.records.release import ReleasePhase
 from tests.management.v2.test_release_registry import _FP, _release
 
 
@@ -267,3 +269,58 @@ def test_reconciler_cannot_take_over_a_live_or_changed_operation():
             owner_principal="reconciler@example.test",
             read_external_state=mutate,
         )
+
+
+def test_terminal_operation_allows_observed_successor_with_new_fence():
+    registry = _registry()
+    operation = _acquire(registry)
+    state = registry.get_service_release_state("predictor")
+    reconciling_state = replace(
+        state,
+        revision=state.revision + 1,
+        desired_release_id=operation.target_release_id,
+        desired_revision=1,
+        observed_release_id=operation.target_release_id,
+        observed_evidence_revision=1,
+        traffic_release_id=operation.target_release_id,
+        traffic_k8s_resource_version="52",
+        champion_release_id=operation.target_release_id,
+        active_operation_phase=ReleasePhase.RECONCILING,
+    )
+    reconciling = replace(
+        operation,
+        phase=ReleasePhase.RECONCILING,
+        revision=operation.revision + 1,
+        expected_service_revision=reconciling_state.revision,
+    )
+    registry.put_release_operation(reconciling)
+    registry.put_service_release_state(reconciling_state)
+    succeeded_state = replace(
+        reconciling_state,
+        revision=reconciling_state.revision + 1,
+        active_operation_phase=ReleasePhase.SUCCEEDED,
+    )
+    succeeded = replace(
+        reconciling,
+        phase=ReleasePhase.SUCCEEDED,
+        revision=reconciling.revision + 1,
+        expected_service_revision=succeeded_state.revision,
+        lease_expires_at=None,
+        finished_at=_NOW.isoformat(),
+    )
+    registry.put_release_operation(succeeded)
+    registry.put_service_release_state(succeeded_state)
+
+    successor = _acquire(
+        registry,
+        idempotency_key="publish-2",
+        owner_principal="publisher-b@example.test",
+        read_external_state=lambda _name: ReleaseExternalState(
+            service_resource_version="52"
+        ),
+    )
+
+    assert successor.operation_id != succeeded.operation_id
+    assert successor.fencing_token == succeeded.fencing_token + 1
+    assert successor.expected_service_resource_version == "52"
+    assert registry.get_release_operation(succeeded.operation_id) == succeeded

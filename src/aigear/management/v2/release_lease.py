@@ -161,6 +161,19 @@ def _takeover_observation(
     active = registry.get_release_operation(state.active_operation_id)
     if active is None:
         raise ReleaseLeaseConflict("active release operation is missing")
+    if active.finished_at is not None and active.operation_id == operation_id:
+        return None, None
+    if active.finished_at is not None:
+        if read_external_state is None:
+            raise ReleaseLeaseConflict(
+                "successor release requires an external state read"
+            )
+        observation = read_external_state(service_name)
+        if not isinstance(observation, ReleaseExternalState):
+            raise ReleaseLeaseError(
+                "external state reader must return ReleaseExternalState"
+            )
+        return observation, (state.revision, active.operation_id, active.fencing_token)
     if _lease_expiry(active) > _server_time(registry):
         if active.operation_id != operation_id:
             raise ReleaseLeaseBusy("service already has a live release lease")
@@ -217,12 +230,14 @@ def acquire_release_lease(
             raise ReleaseLeaseConflict(
                 "idempotency key is bound to another release request"
             )
+        if existing is not None and existing.finished_at is not None:
+            return existing
         active = None
         if state is not None and state.active_operation_id is not None:
             active = tx.get_release_operation(state.active_operation_id)
             if active is None:
                 raise ReleaseLeaseConflict("active release operation is missing")
-            if _lease_expiry(active) > server_time:
+            if active.finished_at is None and _lease_expiry(active) > server_time:
                 if active.operation_id == operation_id:
                     return active
                 raise ReleaseLeaseBusy("service already has a live release lease")
@@ -235,7 +250,11 @@ def acquire_release_lease(
         fencing_token = 1 if state is None else state.fencing_token + 1
         state_revision = 1 if state is None else state.revision + 1
         expires_at = (server_time + timedelta(seconds=lease_ttl_seconds)).isoformat()
-        if active is not None and active.operation_id != operation_id:
+        if (
+            active is not None
+            and active.operation_id != operation_id
+            and active.finished_at is None
+        ):
             tx.put_release_operation(
                 replace(
                     active,
