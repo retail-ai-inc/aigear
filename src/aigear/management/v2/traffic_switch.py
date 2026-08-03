@@ -37,6 +37,7 @@ __all__ = [
     "TrafficSwitchConflict",
     "TrafficSwitchUncertain",
     "TrafficSwitchResult",
+    "compute_traffic_switch_evidence_digest",
     "switch_release_traffic",
 ]
 
@@ -116,6 +117,29 @@ def _traffic_payload(
     }
 
 
+def compute_traffic_switch_evidence_digest(
+    *,
+    manifest: SignedReleaseManifest,
+    fencing_token: int,
+    service_before: StableServiceState,
+    endpoint_slice_before: EndpointSliceState,
+    service_after: StableServiceState,
+    endpoint_slice_after: EndpointSliceState,
+) -> TypedId:
+    return TypedId.from_bare(
+        digest_sha256_of_jcs(
+            _traffic_payload(
+                manifest=manifest,
+                fencing_token=fencing_token,
+                service_before=service_before,
+                endpoint_slice_before=endpoint_slice_before,
+                service_after=service_after,
+                endpoint_slice_after=endpoint_slice_after,
+            )
+        )
+    )
+
+
 def _traffic_evidence(
     *,
     manifest: SignedReleaseManifest,
@@ -127,17 +151,13 @@ def _traffic_evidence(
     service_after: StableServiceState,
     endpoint_slice_after: EndpointSliceState,
 ) -> RuntimeEvidenceRecord:
-    payload_digest = TypedId.from_bare(
-        digest_sha256_of_jcs(
-            _traffic_payload(
-                manifest=manifest,
-                fencing_token=fencing_token,
-                service_before=service_before,
-                endpoint_slice_before=endpoint_slice_before,
-                service_after=service_after,
-                endpoint_slice_after=endpoint_slice_after,
-            )
-        )
+    payload_digest = compute_traffic_switch_evidence_digest(
+        manifest=manifest,
+        fencing_token=fencing_token,
+        service_before=service_before,
+        endpoint_slice_before=endpoint_slice_before,
+        service_after=service_after,
+        endpoint_slice_after=endpoint_slice_after,
     )
     bindings = tuple(
         sorted(
