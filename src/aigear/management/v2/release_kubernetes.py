@@ -9,6 +9,7 @@ from typing import Dict, Optional, Protocol, Tuple
 from aigear.management.v2.canonical import digest_sha256_of_jcs
 from aigear.management.v2.identifiers import TypedId
 from aigear.management.v2.naming import validate_segment
+from aigear.management.v2.release_manifest import ReleaseWorkloadSecurity
 
 __all__ = [
     "KubernetesReleaseError",
@@ -99,8 +100,7 @@ class DeploymentCreateRequest:
     deployment_spec_digest: TypedId
     service_account_name: str
     config_references: Tuple[KubernetesConfigReference, ...]
-    startup_probe_path: str
-    readiness_probe_path: str
+    workload_security: ReleaseWorkloadSecurity
     runtime_authorization_required: bool
     replicas: int
     fencing_token: int
@@ -146,16 +146,10 @@ class DeploymentCreateRequest:
             raise KubernetesReleaseError(
                 "config_references must be sorted and unique"
             )
-        for field_name in ("startup_probe_path", "readiness_probe_path"):
-            value = getattr(self, field_name)
-            if (
-                not isinstance(value, str)
-                or not value.startswith("/")
-                or any(character.isspace() for character in value)
-            ):
-                raise KubernetesReleaseError(
-                    f"{field_name} must be an absolute probe path"
-                )
+        if not isinstance(self.workload_security, ReleaseWorkloadSecurity):
+            raise KubernetesReleaseError(
+                "workload_security must be ReleaseWorkloadSecurity"
+            )
         if self.runtime_authorization_required is not True:
             raise KubernetesReleaseError(
                 "runtime authorization must be required"
@@ -174,8 +168,7 @@ class DeploymentCreateRequest:
             self.deployment_spec_digest,
             self.service_account_name,
             self.config_references,
-            self.startup_probe_path,
-            self.readiness_probe_path,
+            self.workload_security,
             self.runtime_authorization_required,
             self.replicas,
             self.fencing_token,

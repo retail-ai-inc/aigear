@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 from types import SimpleNamespace
 
@@ -14,6 +15,7 @@ from aigear.management.v2.release_kubernetes import (
     KubernetesResourceConflict,
     ServiceTrafficPatch,
 )
+from tests.management.v2.test_release_manifest import _workload_security
 
 
 _RELEASE = TypedId.from_bare("aa" * 32)
@@ -47,6 +49,10 @@ def _deployment_resource(request, *, uid="uid-1", resource_version="11"):
         ),
         "aigear.openai.com/runtime-authorization-required": "true",
     }
+    if request.workload_security.sandbox_policy_id is not None:
+        annotations["aigear.openai.com/sandbox-policy-id"] = (
+            request.workload_security.sandbox_policy_id
+        )
     return SimpleNamespace(
         metadata=SimpleNamespace(
             name=request.name,
@@ -60,18 +66,38 @@ def _deployment_resource(request, *, uid="uid-1", resource_version="11"):
             template=SimpleNamespace(
                 spec=SimpleNamespace(
                     service_account_name=request.service_account_name,
+                    runtime_class_name=(
+                        request.workload_security.sandbox_runtime_class
+                    ),
+                    security_context=SimpleNamespace(
+                        run_as_non_root=True,
+                        seccomp_profile=SimpleNamespace(type="RuntimeDefault"),
+                    ),
                     containers=[
                         SimpleNamespace(
                             image=request.image_reference,
+                            security_context=SimpleNamespace(
+                                run_as_non_root=True,
+                                read_only_root_filesystem=True,
+                                allow_privilege_escalation=False,
+                                capabilities=SimpleNamespace(drop=["ALL"]),
+                            ),
+                            resources=SimpleNamespace(
+                                requests={"cpu": "250m", "memory": "256Mi"},
+                                limits={"cpu": "1", "memory": "1Gi"},
+                            ),
                             startup_probe=SimpleNamespace(
                                 http_get=SimpleNamespace(
-                                    path=request.startup_probe_path
+                                    path=request.workload_security.startup_probe_path
                                 )
                             ),
                             readiness_probe=SimpleNamespace(
                                 http_get=SimpleNamespace(
-                                    path=request.readiness_probe_path
+                                    path=request.workload_security.readiness_probe_path
                                 )
+                            ),
+                            liveness_probe=SimpleNamespace(
+                                http_get=SimpleNamespace(path="/livez")
                             ),
                         )
                     ],
@@ -115,8 +141,7 @@ def _request():
                 content_digest=TypedId.from_bare("cc" * 32),
             ),
         ),
-        startup_probe_path="/startupz",
-        readiness_probe_path="/readyz",
+        workload_security=_workload_security(),
         runtime_authorization_required=True,
         replicas=2,
         fencing_token=3,
@@ -193,7 +218,38 @@ def test_create_uses_structured_deployment_with_release_and_fence():
     ] == "3"
     assert apps.created_body.spec.template.spec.containers[0].image == request.image_reference
     assert apps.created_body.spec.template.spec.service_account_name == "service-runtime-sa"
-    assert apps.created_body.spec.template.spec.containers[0].startup_probe.http_get.path == "/startupz"
+    container = apps.created_body.spec.template.spec.containers[0]
+    assert container.startup_probe.http_get.path == "/startupz"
+    assert container.liveness_probe.http_get.path == "/livez"
+    assert container.security_context.read_only_root_filesystem is True
+    assert container.security_context.allow_privilege_escalation is False
+    assert container.security_context.capabilities.drop == ["ALL"]
+    assert container.resources.requests == {"cpu": "250m", "memory": "256Mi"}
+    assert container.resources.limits == {"cpu": "1", "memory": "1Gi"}
+    pod_spec = apps.created_body.spec.template.spec
+    assert pod_spec.security_context.run_as_non_root is True
+    assert pod_spec.security_context.seccomp_profile.type == "RuntimeDefault"
+
+
+def test_create_binds_external_pickle_sandbox_to_pod():
+    request = _request()
+    request = replace(
+        request,
+        workload_security=_workload_security(
+            sandbox_runtime_class="gvisor",
+            sandbox_policy_id="external-pickle-v1",
+        ),
+    )
+    apps = AppsApi(_deployment_resource(request))
+
+    state = _adapter(apps=apps).create_deployment(request)
+
+    assert state.request == request
+    pod = apps.created_body.spec.template
+    assert pod.spec.runtime_class_name == "gvisor"
+    assert pod.metadata.annotations[
+        "aigear.openai.com/sandbox-policy-id"
+    ] == "external-pickle-v1"
 
 
 @pytest.mark.parametrize("status", [429, 500, 503])

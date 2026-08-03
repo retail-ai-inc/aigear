@@ -21,6 +21,7 @@ from aigear.management.v2.release_kubernetes import (
     ServiceTrafficPatch,
     StableServiceState,
 )
+from aigear.management.v2.release_manifest import ReleaseWorkloadSecurity
 
 logger = Logging(log_name=__name__).console_logging()
 
@@ -135,6 +136,7 @@ _MANIFEST_ANNOTATION = "aigear.openai.com/manifest-digest"
 _SPEC_ANNOTATION = "aigear.openai.com/deployment-spec-digest"
 _CONFIG_REFS_ANNOTATION = "aigear.openai.com/config-references"
 _RUNTIME_AUTH_ANNOTATION = "aigear.openai.com/runtime-authorization-required"
+_SANDBOX_POLICY_ANNOTATION = "aigear.openai.com/sandbox-policy-id"
 _RUNTIME_PROBE_PORT = 8081
 
 
@@ -247,8 +249,37 @@ class GkeKubernetesReleaseAdapter:
                 deployment_spec_digest=deployment_spec_digest,
                 service_account_name=pod_spec.service_account_name,
                 config_references=config_references,
-                startup_probe_path=containers[0].startup_probe.http_get.path,
-                readiness_probe_path=containers[0].readiness_probe.http_get.path,
+                workload_security=ReleaseWorkloadSecurity(
+                    run_as_non_root=(
+                        pod_spec.security_context.run_as_non_root is True
+                        and containers[0].security_context.run_as_non_root is True
+                    ),
+                    read_only_root_filesystem=(
+                        containers[0].security_context.read_only_root_filesystem
+                    ),
+                    allow_privilege_escalation=(
+                        containers[0].security_context.allow_privilege_escalation
+                    ),
+                    drop_capabilities=tuple(
+                        containers[0].security_context.capabilities.drop
+                    ),
+                    seccomp_profile=pod_spec.security_context.seccomp_profile.type,
+                    cpu_request=containers[0].resources.requests["cpu"],
+                    cpu_limit=containers[0].resources.limits["cpu"],
+                    memory_request=containers[0].resources.requests["memory"],
+                    memory_limit=containers[0].resources.limits["memory"],
+                    startup_probe_path=containers[0].startup_probe.http_get.path,
+                    readiness_probe_path=(
+                        containers[0].readiness_probe.http_get.path
+                    ),
+                    liveness_probe_path=containers[0].liveness_probe.http_get.path,
+                    sandbox_runtime_class=getattr(
+                        pod_spec, "runtime_class_name", None
+                    ),
+                    sandbox_policy_id=annotations.get(
+                        _SANDBOX_POLICY_ANNOTATION
+                    ),
+                ),
                 runtime_authorization_required=(
                     annotations[_RUNTIME_AUTH_ANNOTATION] == "true"
                 ),
@@ -294,6 +325,9 @@ class GkeKubernetesReleaseAdapter:
             ),
             _RUNTIME_AUTH_ANNOTATION: "true",
         }
+        security = request.workload_security
+        if security.sandbox_policy_id is not None:
+            annotations[_SANDBOX_POLICY_ANNOTATION] = security.sandbox_policy_id
         metadata = self.models.V1ObjectMeta(
             name=request.name, labels=labels, annotations=annotations
         )
@@ -312,20 +346,50 @@ class GkeKubernetesReleaseAdapter:
                     name="AIGEAR_CONFIG_REFERENCES", value=config_json
                 ),
             ],
+            security_context=self.models.V1SecurityContext(
+                run_as_non_root=security.run_as_non_root,
+                read_only_root_filesystem=security.read_only_root_filesystem,
+                allow_privilege_escalation=security.allow_privilege_escalation,
+                capabilities=self.models.V1Capabilities(
+                    drop=list(security.drop_capabilities)
+                ),
+            ),
+            resources=self.models.V1ResourceRequirements(
+                requests={
+                    "cpu": security.cpu_request,
+                    "memory": security.memory_request,
+                },
+                limits={
+                    "cpu": security.cpu_limit,
+                    "memory": security.memory_limit,
+                },
+            ),
             startup_probe=self.models.V1Probe(
                 http_get=self.models.V1HTTPGetAction(
-                    path=request.startup_probe_path, port=_RUNTIME_PROBE_PORT
+                    path=security.startup_probe_path, port=_RUNTIME_PROBE_PORT
                 )
             ),
             readiness_probe=self.models.V1Probe(
                 http_get=self.models.V1HTTPGetAction(
-                    path=request.readiness_probe_path, port=_RUNTIME_PROBE_PORT
+                    path=security.readiness_probe_path, port=_RUNTIME_PROBE_PORT
+                )
+            ),
+            liveness_probe=self.models.V1Probe(
+                http_get=self.models.V1HTTPGetAction(
+                    path=security.liveness_probe_path, port=_RUNTIME_PROBE_PORT
                 )
             ),
         )
         pod_spec = self.models.V1PodSpec(
             containers=[container],
             service_account_name=request.service_account_name,
+            security_context=self.models.V1PodSecurityContext(
+                run_as_non_root=security.run_as_non_root,
+                seccomp_profile=self.models.V1SeccompProfile(
+                    type=security.seccomp_profile
+                ),
+            ),
+            runtime_class_name=security.sandbox_runtime_class,
         )
         template = self.models.V1PodTemplateSpec(
             metadata=pod_metadata, spec=pod_spec

@@ -55,6 +55,7 @@ def test_candidate_is_isolated_and_binds_all_runtime_inputs():
     assert result.deployment.request.config_references[0].version == manifest.core.config_references[0].version
     assert result.deployment.request.runtime_authorization_required is True
     assert result.deployment.request.service_account_name == "service-runtime-sa"
+    assert result.deployment.request.workload_security == manifest.core.workload_security
     assert port.get_service("predictor") == stable_before
 
 
@@ -93,8 +94,7 @@ def test_existing_same_name_with_different_spec_is_never_overwritten():
         deployment_spec_digest=manifest.core.deployment_spec_digest,
         service_account_name="service-runtime-sa",
         config_references=(),
-        startup_probe_path="/startupz",
-        readiness_probe_path="/readyz",
+        workload_security=manifest.core.workload_security,
         runtime_authorization_required=True,
         replicas=3,
         fencing_token=prepared.operation.fencing_token,
@@ -122,8 +122,7 @@ def test_retry_reuses_exact_candidate_and_old_revision_remains_ready():
             deployment_spec_digest=type(manifest.release_id).from_bare("ac" * 32),
             service_account_name="service-runtime-sa",
             config_references=(),
-            startup_probe_path="/startupz",
-            readiness_probe_path="/readyz",
+            workload_security=manifest.core.workload_security,
             runtime_authorization_required=True,
             replicas=1,
             fencing_token=1,

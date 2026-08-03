@@ -17,6 +17,7 @@ from aigear.management.v2.release_kubernetes import (
     ServiceTrafficPatch,
     compute_probe_evidence_digest,
 )
+from tests.management.v2.test_release_manifest import _workload_security
 
 
 _RELEASE = TypedId.from_bare("aa" * 32)
@@ -39,8 +40,7 @@ def _deployment(**overrides):
                 content_digest=TypedId.from_bare("cc" * 32),
             ),
         ),
-        startup_probe_path="/startupz",
-        readiness_probe_path="/readyz",
+        workload_security=_workload_security(),
         runtime_authorization_required=True,
         replicas=2,
         fencing_token=1,
