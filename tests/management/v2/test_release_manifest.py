@@ -16,6 +16,7 @@ from aigear.management.v2.release_manifest import (
     ReleaseAssetContract,
     ReleaseManifestCore,
     ReleaseManifestError,
+    ReleaseWorkloadSecurity,
     RuntimeContract,
     SignedReleaseManifest,
     build_release_asset_binding,
@@ -35,6 +36,27 @@ from tests.management.v2.test_resolver import (
 
 _RELEASE_KEY = "release-key-version-1"
 _POLICY_KEY = "test-only"
+
+
+def _workload_security(**overrides):
+    values = dict(
+        run_as_non_root=True,
+        read_only_root_filesystem=True,
+        allow_privilege_escalation=False,
+        drop_capabilities=("ALL",),
+        seccomp_profile="RuntimeDefault",
+        cpu_request="250m",
+        cpu_limit="1",
+        memory_request="256Mi",
+        memory_limit="1Gi",
+        startup_probe_path="/startupz",
+        readiness_probe_path="/readyz",
+        liveness_probe_path="/livez",
+        sandbox_runtime_class=None,
+        sandbox_policy_id=None,
+    )
+    values.update(overrides)
+    return ReleaseWorkloadSecurity(**values)
 
 
 @pytest.fixture
@@ -100,6 +122,7 @@ def release_inputs():
             ),
         ),
         runtime_contract=runtime,
+        workload_security=_workload_security(),
         deployment_spec_digest=TypedId.from_bare("09" * 32),
     )
     return core, runtime, handle
@@ -144,7 +167,7 @@ def test_release_manifest_is_content_addressed_signed_and_deployable(release_inp
 def test_release_id_has_stable_cross_language_vector(release_inputs):
     core, _runtime, _handle = release_inputs
     assert compute_release_id(core).typed == (
-        "sha256:07f4d6fe4bb3ea002dc0e5fe25b3a08ab1ce52fadf3dcdbd2a54b712eca4b7f6"
+        "sha256:19c6e4af0293415f98599dc628a192ff71ff428fff7fa9a020bff92d12554656"
     )
 
 
@@ -176,6 +199,44 @@ def test_release_assets_must_satisfy_declared_contract(release_inputs):
             core,
             runtime_contract=replace(runtime, asset_contracts=(incompatible,)),
         )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value", "message"),
+    (
+        ("run_as_non_root", False, "non-root"),
+        ("read_only_root_filesystem", False, "read-only"),
+        ("allow_privilege_escalation", True, "privilege escalation"),
+        ("drop_capabilities", (), "drop all"),
+        ("seccomp_profile", "Unconfined", "RuntimeDefault"),
+        ("cpu_request", "", "non-empty"),
+        ("liveness_probe_path", "livez", "absolute probe"),
+    ),
+)
+def test_release_rejects_missing_or_weakened_workload_security(
+    field_name, value, message
+):
+    with pytest.raises(ReleaseManifestError, match=message):
+        _workload_security(**{field_name: value})
+
+
+@pytest.mark.parametrize("model_format", ("pickle", "joblib", "cloudpickle"))
+def test_external_pickle_compatibility_requires_gvisor_policy(
+    release_inputs, model_format
+):
+    core, runtime, _handle = release_inputs
+    with pytest.raises(ReleaseManifestError, match="gVisor sandbox policy"):
+        replace(core, runtime_contract=replace(runtime, model_format=model_format))
+
+    sandboxed = replace(
+        core,
+        runtime_contract=replace(runtime, model_format=model_format),
+        workload_security=_workload_security(
+            sandbox_runtime_class="gvisor",
+            sandbox_policy_id="external-pickle-v1",
+        ),
+    )
+    assert sandboxed.workload_security.sandbox_runtime_class == "gvisor"
 
 
 def test_release_verification_rejects_contract_asset_and_expiry_drift(release_inputs):

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Mapping, Sequence, Tuple
+from typing import Mapping, Optional, Sequence, Tuple
 
 from aigear.management.v2.attestation import (
     AttestationRecord,
@@ -35,6 +35,7 @@ __all__ = [
     "ImmutableConfigReference",
     "ReleaseAssetContract",
     "RuntimeContract",
+    "ReleaseWorkloadSecurity",
     "ReleaseManifestCore",
     "SignedReleaseManifest",
     "build_release_asset_binding",
@@ -342,6 +343,96 @@ class RuntimeContract:
 
 
 @dataclass(frozen=True)
+class ReleaseWorkloadSecurity:
+    run_as_non_root: bool
+    read_only_root_filesystem: bool
+    allow_privilege_escalation: bool
+    drop_capabilities: Tuple[str, ...]
+    seccomp_profile: str
+    cpu_request: str
+    cpu_limit: str
+    memory_request: str
+    memory_limit: str
+    startup_probe_path: str
+    readiness_probe_path: str
+    liveness_probe_path: str
+    sandbox_runtime_class: Optional[str]
+    sandbox_policy_id: Optional[str]
+
+    def __post_init__(self) -> None:
+        if self.run_as_non_root is not True:
+            raise ReleaseManifestError("workload must run as non-root")
+        if self.read_only_root_filesystem is not True:
+            raise ReleaseManifestError("workload root filesystem must be read-only")
+        if self.allow_privilege_escalation is not False:
+            raise ReleaseManifestError("workload must forbid privilege escalation")
+        object.__setattr__(self, "drop_capabilities", _as_tuple(self.drop_capabilities))
+        if self.drop_capabilities != ("ALL",):
+            raise ReleaseManifestError("workload must drop all Linux capabilities")
+        if self.seccomp_profile != "RuntimeDefault":
+            raise ReleaseManifestError("workload must use RuntimeDefault seccomp")
+        for field_name in (
+            "cpu_request",
+            "cpu_limit",
+            "memory_request",
+            "memory_limit",
+        ):
+            _non_empty(field_name, getattr(self, field_name))
+        for field_name in (
+            "startup_probe_path",
+            "readiness_probe_path",
+            "liveness_probe_path",
+        ):
+            value = getattr(self, field_name)
+            if (
+                not isinstance(value, str)
+                or not value.startswith("/")
+                or any(character.isspace() for character in value)
+            ):
+                raise ReleaseManifestError(
+                    f"{field_name} must be an absolute probe path"
+                )
+        if self.sandbox_runtime_class is not None:
+            object.__setattr__(
+                self,
+                "sandbox_runtime_class",
+                validate_segment(
+                    self.sandbox_runtime_class,
+                    field_name="sandbox_runtime_class",
+                ),
+            )
+        if self.sandbox_policy_id is not None:
+            object.__setattr__(
+                self,
+                "sandbox_policy_id",
+                validate_segment(
+                    self.sandbox_policy_id,
+                    field_name="sandbox_policy_id",
+                ),
+            )
+
+    def to_jcs_dict(self) -> dict:
+        return {
+            "run_as_non_root": self.run_as_non_root,
+            "read_only_root_filesystem": self.read_only_root_filesystem,
+            "allow_privilege_escalation": self.allow_privilege_escalation,
+            "drop_capabilities": list(self.drop_capabilities),
+            "seccomp_profile": self.seccomp_profile,
+            "resources": {
+                "requests": {"cpu": self.cpu_request, "memory": self.memory_request},
+                "limits": {"cpu": self.cpu_limit, "memory": self.memory_limit},
+            },
+            "probes": {
+                "startup": self.startup_probe_path,
+                "readiness": self.readiness_probe_path,
+                "liveness": self.liveness_probe_path,
+            },
+            "sandbox_runtime_class": self.sandbox_runtime_class,
+            "sandbox_policy_id": self.sandbox_policy_id,
+        }
+
+
+@dataclass(frozen=True)
 class ReleaseManifestCore:
     schema_version: str
     environment_fingerprint: TypedId
@@ -351,6 +442,7 @@ class ReleaseManifestCore:
     assets: Tuple[ReleaseAssetBinding, ...]
     config_references: Tuple[ImmutableConfigReference, ...]
     runtime_contract: RuntimeContract
+    workload_security: ReleaseWorkloadSecurity
     deployment_spec_digest: TypedId
 
     def __post_init__(self) -> None:
@@ -389,6 +481,18 @@ class ReleaseManifestCore:
             raise ReleaseManifestError("config_references must be sorted and unique")
         if not isinstance(self.runtime_contract, RuntimeContract):
             raise ReleaseManifestError("runtime_contract must be RuntimeContract")
+        if not isinstance(self.workload_security, ReleaseWorkloadSecurity):
+            raise ReleaseManifestError(
+                "workload_security must be ReleaseWorkloadSecurity"
+            )
+        if self.runtime_contract.model_format in {"pickle", "joblib", "cloudpickle"}:
+            if (
+                self.workload_security.sandbox_runtime_class != "gvisor"
+                or self.workload_security.sandbox_policy_id is None
+            ):
+                raise ReleaseManifestError(
+                    "external pickle compatibility requires the gVisor sandbox policy"
+                )
         expected_contracts = {
             contract.binding_name: (
                 contract.schema_contract_digest,
@@ -420,6 +524,7 @@ class ReleaseManifestCore:
             "assets": [asset.to_jcs_dict() for asset in self.assets],
             "config_references": [ref.to_jcs_dict() for ref in self.config_references],
             "runtime_contract": self.runtime_contract.to_jcs_dict(),
+            "workload_security": self.workload_security.to_jcs_dict(),
             "deployment_spec_digest": self.deployment_spec_digest.typed,
         }
 
