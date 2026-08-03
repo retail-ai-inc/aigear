@@ -80,6 +80,24 @@ def _binding_tuple(value: object) -> Tuple[str, ...]:
     return value
 
 
+def _policy_attestation_ids(value: object) -> Tuple[TypedId, ...]:
+    if isinstance(value, list):
+        value = tuple(value)
+    if (
+        not isinstance(value, tuple)
+        or not value
+        or not all(isinstance(item, TypedId) for item in value)
+    ):
+        raise InvalidRuntimeEvidenceError(
+            "policy_attestation_ids must be a non-empty tuple of TypedId"
+        )
+    if value != tuple(sorted(value, key=lambda item: item.typed)) or len(set(value)) != len(value):
+        raise InvalidRuntimeEvidenceError(
+            "policy_attestation_ids must be sorted and unique"
+        )
+    return value
+
+
 def compute_runtime_evidence_id(
     *,
     kind: RuntimeEvidenceKind,
@@ -119,14 +137,14 @@ def compute_runtime_authorization_lease_id(
     release_id: TypedId,
     pod_uid: str,
     binding_digest: TypedId,
-    policy_attestation_id: TypedId,
+    policy_attestation_ids: Tuple[TypedId, ...],
     security_watermark: int,
     issued_at: str,
 ) -> TypedId:
     _typed_id("release_id", release_id)
     _non_empty("pod_uid", pod_uid)
     _typed_id("binding_digest", binding_digest)
-    _typed_id("policy_attestation_id", policy_attestation_id)
+    policy_attestation_ids = _policy_attestation_ids(policy_attestation_ids)
     _non_negative("security_watermark", security_watermark)
     _aware_timestamp("issued_at", issued_at)
     return TypedId.from_bare(
@@ -136,7 +154,7 @@ def compute_runtime_authorization_lease_id(
                 release_id.typed,
                 pod_uid,
                 binding_digest.typed,
-                policy_attestation_id.typed,
+                [value.typed for value in policy_attestation_ids],
                 security_watermark,
                 issued_at,
             ]
@@ -204,7 +222,7 @@ class RuntimeAuthorizationLease:
     release_id: TypedId
     pod_uid: str
     binding_digest: TypedId
-    policy_attestation_id: TypedId
+    policy_attestation_ids: Tuple[TypedId, ...]
     policy_valid_until: str
     security_watermark: int
     journal_fresh_until: str
@@ -220,9 +238,13 @@ class RuntimeAuthorizationLease:
             "lease_id",
             "release_id",
             "binding_digest",
-            "policy_attestation_id",
         ):
             _typed_id(field_name, getattr(self, field_name))
+        if isinstance(self.policy_attestation_ids, list):
+            object.__setattr__(
+                self, "policy_attestation_ids", tuple(self.policy_attestation_ids)
+            )
+        _policy_attestation_ids(self.policy_attestation_ids)
         _non_empty("pod_uid", self.pod_uid)
         policy_valid_until = _aware_timestamp("policy_valid_until", self.policy_valid_until)
         _non_negative("security_watermark", self.security_watermark)
@@ -248,7 +270,7 @@ class RuntimeAuthorizationLease:
             release_id=self.release_id,
             pod_uid=self.pod_uid,
             binding_digest=self.binding_digest,
-            policy_attestation_id=self.policy_attestation_id,
+            policy_attestation_ids=self.policy_attestation_ids,
             security_watermark=self.security_watermark,
             issued_at=self.issued_at,
         )

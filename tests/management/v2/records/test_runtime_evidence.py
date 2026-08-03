@@ -61,7 +61,7 @@ def _lease(**overrides) -> RuntimeAuthorizationLease:
         "release_id": _RELEASE,
         "pod_uid": "pod-uid-1",
         "binding_digest": _BINDING,
-        "policy_attestation_id": _POLICY,
+        "policy_attestation_ids": (_POLICY,),
         "policy_valid_until": "2026-07-28T00:10:00+00:00",
         "security_watermark": 8,
         "journal_fresh_until": "2026-07-28T00:06:00+00:00",
@@ -77,7 +77,7 @@ def _lease(**overrides) -> RuntimeAuthorizationLease:
             release_id=values["release_id"],
             pod_uid=values["pod_uid"],
             binding_digest=values["binding_digest"],
-            policy_attestation_id=values["policy_attestation_id"],
+            policy_attestation_ids=values["policy_attestation_ids"],
             security_watermark=values["security_watermark"],
             issued_at=values["issued_at"],
         ),
@@ -148,6 +148,14 @@ def test_runtime_lease_cannot_outlive_any_security_bound(overrides):
 def test_runtime_lease_identity_prevents_pod_reuse():
     with pytest.raises(InvalidRuntimeEvidenceError, match="lease_id"):
         replace(_lease(), pod_uid="pod-uid-2")
+
+
+def test_runtime_lease_identity_binds_the_complete_policy_set():
+    with pytest.raises(InvalidRuntimeEvidenceError, match="lease_id"):
+        replace(
+            _lease(),
+            policy_attestation_ids=(TypedId.from_bare("ef" * 32),),
+        )
 
 
 def test_runtime_lease_rejects_naive_policy_time():
