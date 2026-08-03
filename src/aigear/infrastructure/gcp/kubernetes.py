@@ -410,10 +410,14 @@ class GkeKubernetesReleaseAdapter:
                 uid=patch.expected_uid,
                 resource_version=patch.expected_resource_version,
                 annotations={_FENCE_ANNOTATION: str(patch.fencing_token)},
-            ),
-            spec=self.models.V1ServiceSpec(
-                selector={_RELEASE_LABEL: patch.target_release_id.bare}
-            ),
+              ),
+              spec=self.models.V1ServiceSpec(
+                  selector=(
+                      {}
+                      if patch.target_release_id is None
+                      else {_RELEASE_LABEL: patch.target_release_id.bare}
+                  )
+              ),
         )
         try:
             resource = self.core_api.patch_namespaced_service(

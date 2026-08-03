@@ -209,7 +209,7 @@ class ServiceTrafficPatch:
     service_name: str
     expected_uid: str
     expected_resource_version: str
-    target_release_id: TypedId
+    target_release_id: Optional[TypedId]
     fencing_token: int
 
     def __post_init__(self) -> None:
@@ -222,7 +222,8 @@ class ServiceTrafficPatch:
             value = getattr(self, field_name)
             if not isinstance(value, str) or not value:
                 raise KubernetesReleaseError(f"{field_name} must be a non-empty str")
-        _typed("target_release_id", self.target_release_id)
+        if self.target_release_id is not None:
+            _typed("target_release_id", self.target_release_id)
         _positive("fencing_token", self.fencing_token)
 
 
@@ -494,7 +495,7 @@ class FakeKubernetesReleasePort:
             raise KubernetesResourceConflict("service resourceVersion CAS failed")
         if patch.fencing_token < current.fencing_token:
             raise KubernetesResourceConflict("service fencing token moved forward")
-        if not any(
+        if patch.target_release_id is not None and not any(
             deployment.request.release_id == patch.target_release_id
             for deployment in self._deployments.values()
         ):

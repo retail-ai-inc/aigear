@@ -83,6 +83,23 @@ def test_service_patch_requires_uid_resource_version_and_current_fence():
         port.patch_service_traffic(_patch(updated, fencing_token=1))
 
 
+def test_service_patch_can_conditionally_remove_the_release_selector():
+    port = FakeKubernetesReleasePort()
+    port.create_deployment(_deployment())
+    service = port.seed_service("predictor")
+    switched = port.patch_service_traffic(_patch(service))
+
+    restored = port.patch_service_traffic(
+        _patch(
+            switched,
+            expected_resource_version=switched.resource_version,
+            target_release_id=None,
+        )
+    )
+
+    assert restored.traffic_release_id is None
+
+
 @pytest.mark.parametrize(
     "fault,committed",
     [
