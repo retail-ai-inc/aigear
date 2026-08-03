@@ -232,6 +232,7 @@ class PipelineAssetManagement:
         max_local_import_payloads: int = DEFAULT_MAX_LOCAL_IMPORT_PAYLOADS,
         max_local_import_bytes: int = DEFAULT_MAX_LOCAL_IMPORT_BYTES,
         release_kubernetes: Optional[KubernetesReleasePort] = None,
+        release_image_policy_verifier: Optional[Callable[[object, datetime], None]] = None,
         production: bool = False,
     ) -> None:
         self.environment_identity = environment_identity
@@ -263,6 +264,7 @@ class PipelineAssetManagement:
         self.max_local_import_payloads = max_local_import_payloads
         self.max_local_import_bytes = max_local_import_bytes
         self.release_kubernetes = release_kubernetes
+        self.release_image_policy_verifier = release_image_policy_verifier
         self._run_specs: Dict[str, RunSpec] = {}
         if production:
             missing = [
@@ -1409,7 +1411,6 @@ class PipelineAssetManagement:
         deployment_target_id: str,
         release_key_versions: Sequence[str],
         non_release_key_versions: Sequence[str],
-        verify_current_image: Callable[[object, datetime], None],
         idempotency_key: str,
         actor: str,
         reason: str,
@@ -1451,6 +1452,10 @@ class PipelineAssetManagement:
             raise PipelineAssetManagementError(
                 "service release prepare requires an attestation verifier"
             )
+        if self.release_image_policy_verifier is None:
+            raise PipelineAssetManagementError(
+                "service release prepare requires a fixed image policy verifier"
+            )
         return _prepare_release(
             self.registry,
             control=control,
@@ -1463,7 +1468,7 @@ class PipelineAssetManagement:
             release_attestation_verifier=self.release_attestation_verifier,
             release_key_versions=release_key_versions,
             non_release_key_versions=non_release_key_versions,
-            verify_current_image=verify_current_image,
+            verify_current_image=self.release_image_policy_verifier,
             idempotency_key=idempotency_key,
             owner_principal=actor,
             read_external_state=read_external_state,
@@ -1478,7 +1483,6 @@ class PipelineAssetManagement:
         deployment_target_id: str,
         release_key_versions: Sequence[str],
         non_release_key_versions: Sequence[str],
-        verify_current_image: Callable[[object, datetime], None],
         verify_current_config_reference: Callable[[object, datetime], None],
         idempotency_key: str,
         actor: str,
@@ -1516,6 +1520,10 @@ class PipelineAssetManagement:
             raise PipelineAssetManagementError(
                 "service rollback requires an attestation verifier"
             )
+        if self.release_image_policy_verifier is None:
+            raise PipelineAssetManagementError(
+                "service rollback requires a fixed image policy verifier"
+            )
         return _rollback_release(
             self.registry,
             control=control,
@@ -1529,7 +1537,7 @@ class PipelineAssetManagement:
             release_attestation_verifier=self.release_attestation_verifier,
             release_key_versions=release_key_versions,
             non_release_key_versions=non_release_key_versions,
-            verify_current_image=verify_current_image,
+            verify_current_image=self.release_image_policy_verifier,
             verify_current_config_reference=verify_current_config_reference,
             idempotency_key=idempotency_key,
             owner_principal=actor,

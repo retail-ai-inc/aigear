@@ -19,6 +19,7 @@ from aigear.management.v2.release_manifest import ReleaseImageBinding
 __all__ = [
     "HighSeverityException",
     "ImagePolicyError",
+    "RegistryImagePolicyVerifier",
     "ImageSupplyChainBundle",
     "create_image_supply_chain_attestation",
     "verify_image_supply_chain",
@@ -272,3 +273,35 @@ def verify_image_supply_chain(
     if not bundle.license_approved:
         raise ImagePolicyError("image license decision is not approved")
     return bundle
+
+
+@dataclass(frozen=True)
+class RegistryImagePolicyVerifier:
+    registry: object
+    verifier: AttestationVerifier
+    environment_fingerprint: TypedId
+    allowed_key_versions: tuple[str, ...]
+    allowed_builder_ids: tuple[str, ...]
+    verify_image_signature: Callable[[TypedId, TypedId], None]
+    max_evidence_age_seconds: int
+
+    def __call__(
+        self, image: ReleaseImageBinding, now: datetime
+    ) -> ImageSupplyChainBundle:
+        getter = getattr(self.registry, "get_attestation", None)
+        attestation = (
+            None if not callable(getter) else getter(image.provenance_attestation_id)
+        )
+        if attestation is None:
+            raise ImagePolicyError("signed image supply-chain evidence is missing")
+        return verify_image_supply_chain(
+            image,
+            attestation,
+            verifier=self.verifier,
+            expected_environment_fingerprint=self.environment_fingerprint,
+            allowed_key_versions=self.allowed_key_versions,
+            allowed_builder_ids=self.allowed_builder_ids,
+            verify_image_signature=self.verify_image_signature,
+            now=now,
+            max_evidence_age_seconds=self.max_evidence_age_seconds,
+        )

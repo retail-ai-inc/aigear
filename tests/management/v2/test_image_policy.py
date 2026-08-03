@@ -11,6 +11,7 @@ from aigear.management.v2.image_policy import (
     HighSeverityException,
     ImagePolicyError,
     ImageSupplyChainBundle,
+    RegistryImagePolicyVerifier,
     create_image_supply_chain_attestation,
     verify_image_supply_chain,
 )
@@ -160,3 +161,19 @@ def test_cross_environment_and_stale_evidence_are_rejected():
 
     with pytest.raises(ImagePolicyError, match="stale"):
         _verify(image, attestation, now=_NOW + timedelta(days=2))
+
+
+def test_registry_adapter_rejects_missing_unsigned_evidence():
+    image, _attestation = _evidence()
+    adapter = RegistryImagePolicyVerifier(
+        registry=object(),
+        verifier=_VERIFIER,
+        environment_fingerprint=_FP,
+        allowed_key_versions=(_KEY,),
+        allowed_builder_ids=("cloud-build-production",),
+        verify_image_signature=lambda _image, _signature: None,
+        max_evidence_age_seconds=24 * 60 * 60,
+    )
+
+    with pytest.raises(ImagePolicyError, match="missing"):
+        adapter(image, _NOW)

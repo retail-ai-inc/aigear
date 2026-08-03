@@ -50,6 +50,7 @@ def _manager(registry, control, layout, *, port=None):
             key_version=_RELEASE_KEY
         ),
         release_kubernetes=port,
+        release_image_policy_verifier=lambda _image, _at: None,
     )
     # The shared release fixtures intentionally use a fixed synthetic digest.
     manager.environment_fingerprint = control.environment_fingerprint
@@ -63,7 +64,6 @@ def _prepare_api(manager, runtime, manifest, **overrides):
         deployment_target_id="prod-cluster",
         release_key_versions=(_RELEASE_KEY,),
         non_release_key_versions=("test-only",),
-        verify_current_image=lambda _image, _at: None,
         idempotency_key="api-publish-1",
         actor="publisher@example.test",
         reason="publish approved release",
@@ -88,6 +88,15 @@ def test_prepare_and_status_return_authoritative_nonterminal_operation():
     assert status.state.observed_release_id is None
     assert status.state.traffic_release_id is None
     assert status.state.champion_release_id is None
+
+
+def test_prepare_fails_closed_without_fixed_manager_image_policy():
+    registry, control, layout, _asset, runtime, manifest = _prepare_inputs()
+    manager = _manager(registry, control, layout)
+    manager.release_image_policy_verifier = None
+
+    with pytest.raises(PipelineAssetManagementError, match="fixed image policy"):
+        _prepare_api(manager, runtime, manifest)
 
 
 def test_release_api_authority_capability_and_envelope_fail_closed():
@@ -135,7 +144,6 @@ def test_rollback_api_returns_the_new_prepare_operation():
         deployment_target_id="prod-cluster",
         release_key_versions=(_RELEASE_KEY,),
         non_release_key_versions=("test-only",),
-        verify_current_image=lambda _value, _at: None,
         verify_current_config_reference=lambda _value, _at: None,
         idempotency_key="api-rollback-1",
         actor="operator@example.test",
