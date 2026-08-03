@@ -592,6 +592,7 @@ def verify_release_manifest(
     expected_runtime_contract: RuntimeContract,
     resolved_assets: Mapping[str, ResolvedHandle],
     now: datetime,
+    expected_asset_usage_context: UsageContext = UsageContext.RELEASE,
 ) -> SignedReleaseManifest:
     if not isinstance(manifest, SignedReleaseManifest):
         raise ReleaseManifestError("manifest must be a SignedReleaseManifest")
@@ -625,9 +626,11 @@ def verify_release_manifest(
     for asset in manifest.core.assets:
         handle = resolved_assets[asset.binding_name]
         try:
-            require_handle_usage_context(handle, UsageContext.RELEASE)
+            require_handle_usage_context(handle, expected_asset_usage_context)
         except ValueError as exc:
-            raise ReleaseManifestError("asset handle is not authorized for release") from exc
+            raise ReleaseManifestError(
+                "asset handle is not authorized for the expected context"
+            ) from exc
         expected_blobs = tuple(
             (
                 blob.role,
