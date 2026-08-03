@@ -47,6 +47,7 @@ class KubernetesCluster:
             f"--num-nodes={self.num_nodes}",
             f"--min-nodes={self.min_nodes}",
             f"--max-nodes={self.max_nodes}",
+            "--binauthz-evaluation-mode=PROJECT_SINGLETON_POLICY_ENFORCE",
             f"--project={self.project_id}",
             "--async",
             "--quiet",
