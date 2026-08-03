@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Dict, Optional, Protocol, Tuple
 
+from aigear.management.v2.canonical import digest_sha256_of_jcs
 from aigear.management.v2.identifiers import TypedId
 from aigear.management.v2.naming import validate_segment
 
@@ -23,6 +24,7 @@ __all__ = [
     "EndpointSliceState",
     "ProbeRequest",
     "ProbeResult",
+    "compute_probe_evidence_digest",
     "DrainResult",
     "KubernetesReleasePort",
     "FakeKubernetesReleasePort",
@@ -267,12 +269,89 @@ class ProbeRequest:
     pod_uid: str
     fencing_token: int
 
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "service_name",
+            validate_segment(self.service_name, field_name="service_name"),
+        )
+        _typed("release_id", self.release_id)
+        if not isinstance(self.pod_uid, str) or not self.pod_uid:
+            raise KubernetesReleaseError("pod_uid must be a non-empty str")
+        _positive("fencing_token", self.fencing_token)
+
+
+def compute_probe_evidence_digest(
+    *,
+    passed: bool,
+    release_id: TypedId,
+    image_digest: TypedId,
+    asset_version_ids: Tuple[TypedId, ...],
+    runtime_contract_digest: TypedId,
+) -> TypedId:
+    if not isinstance(passed, bool):
+        raise KubernetesReleaseError("passed must be a bool")
+    for field_name, value in (
+        ("release_id", release_id),
+        ("image_digest", image_digest),
+        ("runtime_contract_digest", runtime_contract_digest),
+    ):
+        _typed(field_name, value)
+    if isinstance(asset_version_ids, list):
+        asset_version_ids = tuple(asset_version_ids)
+    if (
+        not isinstance(asset_version_ids, tuple)
+        or not asset_version_ids
+        or not all(isinstance(value, TypedId) for value in asset_version_ids)
+        or asset_version_ids
+        != tuple(sorted(asset_version_ids, key=lambda value: value.typed))
+        or len(set(asset_version_ids)) != len(asset_version_ids)
+    ):
+        raise KubernetesReleaseError(
+            "asset_version_ids must be a non-empty sorted unique tuple of TypedId"
+        )
+    return TypedId.from_bare(
+        digest_sha256_of_jcs(
+            [
+                "aigear.release-smoke-response.v2",
+                passed,
+                release_id.typed,
+                image_digest.typed,
+                [value.typed for value in asset_version_ids],
+                runtime_contract_digest.typed,
+            ]
+        )
+    )
+
 
 @dataclass(frozen=True)
 class ProbeResult:
     passed: bool
+    release_id: TypedId
+    image_digest: TypedId
+    asset_version_ids: Tuple[TypedId, ...]
+    runtime_contract_digest: TypedId
     evidence_digest: TypedId
     summary: str = ""
+
+    def __post_init__(self) -> None:
+        if isinstance(self.asset_version_ids, list):
+            object.__setattr__(
+                self, "asset_version_ids", tuple(self.asset_version_ids)
+            )
+        expected = compute_probe_evidence_digest(
+            passed=self.passed,
+            release_id=self.release_id,
+            image_digest=self.image_digest,
+            asset_version_ids=self.asset_version_ids,
+            runtime_contract_digest=self.runtime_contract_digest,
+        )
+        if self.evidence_digest != expected:
+            raise KubernetesReleaseError(
+                "evidence_digest does not match the exact probe response"
+            )
+        if not isinstance(self.summary, str):
+            raise KubernetesReleaseError("summary must be a str")
 
 
 @dataclass(frozen=True)

@@ -15,6 +15,7 @@ from aigear.management.v2.release_kubernetes import (
     ProbeRequest,
     ProbeResult,
     ServiceTrafficPatch,
+    compute_probe_evidence_digest,
 )
 
 
@@ -130,9 +131,22 @@ def test_endpoint_slice_converges_after_configured_read_delay():
 
 def test_probe_is_explicitly_configured_per_pod():
     port = FakeKubernetesReleasePort()
+    image_digest = TypedId.from_bare("bb" * 32)
+    asset_version_ids = (TypedId.from_bare("cc" * 32),)
+    runtime_contract_digest = TypedId.from_bare("dd" * 32)
     result = ProbeResult(
         passed=True,
-        evidence_digest=TypedId.from_bare("cc" * 32),
+        release_id=_RELEASE,
+        image_digest=image_digest,
+        asset_version_ids=asset_version_ids,
+        runtime_contract_digest=runtime_contract_digest,
+        evidence_digest=compute_probe_evidence_digest(
+            passed=True,
+            release_id=_RELEASE,
+            image_digest=image_digest,
+            asset_version_ids=asset_version_ids,
+            runtime_contract_digest=runtime_contract_digest,
+        ),
         summary="ok",
     )
     port.set_probe_result("pod-1", result)
@@ -145,6 +159,18 @@ def test_probe_is_explicitly_configured_per_pod():
             fencing_token=1,
         )
     ) == result
+
+
+def test_probe_result_rejects_an_unbound_evidence_digest():
+    with pytest.raises(ValueError, match="exact probe response"):
+        ProbeResult(
+            passed=True,
+            release_id=_RELEASE,
+            image_digest=TypedId.from_bare("bb" * 32),
+            asset_version_ids=(TypedId.from_bare("cc" * 32),),
+            runtime_contract_digest=TypedId.from_bare("dd" * 32),
+            evidence_digest=TypedId.from_bare("ee" * 32),
+        )
 
 
 def test_drain_reports_deterministic_long_connection_progress():
