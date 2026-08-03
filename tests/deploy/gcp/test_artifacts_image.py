@@ -10,6 +10,7 @@ from aigear.deploy.gcp.artifacts_image import (
     retag_artifacts_image,
     _validate_dockerfile_venvs,
 )
+from aigear.deploy.common.build_context import BuildContextViolation
 
 IMAGE_PATH = "asia-northeast1-docker.pkg.dev/proj/repo/my-image:latest"
 IMAGE_NAME = "asia-northeast1-docker.pkg.dev/proj/repo/my-image"
@@ -22,13 +23,17 @@ def _make_local() -> LocalImage:
 # ── LocalImage.build ─────────────────────────────────────────────────────────
 
 @patch("aigear.deploy.gcp.artifacts_image.run_sh_stream")
-def test_local_build_returns_true_on_success(mock_stream):
+@patch("aigear.deploy.gcp.artifacts_image.scan_build_context")
+def test_local_build_returns_true_on_success(mock_scan, mock_stream):
+    mock_scan.return_value.manifest_sha256 = "ab" * 32
     mock_stream.return_value = 0
     assert _make_local().build(dockerfile_path="Dockerfile.pl") is True
 
 
 @patch("aigear.deploy.gcp.artifacts_image.run_sh_stream")
-def test_local_build_returns_false_on_failure(mock_stream):
+@patch("aigear.deploy.gcp.artifacts_image.scan_build_context")
+def test_local_build_returns_false_on_failure(mock_scan, mock_stream):
+    mock_scan.return_value.manifest_sha256 = "ab" * 32
     mock_stream.return_value = 1
     assert _make_local().build(dockerfile_path="Dockerfile.pl") is False
 
@@ -38,11 +43,37 @@ def test_local_build_returns_false_when_no_dockerfile():
 
 
 @patch("aigear.deploy.gcp.artifacts_image.run_sh_stream")
-def test_local_build_correct_command(mock_stream):
+@patch("aigear.deploy.gcp.artifacts_image.scan_build_context")
+def test_local_build_correct_command(mock_scan, mock_stream):
+    mock_scan.return_value.manifest_sha256 = "ab" * 32
     mock_stream.return_value = 0
     _make_local().build(dockerfile_path="Dockerfile.pl", build_context=".")
     cmd = mock_stream.call_args[0][0]
-    assert cmd == ["docker", "build", "-f", "Dockerfile.pl", "-t", IMAGE_PATH, "."]
+    assert cmd == [
+        "docker",
+        "build",
+        "-f",
+        "Dockerfile.pl",
+        "-t",
+        IMAGE_PATH,
+        "--label",
+        f"com.aigear.build-context-manifest={'ab' * 32}",
+        ".",
+    ]
+
+
+@patch("aigear.deploy.gcp.artifacts_image.run_sh_stream")
+@patch("aigear.deploy.gcp.artifacts_image.scan_build_context")
+def test_local_build_stops_before_docker_when_security_scan_fails(
+    mock_scan, mock_stream, caplog
+):
+    mock_scan.side_effect = BuildContextViolation(("credential_file",))
+
+    assert _make_local().build(dockerfile_path="Dockerfile.pl") is False
+
+    mock_stream.assert_not_called()
+    assert "credential_file" in caplog.text
+    assert "rotate exposed credentials" in caplog.text
 
 
 # ── LocalImage.tag ────────────────────────────────────────────────────────────
