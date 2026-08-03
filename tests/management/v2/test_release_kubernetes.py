@@ -124,9 +124,15 @@ def test_endpoint_slice_converges_after_configured_read_delay():
 
     assert port.get_endpoint_slice("predictor").endpoints == ()
     assert port.get_endpoint_slice("predictor").endpoints == ()
-    endpoints = port.get_endpoint_slice("predictor").endpoints
-    assert len(endpoints) == 2
-    assert all(endpoint.release_id == _RELEASE and endpoint.ready for endpoint in endpoints)
+    endpoint_slice = port.get_endpoint_slice("predictor")
+    assert endpoint_slice.resource_version == (
+        f"endpoint-slice-{port.get_service('predictor').resource_version}"
+    )
+    assert len(endpoint_slice.endpoints) == 2
+    assert all(
+        endpoint.release_id == _RELEASE and endpoint.ready
+        for endpoint in endpoint_slice.endpoints
+    )
 
 
 def test_probe_is_explicitly_configured_per_pod():

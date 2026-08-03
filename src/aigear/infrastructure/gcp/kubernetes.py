@@ -462,7 +462,7 @@ class GkeKubernetesReleaseAdapter:
         metadata = self._metadata(result)
         return EndpointSliceState(
             service_name=service_name,
-            service_resource_version=metadata.resource_version,
+            resource_version=metadata.resource_version,
             endpoints=tuple(sorted(endpoints, key=lambda value: value.pod_uid)),
         )
 

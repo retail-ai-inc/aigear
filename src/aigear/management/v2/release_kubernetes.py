@@ -254,12 +254,36 @@ class EndpointState:
     release_id: TypedId
     ready: bool
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.pod_uid, str) or not self.pod_uid:
+            raise KubernetesReleaseError("pod_uid must be a non-empty str")
+        _typed("release_id", self.release_id)
+        if not isinstance(self.ready, bool):
+            raise KubernetesReleaseError("ready must be a bool")
+
 
 @dataclass(frozen=True)
 class EndpointSliceState:
     service_name: str
-    service_resource_version: str
+    resource_version: str
     endpoints: Tuple[EndpointState, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "service_name",
+            validate_segment(self.service_name, field_name="service_name"),
+        )
+        if not isinstance(self.resource_version, str) or not self.resource_version:
+            raise KubernetesReleaseError(
+                "EndpointSlice resource_version must be a non-empty str"
+            )
+        if isinstance(self.endpoints, list):
+            object.__setattr__(self, "endpoints", tuple(self.endpoints))
+        if not all(isinstance(value, EndpointState) for value in self.endpoints):
+            raise KubernetesReleaseError(
+                "endpoints must contain EndpointState values"
+            )
 
 
 @dataclass(frozen=True)
@@ -522,7 +546,11 @@ class FakeKubernetesReleasePort:
                     )
         return EndpointSliceState(
             service_name=service_name,
-            service_resource_version=service.resource_version,
+            resource_version=(
+                f"endpoint-slice-{service.resource_version}"
+                if endpoints
+                else f"endpoint-slice-{service.resource_version}-pending"
+            ),
             endpoints=endpoints,
         )
 
