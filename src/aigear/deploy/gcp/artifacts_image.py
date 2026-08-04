@@ -6,6 +6,10 @@ from aigear.common.config import AigearConfig, AppConfig
 from aigear.common.constant import VENV_BASE_DIR
 from aigear.common.image import get_image_path
 from aigear.common.logger import Logging
+from aigear.deploy.common.build_context import (
+    BuildContextViolation,
+    scan_build_context,
+)
 
 logger = Logging(log_name=__name__).console_logging()
 
@@ -21,6 +25,30 @@ class LocalImage:
                 "Please specify Dockerfile (Dockerfile.pl or Dockerfile.ms) to build the image."
             )
             return False
+        dockerfile = Path(dockerfile_path)
+        if not dockerfile.is_absolute():
+            context_dockerfile = Path(build_context) / dockerfile
+            if context_dockerfile.is_file():
+                dockerfile = context_dockerfile
+        try:
+            manifest = scan_build_context(
+                build_context,
+                dockerfile,
+                allowed_copy_roots=(
+                    "src",
+                    "requirements_pl.txt",
+                    "requirements_ms.txt",
+                ),
+            )
+        except BuildContextViolation as exc:
+            logger.error(str(exc))
+            return False
+        except Exception:
+            logger.error(
+                "build security guard failed closed; inspect the context binding, "
+                "rotate potentially exposed credentials, and rebuild affected images"
+            )
+            return False
         command = [
             "docker",
             "build",
@@ -28,6 +56,8 @@ class LocalImage:
             dockerfile_path,
             "-t",
             self.image_path,
+            "--label",
+            f"com.aigear.build-context-manifest={manifest.manifest_sha256}",
             build_context,
         ]
         return run_sh_stream(command) == 0

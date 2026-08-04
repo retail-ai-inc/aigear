@@ -18,6 +18,7 @@ def _make_infra():
     cfg.gcp.cloud_build.trigger_name = "my-trigger"
     cfg.gcp.cloud_function.function_name = "my-function"
     cfg.gcp.kubernetes.cluster_name = "my-cluster"
+    cfg.gcp.firestore.on = True
     infra.aigear_config = cfg
     infra.project_id = "my-project"
     infra.location = "asia-northeast1"
@@ -152,6 +153,45 @@ def test_ensure_cloud_build_skips_when_exists():
     infra.cloud_build.describe.return_value = True
     infra._ensure_cloud_build()
     infra.cloud_build.create.assert_not_called()
+
+
+@patch("aigear.infrastructure.gcp.infra.run_sh")
+def test_ensure_firestore_enables_api_when_missing(mock_run_sh):
+    mock_run_sh.side_effect = ["", "", '{"name": "(default)"}']
+    infra = _make_infra()
+
+    infra._ensure_firestore()
+
+    commands = [call[0][0] for call in mock_run_sh.call_args_list]
+    assert any(command[:4] == ["gcloud", "services", "enable", "firestore.googleapis.com"] for command in commands)
+    assert any(command[:4] == ["gcloud", "firestore", "databases", "describe"] for command in commands)
+
+
+@patch("aigear.infrastructure.gcp.infra.run_sh")
+def test_ensure_firestore_skips_enable_when_api_enabled(mock_run_sh):
+    mock_run_sh.side_effect = ["firestore.googleapis.com", '{"name": "(default)"}']
+    infra = _make_infra()
+
+    infra._ensure_firestore()
+
+    commands = [call[0][0] for call in mock_run_sh.call_args_list]
+    assert not any(command[:3] == ["gcloud", "services", "enable"] for command in commands)
+
+
+@patch("aigear.infrastructure.gcp.infra.run_sh")
+def test_ensure_firestore_raises_clear_error_when_database_unavailable(mock_run_sh):
+    mock_run_sh.side_effect = [
+        "firestore.googleapis.com",
+        RuntimeError("NOT_FOUND"),
+    ]
+    infra = _make_infra()
+
+    try:
+        infra._ensure_firestore()
+    except RuntimeError as exc:
+        assert "Firestore default database '(default)' is not accessible" in str(exc)
+    else:
+        raise AssertionError("expected RuntimeError")
 
 
 # ── _ensure_kubernetes_cluster ────────────────────────────────────────────────
@@ -367,6 +407,14 @@ def test_status_kms_returns_disabled_when_no_enabled_version():
     infra.cloud_kms.describe_enabled_key_version.return_value = False
     result = infra._status_kms()
     assert "DISABLED" in result
+
+
+@patch("aigear.infrastructure.gcp.infra.run_sh")
+def test_status_firestore_returns_true_for_default_database(mock_run_sh):
+    mock_run_sh.return_value = "projects/my-project/databases/(default)"
+    infra = _make_infra()
+
+    assert infra._status_firestore() is True
 
 
 # ── _build_substitutions ──────────────────────────────────────────────────────

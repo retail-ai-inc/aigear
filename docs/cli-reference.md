@@ -10,6 +10,7 @@ All CLI entry points are installed as standalone commands by `pip install aigear
 | `aigear-scheduler` | Create a Cloud Scheduler job for pipeline steps |
 | `aigear-image` | Build and optionally push Docker images to Artifact Registry |
 | `aigear-model` | Generate YAML and manage the lifecycle of a gRPC model service (deploy, update, delete, status) |
+| `aigear-asset` | Query and register versioned dataset, feature, model, and service assets |
 | `aigear-env-schema` | Auto-generate a Pydantic schema from `env.json` |
 | `aigear-kms-env` | Encrypt or decrypt `env.json` using Cloud KMS |
 | `aigear-logs` | Discover pipeline runs and query Cloud Logging by `run_id` |
@@ -35,7 +36,7 @@ aigear-init [--name NAME] [--pipeline_versions VERSIONS]
 
 ### `aigear-infra`
 
-Read `env.json` and manage all defined GCP resources (buckets, Pub/Sub topics, Cloud Function, Artifact Registry, KMS, Cloud Build trigger, GKE cluster, service accounts, etc.).
+Read `env.json` and manage all defined GCP resources (buckets, Pub/Sub topics, Cloud Function, Artifact Registry, KMS, Cloud Build trigger, GKE cluster, Firestore metadata access, service accounts, etc.).
 
 ```
 aigear-infra {--create | --update | --delete | --status}
@@ -53,7 +54,7 @@ aigear-infra {--create | --update | --delete | --status}
 | Phase | Resources | Mode |
 |---|---|---|
 | 1 | Service Account + IAM bindings | Sequential (must be first) |
-| 2 | Buckets, Artifact Registry, Pub/Sub topic, KMS, Cloud Build, Pre-VM Image, Kubernetes, Cloud Function (deploy only, no Pub/Sub trigger) | **Parallel** |
+| 2 | Buckets, Artifact Registry, Pub/Sub topic, KMS, Cloud Build, Firestore, Pre-VM Image, Kubernetes, Cloud Function (deploy only, no Pub/Sub trigger) | **Parallel** |
 | 3 | Eventarc Pub/Sub trigger | Sequential (requires Pub/Sub topic **and** Cloud Function from Phase 2) |
 
 Phase 3 runs only when **both** `gcp.pub_sub.on` and `gcp.cloud_function.on` are `true`. The trigger creates the Pub/Sub **subscription** that delivers topic messages to the function (per [Cloud Run Pub/Sub triggers](https://cloud.google.com/run/docs/triggering/pubsub-triggers#gcloud)). Aigear sets the push subscription **ack deadline to 300s** and **minimum retry backoff to 60s** (Eventarc defaults are ~10s, which causes duplicate Cloud Function invocations during VM insert). **`aigear-infra --update`** re-applies these settings when the trigger already exists.
@@ -69,6 +70,7 @@ Phase 3 runs only when **both** `gcp.pub_sub.on` and `gcp.cloud_function.on` are
 Pub/Sub topic deletion removes any remaining subscriptions on that topic before the topic itself is deleted.
 
 - Each step is idempotent — existing resources are detected and skipped.
+- Firestore is the metadata backend for versioned assets. `aigear-infra --create` enables `firestore.googleapis.com`, checks the `(default)` database, and grants the runtime service account `roles/datastore.user`.
 - If the GCP default subnet is not yet ready (common in new projects), Pre-VM Image creation retries automatically up to 5 times with a 30-second wait between attempts.
 - Requires owner-level GCP permissions. Recommended to run from Cloud Shell.
 
@@ -100,12 +102,13 @@ aigear-task workflow --version VERSION --step STEP_NAME
 Start a gRPC model serving server. The model class path is resolved from `env.json`.
 
 ```
-aigear-task grpc --version VERSION
+aigear-task grpc --version VERSION [--service-version SERVICE_VERSION]
 ```
 
 | Argument | Description |
 |---|---|
 | `--version` | Pipeline version (e.g., `logistic_regression`) |
+| `--service-version` | Optional service asset version. When set, Aigear exports `AIGEAR_SERVICE_VERSION` and model asset environment variables before loading the service class. |
 
 ---
 
@@ -219,8 +222,9 @@ Manage the full lifecycle of a gRPC model service: generate the Kubernetes deplo
 
 ```
 aigear-model --version VERSION {--local | --staging | --production}
-             {--yaml | --deploy | --update | --delete | --status}
+             {--yaml | --deploy | --update | --delete | --status | --rollback}
              [--service_ports PORTS] [--replicas N] [--port PORT]
+             [--service-version SERVICE_VERSION]
 ```
 
 **Environment (required, mutually exclusive)**
@@ -240,6 +244,7 @@ aigear-model --version VERSION {--local | --staging | --production}
 | `--update` | Create the YAML if it does not yet exist, then re-apply with any new parameters |
 | `--delete` | Switch to the target context and delete the service deployment |
 | `--status` | Switch to the target context and show the current deployment status |
+| `--rollback` | Recreate deployment YAML from the previous or specified service asset record, then update the service |
 
 **Optional parameters**
 
@@ -249,6 +254,7 @@ aigear-model --version VERSION {--local | --staging | --production}
 | `--service_ports` | `50051` | Internal container port(s) |
 | `--replicas` | `1` | Number of service replicas |
 | `--port` | `50051` | External service port |
+| `--service-version` | previous alias | Rollback target service asset version, used only with `--rollback` |
 
 > **Auto-force:** Passing any of `--service_ports`, `--replicas`, or `--port` automatically overwrites the existing YAML, so the new parameters take effect immediately. `--yaml` always overwrites.
 
@@ -269,7 +275,56 @@ aigear-model --version logistic_regression --production --status
 
 # Delete the local deployment
 aigear-model --version logistic_regression --local --delete
+
+# Roll back to the previous tracked service version
+aigear-model --version logistic_regression --staging --rollback
+
+# Roll back to an explicit tracked service version
+aigear-model --version logistic_regression --staging --rollback --service-version service-v2
 ```
+
+---
+
+### `aigear-asset`
+
+Query and register versioned pipeline assets stored in GCS or `LocalGCSMock` with metadata stored in Firestore.
+
+```
+aigear-asset <command> --pipeline-version VERSION --type TYPE [options]
+```
+
+`--version` is accepted as a compatibility alias for `--pipeline-version`. `--asset-version` always means the dataset, feature, model, or service artifact version.
+
+| Command | Description |
+|---|---|
+| `list` | List asset records, optionally filtered by name, run, step, status, or limit |
+| `latest` | Show the latest active asset for a type/name |
+| `lineage` | Show upstream asset lineage for a version, defaulting to latest |
+| `alias` | Read or set an alias such as `champion` |
+| `register-external` | Register an external URI without uploading a file |
+
+**Examples**
+
+```bash
+# Latest model for a pipeline version. Model name defaults to the pipeline version.
+aigear-asset latest --pipeline-version logistic_regression --type model
+
+# List all feature assets for the pipeline version.
+aigear-asset list --pipeline-version logistic_regression --type feature
+
+# Trace model lineage back through feature and dataset records.
+aigear-asset lineage --pipeline-version logistic_regression --type model
+
+# Read the service champion alias.
+aigear-asset alias --pipeline-version logistic_regression --type service \
+  --name aigear-sklearn-pipeline-logistic-regression-service --alias champion
+
+# Register a manually uploaded dataset URI.
+aigear-asset register-external --pipeline-version logistic_regression \
+  --type dataset --name raw_data --uri gs://my-bucket/manual/raw.csv
+```
+
+When `--name` is omitted, `model` defaults to the pipeline version. For dataset, feature, and service assets, Aigear auto-resolves the name only when exactly one candidate exists; if multiple candidates exist, the CLI prints the available names and asks for `--name`.
 
 ---
 

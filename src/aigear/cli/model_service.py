@@ -1,7 +1,17 @@
 import argparse
+from pathlib import Path
+import re
 
 from aigear.common.constant import ENV_LOCAL, ENV_PRODUCTION, ENV_STAGING
+from aigear.common.config import get_project_name
 from aigear.deploy.common.helm_chart import create_helm_file, get_helm_path
+from aigear.management.registry import (
+    AssetRecord,
+    AssetRegistry,
+    FirestoreAssetRegistry,
+)
+from aigear.service.grpc.constant import DEFAULT_GRPC_PORT
+from aigear.common.image import get_image_path
 
 
 def _get_parser() -> argparse.ArgumentParser:
@@ -47,12 +57,24 @@ def _get_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Show the status of the gRPC model service deployment",
     )
+    op_group.add_argument(
+        "--rollback",
+        action="store_true",
+        help="Rollback the gRPC model service to the previous or requested service version",
+    )
+    parser.add_argument(
+        "--service-version",
+        help="Service asset version used by rollback.",
+    )
     return parser
 
 
-def run_model_cli() -> None:
+def run_model_cli(
+    argv: list[str] | None = None,
+    registry: AssetRegistry | None = None,
+) -> None:
     parser = _get_parser()
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if args.local:
         env = ENV_LOCAL
@@ -61,7 +83,16 @@ def run_model_cli() -> None:
     else:
         env = ENV_PRODUCTION
 
-    if args.yaml or args.deploy or args.update:
+    if args.rollback:
+        registry = registry or _create_registry(args.version)
+        helm_path = _prepare_rollback_yaml(args, env, registry)
+    elif args.yaml or args.deploy or args.update:
+        service_version = None
+        if args.deploy or args.update:
+            registry = registry or _create_registry(args.version)
+            service_version = _next_service_version(
+                registry.latest("service", _service_name(args.version))
+            )
         force = args.yaml or any(
             x is not None for x in [args.service_ports, args.replicas, args.port]
         )
@@ -72,13 +103,16 @@ def run_model_cli() -> None:
             port=args.port,
             env=env,
             force=force,
+            service_version=service_version,
         )
         if args.yaml:
             return
     else:
         helm_path = get_helm_path(pipeline_version=args.version, env=env)
 
-    op = next(k for k in ("deploy", "update", "delete", "status") if getattr(args, k))
+    op = "update" if args.rollback else next(
+        k for k in ("deploy", "update", "delete", "status") if getattr(args, k)
+    )
 
     if env == ENV_LOCAL:
         from aigear.deploy.local.grpc_local_deploy import (
@@ -110,3 +144,100 @@ def run_model_cli() -> None:
         }
 
     ops[op](helm_path)
+    if args.deploy or args.update:
+        _register_service_asset(args, env, helm_path, registry, service_version)
+
+
+def _create_registry(pipeline_version: str) -> AssetRegistry:
+    return FirestoreAssetRegistry(
+        project_name=get_project_name() or "",
+        pipeline_version=pipeline_version,
+    )
+
+
+def _register_service_asset(
+    args: argparse.Namespace,
+    env: str,
+    helm_path: Path,
+    registry: AssetRegistry,
+    version: str | None = None,
+) -> AssetRecord:
+    service_name = _service_name(args.version)
+    model = registry.latest("model", args.version)
+    version = version or _next_service_version(registry.latest("service", service_name))
+    metadata = _service_metadata(args, env, helm_path, service_name)
+    record = AssetRecord(
+        asset_type="service",
+        name=service_name,
+        version=version,
+        uri=str(helm_path),
+        file_name=helm_path.name,
+        step_name="model_service",
+        pipeline_version=args.version,
+        project_name=get_project_name() or "",
+        inputs=[model.ref] if model else [],
+        metadata=metadata,
+        status="active",
+    )
+    registered = registry.register(record)
+    registry.set_alias("service", service_name, "champion", version)
+    return registered
+
+
+def _prepare_rollback_yaml(
+    args: argparse.Namespace,
+    env: str,
+    registry: AssetRegistry,
+) -> Path:
+    service_name = _service_name(args.version)
+    target_version = args.service_version or registry.get_alias(
+        "service", service_name, "previous"
+    )
+    if target_version is None:
+        raise SystemExit(f"No rollback target found for service {service_name}")
+    record = registry.get("service", service_name, target_version)
+    if record is None:
+        raise SystemExit(f"Service version not found: {service_name}/{target_version}")
+    metadata = record.metadata
+    return create_helm_file(
+        pipeline_version=args.version,
+        service_ports=str(metadata.get("service_ports") or DEFAULT_GRPC_PORT),
+        replicas=int(metadata.get("replicas") or 1),
+        port=str(metadata.get("port") or DEFAULT_GRPC_PORT),
+        env=env,
+        force=True,
+        service_version=target_version,
+    )
+
+
+def _service_metadata(
+    args: argparse.Namespace,
+    env: str,
+    helm_path: Path,
+    service_name: str,
+) -> dict:
+    return {
+        "image": get_image_path(is_service=True),
+        "env": env,
+        "port": str(args.port or DEFAULT_GRPC_PORT),
+        "service_ports": str(args.service_ports or DEFAULT_GRPC_PORT),
+        "replicas": args.replicas if args.replicas is not None else 1,
+        "pipeline_version": args.version,
+        "service_name": service_name,
+        "yaml_uri": str(helm_path),
+    }
+
+
+def _service_name(pipeline_version: str) -> str:
+    project_name = (get_project_name() or "").replace("_", "-")
+    version = pipeline_version.replace("_", "-")
+    return f"{project_name}-{version}-service"
+
+
+def _next_service_version(latest: AssetRecord | None) -> str:
+    if latest is None:
+        return "service-v1"
+    match = re.fullmatch(r"service-v(\d+)", latest.version)
+    if not match:
+        return "service-v1"
+    return f"service-v{int(match.group(1)) + 1}"

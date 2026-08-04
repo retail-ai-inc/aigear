@@ -4,6 +4,7 @@ from sklearn.metrics import accuracy_score, classification_report
 import pickle
 from aigear.common.logger import Logging
 from aigear.management.asset import AssetManagement
+from aigear.management.versioned_asset import VersionedAssetManagement
 from aigear.common.config import EnvConfig
 from config_schema.env_schema import EnvSchema
 from src.pipelines.common.constant import gcs_switch
@@ -22,6 +23,12 @@ def save_model(
 def train_model(pipeline_version: str) -> None:
     logger.info("-----train model-----")
     env_config = EnvConfig.get_config_with_schema(EnvSchema)
+    versioned_assets = VersionedAssetManagement(
+        pipeline_version=pipeline_version,
+        project_id=env_config.aigear.gcp.gcp_project_id,
+        bucket_name=env_config.aigear.gcp.bucket.bucket_name,
+        bucket_on=gcs_switch,
+    )
     feature_management = AssetManagement(
         pipeline_version=pipeline_version,
         data_type="feature",
@@ -30,7 +37,16 @@ def train_model(pipeline_version: str) -> None:
         bucket_on=gcs_switch,
     )
     feature_file_name = env_config.pipelines.logistic_regression.preprocessing.parameters.feature_file_name
-    features_path = feature_management.download(feature_file_name)
+    feature_record = versioned_assets.registry.latest("feature", "training_features")
+    features_path = (
+        versioned_assets.download_version(
+            asset_type="feature",
+            asset_name="training_features",
+            version=feature_record.version if feature_record else None,
+        )
+        if feature_record
+        else feature_management.download(feature_file_name)
+    )
     with open(features_path, "rb") as f:
         features = pickle.load(f)
     x_train, x_test, y_train, y_test = features
@@ -38,7 +54,8 @@ def train_model(pipeline_version: str) -> None:
     model = LogisticRegression(max_iter=1000, random_state=42)
     model.fit(x_train, y_train)
     y_pred = model.predict(x_test)
-    print("Accuracy:", accuracy_score(y_test, y_pred))
+    accuracy = accuracy_score(y_test, y_pred)
+    print("Accuracy:", accuracy)
     print("\nClassification Report:")
     print(classification_report(y_test, y_pred))
 
@@ -55,6 +72,18 @@ def train_model(pipeline_version: str) -> None:
     model_path = training_management.get_local_path(model_name)
     save_model(model, model_path)
     training_management.upload(model_name)
+    versioned_assets.upload_version(
+        file_name=str(model_path),
+        asset_type="model",
+        asset_name=pipeline_version,
+        inputs=[feature_record.ref] if feature_record else [],
+        metadata={
+            "metrics": {
+                "accuracy": accuracy,
+            },
+            "algorithm": "sklearn.linear_model.LogisticRegression",
+        },
+    )
     logger.info("-----train model completed-----")
 
 

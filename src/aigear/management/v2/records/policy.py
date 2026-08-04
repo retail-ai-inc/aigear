@@ -1,0 +1,683 @@
+"""Immutable policy-decision records and the monotonic subject head."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime
+from enum import Enum
+from typing import Optional, Tuple
+
+from aigear.management.v2.canonical import digest_sha256_of_jcs
+from aigear.management.v2.control_document import parse_schema_version
+from aigear.management.v2.identifiers import TypedId
+from aigear.management.v2.naming import validate_segment
+
+__all__ = [
+    "InvalidPolicyRecordError",
+    "PolicyDecisionConflictError",
+    "PolicyDecision",
+    "PolicyDecisionOperationPhase",
+    "validate_policy_decision_operation_transition",
+    "compute_subject_epoch_key",
+    "PolicyDecisionUnsignedEnvelope",
+    "PolicyDecisionRequest",
+    "PolicyDecisionReservationLock",
+    "PolicyDecisionVerificationRecord",
+    "PolicyDecisionJournalReceipt",
+    "PolicyDecisionOperationRecord",
+    "PolicyDecisionEpochBinding",
+    "PolicyDecisionHead",
+    "require_effective_policy_head",
+]
+
+
+class InvalidPolicyRecordError(ValueError):
+    """Raised when a policy record is malformed or not currently effective."""
+
+
+class PolicyDecisionConflictError(ValueError):
+    """Raised when one subject epoch is bound to different attestations."""
+
+
+class PolicyDecision(str, Enum):
+    APPROVED = "approved"
+    REVOKED = "revoked"
+
+
+class PolicyDecisionOperationPhase(str, Enum):
+    RESERVED = "reserved"
+    ATTESTING = "attesting"
+    VERIFIED = "verified"
+    JOURNALING = "journaling"
+    COMMITTING = "committing"
+    SUCCEEDED = "succeeded"
+    RECONCILING = "reconciling"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+_POLICY_OPERATION_TRANSITIONS = {
+    PolicyDecisionOperationPhase.RESERVED: frozenset(
+        {
+            PolicyDecisionOperationPhase.ATTESTING,
+            PolicyDecisionOperationPhase.RECONCILING,
+            PolicyDecisionOperationPhase.FAILED,
+            PolicyDecisionOperationPhase.CANCELLED,
+        }
+    ),
+    PolicyDecisionOperationPhase.ATTESTING: frozenset(
+        {
+            PolicyDecisionOperationPhase.VERIFIED,
+            PolicyDecisionOperationPhase.RECONCILING,
+            PolicyDecisionOperationPhase.FAILED,
+            PolicyDecisionOperationPhase.CANCELLED,
+        }
+    ),
+    PolicyDecisionOperationPhase.VERIFIED: frozenset(
+        {
+            PolicyDecisionOperationPhase.JOURNALING,
+            PolicyDecisionOperationPhase.RECONCILING,
+            PolicyDecisionOperationPhase.FAILED,
+            PolicyDecisionOperationPhase.CANCELLED,
+        }
+    ),
+    PolicyDecisionOperationPhase.JOURNALING: frozenset(
+        {
+            PolicyDecisionOperationPhase.COMMITTING,
+            PolicyDecisionOperationPhase.RECONCILING,
+            PolicyDecisionOperationPhase.FAILED,
+        }
+    ),
+    PolicyDecisionOperationPhase.COMMITTING: frozenset(
+        {
+            PolicyDecisionOperationPhase.SUCCEEDED,
+            PolicyDecisionOperationPhase.RECONCILING,
+            PolicyDecisionOperationPhase.FAILED,
+        }
+    ),
+    PolicyDecisionOperationPhase.RECONCILING: frozenset(
+        {
+            PolicyDecisionOperationPhase.ATTESTING,
+            PolicyDecisionOperationPhase.VERIFIED,
+            PolicyDecisionOperationPhase.JOURNALING,
+            PolicyDecisionOperationPhase.COMMITTING,
+            PolicyDecisionOperationPhase.SUCCEEDED,
+            PolicyDecisionOperationPhase.FAILED,
+            PolicyDecisionOperationPhase.CANCELLED,
+        }
+    ),
+    PolicyDecisionOperationPhase.SUCCEEDED: frozenset(),
+    PolicyDecisionOperationPhase.FAILED: frozenset(),
+    PolicyDecisionOperationPhase.CANCELLED: frozenset(),
+}
+
+
+def validate_policy_decision_operation_transition(
+    current: PolicyDecisionOperationPhase,
+    target: PolicyDecisionOperationPhase,
+) -> None:
+    if (
+        not isinstance(current, PolicyDecisionOperationPhase)
+        or not isinstance(target, PolicyDecisionOperationPhase)
+        or target not in _POLICY_OPERATION_TRANSITIONS[current]
+    ):
+        raise PolicyDecisionConflictError(
+            f"illegal policy decision operation transition: {current!r} -> {target!r}"
+        )
+
+
+def _typed_id(field_name: str, value: object) -> None:
+    if not isinstance(value, TypedId):
+        raise InvalidPolicyRecordError(f"{field_name} must be a TypedId")
+
+
+def _non_empty(field_name: str, value: object) -> None:
+    if not isinstance(value, str) or not value:
+        raise InvalidPolicyRecordError(f"{field_name} must be a non-empty str")
+
+
+def _positive(field_name: str, value: object) -> None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise InvalidPolicyRecordError(f"{field_name} must be a positive int")
+
+
+def _non_negative(field_name: str, value: object) -> None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise InvalidPolicyRecordError(f"{field_name} must be a non-negative int")
+
+
+def _aware_timestamp(field_name: str, value: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value)
+    except (TypeError, ValueError) as exc:
+        raise InvalidPolicyRecordError(f"{field_name} must be an ISO timestamp") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise InvalidPolicyRecordError(f"{field_name} must be timezone-aware")
+    return parsed
+
+
+def _optional_aware_timestamp(field_name: str, value: Optional[str]) -> None:
+    if value is not None:
+        _aware_timestamp(field_name, value)
+
+
+def compute_subject_epoch_key(subject_asset_version_id: TypedId, decision_epoch: int) -> TypedId:
+    _typed_id("subject_asset_version_id", subject_asset_version_id)
+    _positive("decision_epoch", decision_epoch)
+    return TypedId.from_bare(
+        digest_sha256_of_jcs(
+            [
+                "aigear.policy-decision-epoch.v2",
+                subject_asset_version_id.typed,
+                decision_epoch,
+            ]
+        )
+    )
+
+
+@dataclass(frozen=True)
+class PolicyDecisionUnsignedEnvelope:
+    schema_version: str
+    operation_id: str
+    fencing_token: int
+    environment_id: str
+    environment_fingerprint: TypedId
+    subject_asset_version_id: TypedId
+    decision: PolicyDecision
+    decision_epoch: int
+    policy_version: str
+    policy_snapshot_digest: TypedId
+    evidence_digests: Tuple[TypedId, ...]
+    evidence_closure_digest: TypedId
+    firestore_read_time: str
+    issued_at: str
+    not_before: str
+    valid_until: str
+    key_version: str
+
+    def __post_init__(self) -> None:
+        if isinstance(self.evidence_digests, list):
+            object.__setattr__(self, "evidence_digests", tuple(self.evidence_digests))
+        parse_schema_version(self.schema_version)
+        object.__setattr__(
+            self,
+            "operation_id",
+            validate_segment(self.operation_id, field_name="operation_id"),
+        )
+        _positive("fencing_token", self.fencing_token)
+        object.__setattr__(
+            self,
+            "environment_id",
+            validate_segment(self.environment_id, field_name="environment_id"),
+        )
+        _typed_id("environment_fingerprint", self.environment_fingerprint)
+        _typed_id("subject_asset_version_id", self.subject_asset_version_id)
+        if not isinstance(self.decision, PolicyDecision):
+            raise InvalidPolicyRecordError("decision must be a PolicyDecision")
+        _positive("decision_epoch", self.decision_epoch)
+        _non_empty("policy_version", self.policy_version)
+        _typed_id("policy_snapshot_digest", self.policy_snapshot_digest)
+        if not self.evidence_digests or not all(
+            isinstance(value, TypedId) for value in self.evidence_digests
+        ):
+            raise InvalidPolicyRecordError(
+                "evidence_digests must be a non-empty tuple of TypedId values"
+            )
+        ordered = tuple(sorted(self.evidence_digests, key=lambda value: value.typed.encode("utf-8")))
+        if ordered != self.evidence_digests:
+            raise InvalidPolicyRecordError("evidence_digests must be sorted by UTF-8 bytes")
+        if len(set(self.evidence_digests)) != len(self.evidence_digests):
+            raise InvalidPolicyRecordError("evidence_digests must not contain duplicates")
+        _typed_id("evidence_closure_digest", self.evidence_closure_digest)
+        read_time = _aware_timestamp("firestore_read_time", self.firestore_read_time)
+        issued_at = _aware_timestamp("issued_at", self.issued_at)
+        not_before = _aware_timestamp("not_before", self.not_before)
+        valid_until = _aware_timestamp("valid_until", self.valid_until)
+        if read_time > issued_at:
+            raise InvalidPolicyRecordError("firestore_read_time cannot be later than issued_at")
+        if not_before < issued_at:
+            raise InvalidPolicyRecordError("not_before cannot be earlier than issued_at")
+        if valid_until <= not_before:
+            raise InvalidPolicyRecordError("valid_until must be later than not_before")
+        _non_empty("key_version", self.key_version)
+
+    def to_jcs_dict(self) -> dict:
+        return {
+            "domain": "aigear.attestation.policy_decision.v2",
+            "schema_version": self.schema_version,
+            "attestation_kind": "policy_decision",
+            "operation_id": self.operation_id,
+            "fencing_token": self.fencing_token,
+            "environment_id": self.environment_id,
+            "environment_fingerprint": self.environment_fingerprint.typed,
+            "subject_asset_version_id": self.subject_asset_version_id.typed,
+            "decision": self.decision.value,
+            "decision_epoch": self.decision_epoch,
+            "policy_version": self.policy_version,
+            "policy_snapshot_digest": self.policy_snapshot_digest.typed,
+            "evidence_digests": [value.typed for value in self.evidence_digests],
+            "evidence_closure_digest": self.evidence_closure_digest.typed,
+            "firestore_read_time": self.firestore_read_time,
+            "issued_at": self.issued_at,
+            "not_before": self.not_before,
+            "valid_until": self.valid_until,
+            "key_version": self.key_version,
+        }
+
+    @property
+    def digest(self) -> TypedId:
+        return TypedId.from_bare(digest_sha256_of_jcs(self.to_jcs_dict()))
+
+
+@dataclass(frozen=True)
+class PolicyDecisionRequest:
+    schema_version: str
+    operation_id: str
+    request_fingerprint: TypedId
+    expected_head_revision: int
+    unsigned_envelope: PolicyDecisionUnsignedEnvelope
+    unsigned_envelope_digest: TypedId
+
+    def __post_init__(self) -> None:
+        parse_schema_version(self.schema_version)
+        object.__setattr__(
+            self, "operation_id", validate_segment(self.operation_id, field_name="operation_id")
+        )
+        _typed_id("request_fingerprint", self.request_fingerprint)
+        _non_negative("expected_head_revision", self.expected_head_revision)
+        if not isinstance(self.unsigned_envelope, PolicyDecisionUnsignedEnvelope):
+            raise InvalidPolicyRecordError(
+                "unsigned_envelope must be a PolicyDecisionUnsignedEnvelope"
+            )
+        if self.unsigned_envelope.schema_version != self.schema_version:
+            raise InvalidPolicyRecordError(
+                "request and unsigned envelope schema_version must match"
+            )
+        if self.unsigned_envelope.operation_id != self.operation_id:
+            raise InvalidPolicyRecordError(
+                "request and unsigned envelope operation_id must match"
+            )
+        _typed_id("unsigned_envelope_digest", self.unsigned_envelope_digest)
+        if self.unsigned_envelope.digest != self.unsigned_envelope_digest:
+            raise InvalidPolicyRecordError(
+                "unsigned_envelope_digest does not match unsigned_envelope"
+            )
+
+
+@dataclass(frozen=True)
+class PolicyDecisionReservationLock:
+    schema_version: str
+    environment_fingerprint: TypedId
+    subject_asset_version_id: TypedId
+    expected_head_revision: int
+    decision_epoch: int
+    operation_id: str
+    idempotency_key_hash: str
+    request_fingerprint: TypedId
+    fencing_token: int
+    revision: int
+    lease_expires_at: str
+    updated_at: str
+
+    def __post_init__(self) -> None:
+        parse_schema_version(self.schema_version)
+        _typed_id("environment_fingerprint", self.environment_fingerprint)
+        _typed_id("subject_asset_version_id", self.subject_asset_version_id)
+        _non_negative("expected_head_revision", self.expected_head_revision)
+        _positive("decision_epoch", self.decision_epoch)
+        object.__setattr__(
+            self,
+            "operation_id",
+            validate_segment(self.operation_id, field_name="operation_id"),
+        )
+        object.__setattr__(
+            self,
+            "idempotency_key_hash",
+            validate_segment(
+                self.idempotency_key_hash, field_name="idempotency_key_hash"
+            ),
+        )
+        _typed_id("request_fingerprint", self.request_fingerprint)
+        _positive("fencing_token", self.fencing_token)
+        _positive("revision", self.revision)
+        expires = _aware_timestamp("lease_expires_at", self.lease_expires_at)
+        updated = _aware_timestamp("updated_at", self.updated_at)
+        if expires <= updated:
+            raise InvalidPolicyRecordError(
+                "reservation lease_expires_at must be later than updated_at"
+            )
+
+
+@dataclass(frozen=True)
+class PolicyDecisionVerificationRecord:
+    schema_version: str
+    operation_id: str
+    request_fingerprint: TypedId
+    fencing_token: int
+    attestation_id: TypedId
+    message_id: str
+    publisher_principal: str
+    verified_at: str
+    verification_digest: TypedId
+
+    def __post_init__(self) -> None:
+        parse_schema_version(self.schema_version)
+        object.__setattr__(
+            self,
+            "operation_id",
+            validate_segment(self.operation_id, field_name="operation_id"),
+        )
+        _typed_id("request_fingerprint", self.request_fingerprint)
+        _positive("fencing_token", self.fencing_token)
+        _typed_id("attestation_id", self.attestation_id)
+        object.__setattr__(
+            self,
+            "message_id",
+            validate_segment(self.message_id, field_name="message_id"),
+        )
+        _non_empty("publisher_principal", self.publisher_principal)
+        _aware_timestamp("verified_at", self.verified_at)
+        _typed_id("verification_digest", self.verification_digest)
+        expected = TypedId.from_bare(
+            digest_sha256_of_jcs(
+                {
+                    "domain": "aigear.policy-completion-verification.v2",
+                    "schema_version": self.schema_version,
+                    "operation_id": self.operation_id,
+                    "request_fingerprint": self.request_fingerprint.typed,
+                    "fencing_token": self.fencing_token,
+                    "attestation_id": self.attestation_id.typed,
+                    "message_id": self.message_id,
+                    "publisher_principal": self.publisher_principal,
+                    "verified_at": self.verified_at,
+                }
+            )
+        )
+        if expected != self.verification_digest:
+            raise InvalidPolicyRecordError(
+                "verification_digest does not match completion verification"
+            )
+
+
+@dataclass(frozen=True)
+class PolicyDecisionJournalReceipt:
+    schema_version: str
+    entry_id: TypedId
+    sequence: int
+    object_name: str
+    generation: str
+    evidence_digest: TypedId
+    issued_at: str
+
+    def __post_init__(self) -> None:
+        parse_schema_version(self.schema_version)
+        _typed_id("entry_id", self.entry_id)
+        _positive("sequence", self.sequence)
+        _non_empty("object_name", self.object_name)
+        _non_empty("generation", self.generation)
+        _typed_id("evidence_digest", self.evidence_digest)
+        _aware_timestamp("issued_at", self.issued_at)
+
+
+@dataclass(frozen=True)
+class PolicyDecisionOperationRecord:
+    schema_version: str
+    operation_id: str
+    idempotency_key_hash: str
+    request_fingerprint: TypedId
+    request: PolicyDecisionRequest
+    policy_snapshot_digest: TypedId
+    evidence_filter_digest: TypedId
+    owner_principal: str
+    fencing_token: int
+    phase: PolicyDecisionOperationPhase
+    revision: int
+    lease_expires_at: Optional[str]
+    created_at: str
+    updated_at: str
+    finished_at: Optional[str] = None
+    error_class: Optional[str] = None
+    error_summary: Optional[str] = None
+    verified_completion: Optional[PolicyDecisionVerificationRecord] = None
+    prepared_journal: Optional[PolicyDecisionJournalReceipt] = None
+
+    def __post_init__(self) -> None:
+        parse_schema_version(self.schema_version)
+        object.__setattr__(
+            self,
+            "operation_id",
+            validate_segment(self.operation_id, field_name="operation_id"),
+        )
+        object.__setattr__(
+            self,
+            "idempotency_key_hash",
+            validate_segment(
+                self.idempotency_key_hash, field_name="idempotency_key_hash"
+            ),
+        )
+        _typed_id("request_fingerprint", self.request_fingerprint)
+        if (
+            not isinstance(self.request, PolicyDecisionRequest)
+            or self.request.operation_id != self.operation_id
+            or self.request.request_fingerprint != self.request_fingerprint
+            or self.request.schema_version != self.schema_version
+        ):
+            raise InvalidPolicyRecordError(
+                "decision request is not bound to operation"
+            )
+        _typed_id("policy_snapshot_digest", self.policy_snapshot_digest)
+        if (
+            self.policy_snapshot_digest
+            != self.request.unsigned_envelope.policy_snapshot_digest
+        ):
+            raise InvalidPolicyRecordError(
+                "policy snapshot digest is not bound to unsigned envelope"
+            )
+        _typed_id("evidence_filter_digest", self.evidence_filter_digest)
+        _non_empty("owner_principal", self.owner_principal)
+        _positive("fencing_token", self.fencing_token)
+        if self.fencing_token != self.request.unsigned_envelope.fencing_token:
+            raise InvalidPolicyRecordError(
+                "operation fencing token is not bound to unsigned envelope"
+            )
+        if (
+            self.evidence_filter_digest
+            not in self.request.unsigned_envelope.evidence_digests
+        ):
+            raise InvalidPolicyRecordError(
+                "evidence filter digest is not bound to unsigned envelope"
+            )
+        if not isinstance(self.phase, PolicyDecisionOperationPhase):
+            raise InvalidPolicyRecordError(
+                "phase must be PolicyDecisionOperationPhase"
+            )
+        _positive("revision", self.revision)
+        _optional_aware_timestamp("lease_expires_at", self.lease_expires_at)
+        _aware_timestamp("created_at", self.created_at)
+        _aware_timestamp("updated_at", self.updated_at)
+        _optional_aware_timestamp("finished_at", self.finished_at)
+        terminal = self.phase in {
+            PolicyDecisionOperationPhase.SUCCEEDED,
+            PolicyDecisionOperationPhase.FAILED,
+            PolicyDecisionOperationPhase.CANCELLED,
+        }
+        if terminal != (self.finished_at is not None):
+            raise InvalidPolicyRecordError(
+                "terminal policy operations require finished_at"
+            )
+        if terminal and self.lease_expires_at is not None:
+            raise InvalidPolicyRecordError(
+                "terminal policy operations cannot retain a lease"
+            )
+        if (self.error_class is None) != (self.error_summary is None):
+            raise InvalidPolicyRecordError(
+                "error_class and error_summary must both be set or both be null"
+            )
+        if self.phase in {
+            PolicyDecisionOperationPhase.RESERVED,
+            PolicyDecisionOperationPhase.ATTESTING,
+            PolicyDecisionOperationPhase.VERIFIED,
+            PolicyDecisionOperationPhase.JOURNALING,
+            PolicyDecisionOperationPhase.COMMITTING,
+        } and self.error_class is not None:
+            raise InvalidPolicyRecordError(
+                "active policy operations cannot retain an error"
+            )
+        requires_completion = self.phase in {
+            PolicyDecisionOperationPhase.VERIFIED,
+            PolicyDecisionOperationPhase.JOURNALING,
+            PolicyDecisionOperationPhase.COMMITTING,
+            PolicyDecisionOperationPhase.SUCCEEDED,
+        }
+        if requires_completion != (self.verified_completion is not None):
+            raise InvalidPolicyRecordError(
+                "verified and later policy phases require verified completion"
+            )
+        if self.verified_completion is not None:
+            completion = self.verified_completion
+            if (
+                not isinstance(completion, PolicyDecisionVerificationRecord)
+                or completion.schema_version != self.schema_version
+                or completion.operation_id != self.operation_id
+                or completion.request_fingerprint != self.request_fingerprint
+                or completion.fencing_token != self.fencing_token
+                or completion.attestation_id
+                != self.request.unsigned_envelope_digest
+            ):
+                raise InvalidPolicyRecordError(
+                    "verified completion is not bound to policy operation"
+                )
+        requires_prepared_journal = self.phase in {
+            PolicyDecisionOperationPhase.JOURNALING,
+            PolicyDecisionOperationPhase.COMMITTING,
+            PolicyDecisionOperationPhase.SUCCEEDED,
+        }
+        if requires_prepared_journal != (self.prepared_journal is not None):
+            raise InvalidPolicyRecordError(
+                "journaling and later policy phases require prepared journal"
+            )
+        if self.prepared_journal is not None and not isinstance(
+            self.prepared_journal, PolicyDecisionJournalReceipt
+        ):
+            raise InvalidPolicyRecordError(
+                "prepared_journal must be PolicyDecisionJournalReceipt"
+            )
+
+
+@dataclass(frozen=True)
+class PolicyDecisionEpochBinding:
+    schema_version: str
+    environment_fingerprint: TypedId
+    subject_epoch_key: TypedId
+    subject_asset_version_id: TypedId
+    decision_epoch: int
+    attestation_id: TypedId
+    decision: PolicyDecision
+    policy_version: str
+    not_before: str
+    valid_until: str
+    created_at: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        parse_schema_version(self.schema_version)
+        _typed_id("environment_fingerprint", self.environment_fingerprint)
+        _typed_id("subject_epoch_key", self.subject_epoch_key)
+        _typed_id("subject_asset_version_id", self.subject_asset_version_id)
+        _positive("decision_epoch", self.decision_epoch)
+        if (
+            compute_subject_epoch_key(self.subject_asset_version_id, self.decision_epoch)
+            != self.subject_epoch_key
+        ):
+            raise InvalidPolicyRecordError(
+                "subject_epoch_key does not match subject and decision_epoch"
+            )
+        _typed_id("attestation_id", self.attestation_id)
+        if not isinstance(self.decision, PolicyDecision):
+            raise InvalidPolicyRecordError("decision must be a PolicyDecision")
+        _non_empty("policy_version", self.policy_version)
+        not_before = _aware_timestamp("not_before", self.not_before)
+        valid_until = _aware_timestamp("valid_until", self.valid_until)
+        if valid_until <= not_before:
+            raise InvalidPolicyRecordError("valid_until must be later than not_before")
+        _optional_aware_timestamp("created_at", self.created_at)
+
+    def assert_same_identity(self, other: "PolicyDecisionEpochBinding") -> None:
+        if not isinstance(other, PolicyDecisionEpochBinding):
+            raise PolicyDecisionConflictError("epoch binding type mismatch")
+        if self == other:
+            return
+        if (
+            self.subject_asset_version_id == other.subject_asset_version_id
+            and self.decision_epoch == other.decision_epoch
+        ):
+            raise PolicyDecisionConflictError(
+                "subject decision epoch is already bound to different evidence"
+            )
+        raise PolicyDecisionConflictError("epoch binding identity mismatch")
+
+
+@dataclass(frozen=True)
+class PolicyDecisionHead:
+    schema_version: str
+    environment_fingerprint: TypedId
+    subject_asset_version_id: TypedId
+    current_epoch: int
+    revision: int
+    attestation_id: Optional[TypedId] = None
+    decision: Optional[PolicyDecision] = None
+    policy_version: Optional[str] = None
+    not_before: Optional[str] = None
+    valid_until: Optional[str] = None
+    updated_at: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        parse_schema_version(self.schema_version)
+        _typed_id("environment_fingerprint", self.environment_fingerprint)
+        _typed_id("subject_asset_version_id", self.subject_asset_version_id)
+        _non_negative("current_epoch", self.current_epoch)
+        _positive("revision", self.revision)
+        decision_fields = (
+            self.attestation_id,
+            self.decision,
+            self.policy_version,
+            self.not_before,
+            self.valid_until,
+        )
+        if self.current_epoch == 0:
+            if any(value is not None for value in decision_fields):
+                raise InvalidPolicyRecordError(
+                    "epoch zero policy head cannot contain decision fields"
+                )
+        else:
+            if any(value is None for value in decision_fields):
+                raise InvalidPolicyRecordError(
+                    "non-zero policy head requires all decision fields"
+                )
+            _typed_id("attestation_id", self.attestation_id)
+            if not isinstance(self.decision, PolicyDecision):
+                raise InvalidPolicyRecordError("decision must be a PolicyDecision")
+            _non_empty("policy_version", self.policy_version)
+            not_before = _aware_timestamp("not_before", self.not_before)
+            valid_until = _aware_timestamp("valid_until", self.valid_until)
+            if valid_until <= not_before:
+                raise InvalidPolicyRecordError("valid_until must be later than not_before")
+        _optional_aware_timestamp("updated_at", self.updated_at)
+
+
+def require_effective_policy_head(
+    head: PolicyDecisionHead,
+    *,
+    at: str,
+    required_policy_version: Optional[str] = None,
+) -> None:
+    if not isinstance(head, PolicyDecisionHead):
+        raise InvalidPolicyRecordError("head must be a PolicyDecisionHead")
+    instant = _aware_timestamp("at", at)
+    if head.current_epoch == 0 or head.decision != PolicyDecision.APPROVED:
+        raise InvalidPolicyRecordError("policy head is not approved")
+    if required_policy_version is not None and head.policy_version != required_policy_version:
+        raise InvalidPolicyRecordError("policy head version does not satisfy current policy")
+    if not (_aware_timestamp("not_before", head.not_before) <= instant):
+        raise InvalidPolicyRecordError("policy decision is not active yet")
+    if not (instant < _aware_timestamp("valid_until", head.valid_until)):
+        raise InvalidPolicyRecordError("policy decision is expired")

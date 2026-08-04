@@ -1,4 +1,5 @@
 import multiprocessing
+import os
 import platform
 import sys
 from concurrent import futures
@@ -11,12 +12,17 @@ from grpc_health.v1 import health, health_pb2_grpc
 from sentry_sdk import init as sentry_init
 from sentry_sdk.integrations.grpc.server import ServerInterceptor
 
-from aigear.common.config import PipelinesConfig, get_environment
+from aigear.common.config import PipelinesConfig, get_environment, get_project_name
 from aigear.service.grpc.constant import DEFAULT_GRPC_HOST, DEFAULT_GRPC_PORT
 from aigear.common.loading_module import LoadModule
 from aigear.common.logger import Logging
 from aigear.service.grpc.grpc_package import grpc_features, thread_config
 from aigear.service.grpc.protos import grpc_pb2, grpc_pb2_grpc
+from aigear.management.registry import (
+    AssetRecord,
+    AssetRegistry,
+    FirestoreAssetRegistry,
+)
 
 logger = Logging(log_name=__name__).console_logging()
 
@@ -81,7 +87,12 @@ def _run_server(bind_address: str, model_instance: Any, grpc_options: dict) -> N
     grpc_features.wait_until_closed(server)
 
 
-def grpc_service(pipeline_version: str, model_class_path: str) -> None:
+def grpc_service(
+    pipeline_version: str,
+    model_class_path: str,
+    service_version: str | None = None,
+    registry: AssetRegistry | None = None,
+) -> None:
     # Get environment variables
     pipeline_version_config = PipelinesConfig.get_version_config(pipeline_version)
     if pipeline_version_config is None:
@@ -94,6 +105,12 @@ def grpc_service(pipeline_version: str, model_class_path: str) -> None:
     grpc_config = ms_config.get("grpc", {})
     multi_processing = grpc_config.get("multi_processing", {})
     disable_omp = multi_processing.get("disable_omp", True)
+    service_record = _resolve_service_record(
+        pipeline_version=pipeline_version,
+        service_version=service_version,
+        registry=registry,
+    )
+    _export_service_record_env(service_record)
     # load ml module
     logger.info(f"gRPC load module: {model_class_path}...")
     with thread_config.ml_thread_scope(disable_omp):
@@ -150,6 +167,47 @@ def grpc_service(pipeline_version: str, model_class_path: str) -> None:
     else:
         bind_address = f"{service_host}:{port}"
         _run_server(bind_address, model_instance, grpc_config)
+
+
+def _resolve_service_record(
+    pipeline_version: str,
+    service_version: str | None = None,
+    registry: AssetRegistry | None = None,
+) -> AssetRecord | None:
+    registry = registry or FirestoreAssetRegistry(
+        project_name=get_project_name() or "",
+        pipeline_version=pipeline_version,
+    )
+    service_name = _service_name(pipeline_version)
+    requested = service_version or os.environ.get("AIGEAR_SERVICE_VERSION")
+    if requested:
+        record = registry.get("service", service_name, requested)
+        if record is None:
+            raise FileNotFoundError(f"Service version not found: {service_name}/{requested}")
+        return record
+    return registry.latest("service", service_name)
+
+
+def _export_service_record_env(record: AssetRecord | None) -> None:
+    if record is None:
+        return
+    os.environ["AIGEAR_SERVICE_VERSION"] = record.version
+    os.environ["AIGEAR_SERVICE_NAME"] = record.name
+    if not record.inputs:
+        return
+    model_ref = next(
+        (item for item in record.inputs if item.asset_type == "model"),
+        record.inputs[0],
+    )
+    os.environ["AIGEAR_MODEL_ASSET_TYPE"] = model_ref.asset_type
+    os.environ["AIGEAR_MODEL_ASSET_NAME"] = model_ref.name
+    os.environ["AIGEAR_MODEL_ASSET_VERSION"] = model_ref.version
+
+
+def _service_name(pipeline_version: str) -> str:
+    project_name = (get_project_name() or "").replace("_", "-")
+    version = pipeline_version.replace("_", "-")
+    return f"{project_name}-{version}-service"
 
 
 if __name__ == "__main__":

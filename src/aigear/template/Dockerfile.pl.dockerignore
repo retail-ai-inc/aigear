@@ -1,23 +1,9 @@
-__pycache__
-.idea
-.vscode
-.config
-tests/
-data/
-docs/
-kms/
-cloudbuild/
-cloud_function/
-asset/
+# Default deny: only runtime source and the pinned dependency input enter context.
+**
+!src/
+!src/**
+!requirements_pl.txt
 
-*.md
-.gitignore
-env.sample.json
-
-# Fix
-src/pipelines/**/model_service/
-src/pipelines/**/model_service_modules/
-Dockerfile.ms
-requirements_ms.txt
-docker-compose-ms.yml
-Dockerfile.ms.dockerignore
+# Generated source artifacts never belong in image layers.
+**/__pycache__/
+**/*.py[cod]

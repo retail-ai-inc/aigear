@@ -16,7 +16,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv venv ${VENV_MS} --python 3.12.7 \
  && uv pip install --python ${VENV_MS} -r requirements_ms.txt
 
-COPY . .
+COPY src/ ./src/
 
 ENV PORT=50051 \
     PYTHONDONTWRITEBYTECODE=1 \

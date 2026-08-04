@@ -3,6 +3,24 @@ from aigear.infrastructure.gcp.kubernetes import KubernetesCluster
 
 
 @patch("aigear.infrastructure.gcp.kubernetes.run_sh")
+def test_create_enables_binary_authorization_enforcement(mock_run_sh):
+    cluster = KubernetesCluster(
+        cluster_name="my-cluster",
+        zone="asia-northeast1",
+        num_nodes=2,
+        min_nodes=1,
+        max_nodes=5,
+        project_id="my-project",
+    )
+
+    cluster.create()
+
+    command = mock_run_sh.call_args.args[0]
+    assert "--binauthz-evaluation-mode=PROJECT_SINGLETON_POLICY_ENFORCE" in command
+    assert mock_run_sh.call_args.kwargs == {"check": True}
+
+
+@patch("aigear.infrastructure.gcp.kubernetes.run_sh")
 def test_update_calls_autoscaling_command(mock_run_sh):
     cluster = KubernetesCluster(
         cluster_name="my-cluster",

@@ -59,7 +59,12 @@ gcp = [
     "google-cloud-secret-manager>=2.24.0",
     "google-cloud-storage>=3.2.0",
     "google-cloud-compute>=1.38.0",
+    "google-cloud-firestore>=2.20.0",
+    "google-cloud-kms>=3.4.0",
     "google-api-core>=2.0.0",
+    "google-auth>=2.0.0",
+    "cryptography>=42.0.0",
+    "kubernetes>=28.1.0",
 ]
 mongodb = [
     "pymongo>=4.0.0",
@@ -76,9 +81,11 @@ aigear-env-schema = "aigear.cli.env_schema:env_schema"
 aigear-image = "aigear.cli.artifacts_image:docker_image"
 aigear-scheduler = "aigear.cli.gcp_scheduler:gcp_scheduler"
 aigear-model = "aigear.cli.model_service:run_model_cli"
+aigear-asset = "aigear.cli.asset:asset_cli"
 aigear-task = "aigear.cli.task_running:task_run"
 aigear-kms-env = "aigear.cli.kms_cli:kms_env"
 aigear-logs = "aigear.cli.gcp_logs:gcp_logs"
+aigear-doctor = "aigear.cli.doctor:doctor_cli"
 
 
 [tool.setuptools.packages.find]

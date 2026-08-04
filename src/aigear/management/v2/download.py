@@ -1,0 +1,213 @@
+"""Exact download protocol (spec section 6.6).
+
+Implements the parts of spec 6.6's download protocol that are pure local
+filesystem/verification logic, independent of which GCS client backs it:
+download to a temp file in the *same directory* as the target (so the final
+``os.replace`` is an atomic same-filesystem rename), verify size and full
+SHA-256 against the resolved handle, ``fsync`` before renaming, and clean up
+the temp file on any failure so a consumer never sees a partial file.
+
+Trust/lifecycle/attestation validation already happened in
+:func:`~aigear.management.v2.resolver.resolve` (T24) -- this module only
+re-verifies what it can locally recompute from the downloaded bytes
+themselves (size, SHA-256). Production managers require the resolver's pinned
+KMS public-key verifier before reaching this local materialization step.
+
+Real streaming timeouts/backpressure are meaningless against
+:class:`~aigear.management.v2.fake_gcs.FakeGcsClient` (an in-memory, blocking
+double); ``max_size_bytes`` is checked against the resolved handle's declared
+size before any data is even read, which is the one part of "限制最大字节数
+和超时" (spec 6.6 step 3) this module can meaningfully enforce without a real
+network client.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import os
+import shutil
+import tempfile
+import uuid
+from datetime import datetime
+from pathlib import Path
+from typing import Optional
+
+from aigear.management.v2.gcs_client import GcsClientV2
+from aigear.management.v2.identifiers import TypedId
+from aigear.management.v2.naming import InvalidSegmentError, ensure_no_collisions
+from aigear.management.v2.resolver import ResolvedHandle
+
+__all__ = [
+    "DownloadError",
+    "download_exact",
+    "download_bundle_exact",
+    "compute_local_cache_key",
+    "verify_cached_file",
+]
+
+
+class DownloadError(ValueError):
+    """Raised when an exact download cannot be completed as requested."""
+
+
+def compute_local_cache_key(blob_id: TypedId, generation: str, location_revision: int) -> str:
+    """The local cache key spec 6.6 mandates: ``blob_id + generation +
+    current_location_revision``, never ``blob_id`` alone (a Blob's bytes at
+    a stale generation/location_revision must never be served as current)."""
+    return f"{blob_id.bare}:{generation}:{location_revision}"
+
+
+def verify_cached_file(path: Path, *, expected_sha256: str, expected_size: int) -> bool:
+    """Spec 6.6: "cache hit 仍要验证文件摘要" -- a cache key match alone is not
+    trusted; the file's actual digest/size must still match every time."""
+    if not path.is_file():
+        return False
+    if path.stat().st_size != expected_size:
+        return False
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest() == expected_sha256
+
+
+def download_exact(
+    handle: ResolvedHandle,
+    gcs: GcsClientV2,
+    target_path: Path,
+    *,
+    now: Optional[datetime] = None,
+    max_size_bytes: Optional[int] = None,
+) -> Path:
+    """Download the resolved handle's single Blob to ``target_path`` (spec 6.6)."""
+    if now is not None and now >= handle.expires_at:
+        raise DownloadError(
+            f"resolved handle expired at {handle.expires_at.isoformat()!r}; re-resolve before downloading"
+        )
+    if len(handle.blobs) != 1:
+        raise DownloadError(
+            f"download_exact only supports a single-component handle, got {len(handle.blobs)} "
+            "components; bundle download (spec 6.7) is out of scope"
+        )
+    blob = handle.blobs[0]
+    if max_size_bytes is not None and blob.size_bytes > max_size_bytes:
+        raise DownloadError(
+            f"Blob {blob.blob_id.typed!r} size {blob.size_bytes} exceeds max_size_bytes {max_size_bytes}"
+        )
+
+    target_path = Path(target_path)
+    if not target_path.parent.is_dir():
+        raise DownloadError(f"target parent directory does not exist: {target_path.parent}")
+    if target_path.is_symlink():
+        raise DownloadError(f"target path must not be a symlink: {target_path}")
+    tmp_path = target_path.with_name(f".{target_path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        gcs.download_to_file(blob.object_name, blob.generation, tmp_path)
+        actual_size = tmp_path.stat().st_size
+        if actual_size != blob.size_bytes:
+            raise DownloadError(
+                f"Blob {blob.blob_id.typed!r} size mismatch: resolved handle says "
+                f"{blob.size_bytes}, downloaded object is {actual_size}"
+            )
+        digest = hashlib.sha256()
+        with open(tmp_path, "rb+") as file_obj:
+            for chunk in iter(lambda: file_obj.read(1024 * 1024), b""):
+                digest.update(chunk)
+            if digest.hexdigest() != blob.sha256:
+                raise DownloadError(
+                    f"Blob {blob.blob_id.typed!r} SHA-256 mismatch: resolved handle says "
+                    f"{blob.sha256!r}, downloaded object is {digest.hexdigest()!r}"
+                )
+            file_obj.flush()
+            os.fsync(file_obj.fileno())
+        os.replace(tmp_path, target_path)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+    return target_path
+
+
+def download_bundle_exact(
+    handle: ResolvedHandle,
+    gcs: GcsClientV2,
+    target_path: Path,
+    *,
+    now: Optional[datetime] = None,
+    max_components: int = 32,
+    max_total_size_bytes: Optional[int] = None,
+) -> Path:
+    """Atomically materialize ``<target>/<role>/<logical_name>`` (spec 6.7).
+
+    The target must not exist.  Every exact generation is downloaded and
+    verified in a private sibling directory; only a fully verified bundle is
+    made visible by the final same-filesystem rename.
+    """
+    if now is not None and now >= handle.expires_at:
+        raise DownloadError(
+            f"resolved handle expired at {handle.expires_at.isoformat()!r}; "
+            "re-resolve before downloading"
+        )
+    if isinstance(max_components, bool) or not isinstance(max_components, int) or max_components < 1:
+        raise DownloadError("max_components must be a positive int")
+    if not handle.blobs:
+        raise DownloadError("bundle handle has no components")
+    if len(handle.blobs) > max_components:
+        raise DownloadError(
+            f"bundle has {len(handle.blobs)} components, exceeding max_components {max_components}"
+        )
+    total_size = sum(blob.size_bytes for blob in handle.blobs)
+    if max_total_size_bytes is not None and total_size > max_total_size_bytes:
+        raise DownloadError(
+            f"bundle size {total_size} exceeds max_total_size_bytes {max_total_size_bytes}"
+        )
+
+    roles = [blob.role for blob in handle.blobs]
+    try:
+        ensure_no_collisions(roles, field_name="bundle role")
+        for role in set(roles):
+            ensure_no_collisions(
+                [blob.logical_name for blob in handle.blobs if blob.role == role],
+                field_name=f"bundle logical_name under role {role!r}",
+            )
+    except InvalidSegmentError as exc:
+        raise DownloadError(str(exc)) from exc
+
+    target_path = Path(target_path)
+    parent = target_path.parent
+    if not parent.is_dir() or parent.is_symlink():
+        raise DownloadError(f"target parent must be a real directory: {parent}")
+    if target_path.exists() or target_path.is_symlink():
+        raise DownloadError(f"bundle target must not already exist: {target_path}")
+
+    temp_path = Path(
+        tempfile.mkdtemp(prefix=f".{target_path.name}.", suffix=".tmp", dir=str(parent))
+    )
+    try:
+        for blob in handle.blobs:
+            role_dir = temp_path / blob.role
+            role_dir.mkdir(exist_ok=True)
+            component_path = role_dir / blob.logical_name
+            gcs.download_to_file(blob.object_name, blob.generation, component_path)
+            actual_size = component_path.stat().st_size
+            if actual_size != blob.size_bytes:
+                raise DownloadError(
+                    f"Blob {blob.blob_id.typed!r} size mismatch: resolved handle says "
+                    f"{blob.size_bytes}, downloaded object is {actual_size}"
+                )
+            digest = hashlib.sha256()
+            with open(component_path, "rb+") as file_obj:
+                for chunk in iter(lambda: file_obj.read(1024 * 1024), b""):
+                    digest.update(chunk)
+                actual_digest = digest.hexdigest()
+                if actual_digest != blob.sha256:
+                    raise DownloadError(
+                        f"Blob {blob.blob_id.typed!r} SHA-256 mismatch: resolved handle says "
+                        f"{blob.sha256!r}, downloaded object is {actual_digest!r}"
+                    )
+                file_obj.flush()
+                os.fsync(file_obj.fileno())
+        os.replace(temp_path, target_path)
+    except BaseException:
+        shutil.rmtree(temp_path, ignore_errors=True)
+        raise
+    return target_path

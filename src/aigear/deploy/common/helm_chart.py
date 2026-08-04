@@ -62,6 +62,7 @@ def _create_helm_chart(
     model_class_path=None,
     env: str = ENV_LOCAL,
     venv: str = None,
+    service_version: str = None,
 ):
     if pipeline_version is None or model_class_path is None:
         print(
@@ -78,6 +79,12 @@ def _create_helm_chart(
             f'          - "--version"\n'
             f'          - "{pipeline_version}"'
         )
+        if service_version:
+            grpc_command += (
+                f"\n"
+                f'          - "--service-version"\n'
+                f'          - "{service_version}"'
+            )
 
     image_pull_policy = "Never" if env == ENV_LOCAL else "Always"
 
@@ -120,6 +127,7 @@ def create_helm_file(
     port: str = None,
     env: str = ENV_LOCAL,
     force: bool = False,
+    service_version: str = None,
 ) -> Path | None:
     if pipeline_version is None:
         logger.info(
@@ -156,5 +164,6 @@ def create_helm_file(
         model_class_path=model_class_path,
         env=env,
         venv=venv,
+        service_version=service_version,
     )
     return helm_path

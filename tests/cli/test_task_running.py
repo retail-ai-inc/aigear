@@ -1,6 +1,6 @@
 from unittest.mock import MagicMock, patch
 
-from aigear.cli.task_running import run_workflow
+from aigear.cli.task_running import run_workflow, task_run
 
 
 @patch("aigear.cli.task_running.AigearConfig")
@@ -146,3 +146,30 @@ def test_run_workflow_emits_pipeline_step_failed_with_error_fields(
     )
     task_logger.error.assert_called_once()
     mock_ctx_cls.clear.assert_called_once()
+
+
+@patch("aigear.cli.task_running.grpc_service")
+@patch("aigear.cli.task_running.PipelinesConfig")
+def test_task_grpc_passes_service_version(mock_pipelines, mock_grpc_service):
+    mock_pipelines.get_version_config.return_value = {
+        "model_service": {"model_class_path": "pkg.Service"}
+    }
+
+    with patch(
+        "sys.argv",
+        [
+            "aigear-task",
+            "grpc",
+            "--version",
+            "logistic_regression",
+            "--service-version",
+            "service-v2",
+        ],
+    ):
+        task_run()
+
+    mock_grpc_service.assert_called_once_with(
+        "logistic_regression",
+        "pkg.Service",
+        service_version="service-v2",
+    )
