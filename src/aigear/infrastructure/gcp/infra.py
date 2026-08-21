@@ -391,10 +391,9 @@ class Infra:
         if not exists:
             logger.info(
                 f"Service account ({self.aigear_config.gcp.iam.account_name}) not found in project "
-                f"({self.project_id}). Creating service account and binding IAM policies..."
+                f"({self.project_id}). Creating service account..."
             )
             self.service_accounts.create()
-            self.service_accounts.add_iam_policy_binding()
             logger.info(
                 f"Service account ({self.aigear_config.gcp.iam.account_name}) created successfully."
             )
@@ -403,6 +402,11 @@ class Infra:
                 f"Service account ({self.aigear_config.gcp.iam.account_name}) already exists in project "
                 f"({self.project_id}). Skipping creation."
             )
+        logger.info(
+            f"Binding IAM policies for service account ({self.aigear_config.gcp.iam.account_name})..."
+        )
+        self.service_accounts.add_iam_policy_binding()
+        logger.info("IAM policy binding complete.")
 
     def _ensure_model_bucket(self):
         exists = self.model_bucket.describe()
@@ -412,9 +416,6 @@ class Infra:
                 f"({self.location}). Creating bucket..."
             )
             self.model_bucket.create()
-            self.model_bucket.add_permissions_to_gcs(
-                sa_email=self.service_accounts.sa_email
-            )
             logger.info(
                 f"Model bucket ({self.aigear_config.gcp.bucket.bucket_name}) created successfully."
             )
@@ -423,6 +424,11 @@ class Infra:
                 f"Model bucket ({self.aigear_config.gcp.bucket.bucket_name}) already exists in location "
                 f"({self.location}). Skipping creation."
             )
+        logger.info(
+            f"Binding GCS permissions for model bucket ({self.aigear_config.gcp.bucket.bucket_name})..."
+        )
+        self.model_bucket.add_permissions_to_gcs(sa_email=self.service_accounts.sa_email)
+        logger.info(f"GCS permissions bound for model bucket ({self.aigear_config.gcp.bucket.bucket_name}).")
 
     def _ensure_release_bucket(self):
         exists = self.release_model_bucket.describe()
@@ -432,9 +438,6 @@ class Infra:
                 f"location ({self.location}). Creating bucket..."
             )
             self.release_model_bucket.create()
-            self.release_model_bucket.add_permissions_to_gcs(
-                sa_email=self.service_accounts.sa_email
-            )
             logger.info(
                 f"Release model bucket ({self.aigear_config.gcp.bucket.bucket_name_for_release}) created successfully."
             )
@@ -443,6 +446,11 @@ class Infra:
                 f"Release model bucket ({self.aigear_config.gcp.bucket.bucket_name_for_release}) already exists in "
                 f"location ({self.location}). Skipping creation."
             )
+        logger.info(
+            f"Binding GCS permissions for release model bucket ({self.aigear_config.gcp.bucket.bucket_name_for_release})..."
+        )
+        self.release_model_bucket.add_permissions_to_gcs(sa_email=self.service_accounts.sa_email)
+        logger.info(f"GCS permissions bound for release model bucket ({self.aigear_config.gcp.bucket.bucket_name_for_release}).")
 
     def _ensure_artifacts(self):
         exists = self.artifacts.describe()
@@ -469,9 +477,6 @@ class Infra:
                 f"({self.project_id}). Creating topic..."
             )
             self.pubsub.create()
-            self.pubsub.add_permissions_to_pubsub(
-                sa_email=self.service_accounts.sa_email
-            )
             logger.info(
                 f"Pub/Sub topic ({self.aigear_config.gcp.pub_sub.topic_name}) created successfully."
             )
@@ -480,6 +485,11 @@ class Infra:
                 f"Pub/Sub topic ({self.aigear_config.gcp.pub_sub.topic_name}) already exists in project "
                 f"({self.project_id}). Skipping creation."
             )
+        logger.info(
+            f"Binding Pub/Sub permissions for topic ({self.aigear_config.gcp.pub_sub.topic_name})..."
+        )
+        self.pubsub.add_permissions_to_pubsub(sa_email=self.service_accounts.sa_email)
+        logger.info(f"Pub/Sub permissions bound for topic ({self.aigear_config.gcp.pub_sub.topic_name}).")
 
     def _ensure_kms(self):
         if not self.cloud_kms.describe_keyring():
@@ -502,7 +512,6 @@ class Infra:
                 f"KMS key ({self.aigear_config.gcp.kms.key_name}) not found. Creating key..."
             )
             self.cloud_kms.create_key()
-            self.cloud_kms.add_permissions(sa_email=self.service_account)
             logger.info(
                 f"KMS key ({self.aigear_config.gcp.kms.key_name}) created successfully."
             )
@@ -519,6 +528,11 @@ class Infra:
             logger.info(
                 f"KMS key ({self.aigear_config.gcp.kms.key_name}) already exists. Skipping creation."
             )
+        logger.info(
+            f"Binding KMS permissions for key ({self.aigear_config.gcp.kms.key_name})..."
+        )
+        self.cloud_kms.add_permissions(sa_email=self.service_account)
+        logger.info(f"KMS permissions bound for key ({self.aigear_config.gcp.kms.key_name}).")
 
     def _ensure_cloud_build(self):
         exists = self.cloud_build.describe()
@@ -560,9 +574,6 @@ class Infra:
                 f"({self.location}). Deploying Cloud Function..."
             )
             self.cloud_function.deploy()
-            self.cloud_function.add_permissions_to_cloud_function(
-                sa_email=self.service_accounts.sa_email
-            )
             logger.info(
                 f"Cloud Function ({self.aigear_config.gcp.cloud_function.function_name}) deployed successfully."
             )
@@ -571,6 +582,13 @@ class Infra:
                 f"Cloud Function ({self.aigear_config.gcp.cloud_function.function_name}) already exists in region "
                 f"({self.location}). Skipping deployment."
             )
+        logger.info(
+            f"Binding Cloud Function permissions for ({self.aigear_config.gcp.cloud_function.function_name})..."
+        )
+        self.cloud_function.add_permissions_to_cloud_function(
+            sa_email=self.service_accounts.sa_email
+        )
+        logger.info(f"Cloud Function permissions bound for ({self.aigear_config.gcp.cloud_function.function_name}).")
 
     def _ensure_pre_vm_image(self):
         from aigear.infrastructure.gcp.pre_vm_image import PreVMImage
