@@ -7,7 +7,7 @@ from aigear.common.config import EnvConfig
 from config_schema.env_schema import EnvSchema
 from src.pipelines.common.constant import gcs_switch
 
-logger = Logging(log_name=__name__).console_logging()
+logger = Logging(log_name=__name__).for_task()
 
 
 def get_data(save_path: Path) -> None:

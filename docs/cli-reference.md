@@ -12,6 +12,7 @@ All CLI entry points are installed as standalone commands by `pip install aigear
 | `aigear-model` | Generate YAML and manage the lifecycle of a gRPC model service (deploy, update, delete, status) |
 | `aigear-env-schema` | Auto-generate a Pydantic schema from `env.json` |
 | `aigear-kms-env` | Encrypt or decrypt `env.json` using Cloud KMS |
+| `aigear-logs` | Discover pipeline runs and query Cloud Logging by `run_id` |
 
 ---
 
@@ -55,7 +56,7 @@ aigear-infra {--create | --update | --delete | --status}
 | 2 | Buckets, Artifact Registry, Pub/Sub topic, KMS, Cloud Build, Pre-VM Image, Kubernetes, Cloud Function (deploy only, no Pub/Sub trigger) | **Parallel** |
 | 3 | Eventarc Pub/Sub trigger | Sequential (requires Pub/Sub topic **and** Cloud Function from Phase 2) |
 
-Phase 3 runs only when **both** `gcp.pub_sub.on` and `gcp.cloud_function.on` are `true`. The trigger creates the Pub/Sub **subscription** that delivers topic messages to the function (per [Cloud Run Pub/Sub triggers](https://cloud.google.com/run/docs/triggering/pubsub-triggers#gcloud)).
+Phase 3 runs only when **both** `gcp.pub_sub.on` and `gcp.cloud_function.on` are `true`. The trigger creates the Pub/Sub **subscription** that delivers topic messages to the function (per [Cloud Run Pub/Sub triggers](https://cloud.google.com/run/docs/triggering/pubsub-triggers#gcloud)). Aigear sets the push subscription **ack deadline to 300s** and **minimum retry backoff to 60s** (Eventarc defaults are ~10s, which causes duplicate Cloud Function invocations during VM insert). **`aigear-infra --update`** re-applies these settings when the trigger already exists.
 
 **`--delete`** runs in reverse order:
 
@@ -313,3 +314,141 @@ aigear-kms-env {--encrypt | --decrypt}
 | `--key` | `None` | KMS key name. Falls back to `env.json` if omitted. |
 
 > When decrypting (before `env.json` exists), provide `--project-id`, `--location`, `--keyring`, and `--key` explicitly, since there is no `env.json` to fall back on.
+
+---
+
+### `aigear-logs`
+
+Discover run IDs for a given date/version and then query logs by `run_id`. **Run discovery always scans Cloud Logging.** **Log queries by `run_id`** use a local cache (3 hours TTL) after the first fetch — pipeline logs are immutable once a run finishes. Use `--clear-cache` if you queried mid-run and need a fresh read.
+
+```
+aigear-logs [--version VERSION --run-date YYYY-MM-DD]
+            [--run-id RUN_ID]
+            [--step STEP_NAME]
+            [--format {full,concise}]
+            [--log-source {cloud_function,ml_pipeline,all}]
+            [--time-zone IANA_TZ]
+            [--limit N]
+            [--clear-cache]
+```
+
+| Argument | Default | Description |
+|---|---|---|
+| `--version` | — | Pipeline version used during discovery mode |
+| `--run-date` | — | Date interpreted in scheduler timezone, then converted to UTC for querying |
+| `--run-id` | — | Direct query mode; skips discovery |
+| `--step` | `all` | Step scope: omit or `all` = every step; a name (e.g. `training`) = that step only |
+| `--format` | `concise` | `concise` = step timeline summary (default); `full` = raw JSON log stream |
+| `--log-source` | *(none)* | Narrow by layer: `cloud_function`, `ml_pipeline`, or `all` (both sections). Omitted = one combined query with no source filter |
+| `--time-zone` | scheduler `time_zone` from `env.json` | Override timezone used to interpret `--run-date` |
+| `--limit` | `200` | Max logs returned per query (use `500` when tracing failures) |
+| `--discovery-limit` | `1000` | Max log entries scanned per discover query |
+| `--clear-cache` | `false` | Remove local log query cache and exit |
+
+**Step scope (`--step`) and output format (`--format`)**
+
+| Command | Output |
+|---|---|
+| `aigear-logs --run-id <id>` | Step timeline for the full pipeline (default `--format concise`) |
+| `aigear-logs --run-id <id> --step all` | Same as above (explicit) |
+| `aigear-logs --run-id <id> --step training` | One-line timeline for `training` (default concise) |
+| `aigear-logs --run-id <id> --format full` | Raw JSON for all steps |
+| `aigear-logs --run-id <id> --format full --step training` | Raw JSON for the `training` step only |
+
+`--format concise` merges `cloud_function` and `ml_pipeline` lifecycle events into one table. Infrastructure failures (`vm_step_failed`, `vm_creation_failed`, legacy CF `pipeline_step_failed`) and container failures (`pipeline_step_failed` on `ml_pipeline`) appear in the **DETAIL** column. When a step calls `emit_step_result()`, structured metrics show in **DETAIL** for successful steps.
+
+Example timeline:
+
+```
+=== Step timeline (run_id=26fe3e695ca7d8c6) ===
+STEP            STATUS   STARTED (UTC)              FINISHED (UTC)             DURATION  DETAIL
+fetch_data      OK       2026-06-03T06:33:06Z       2026-06-03T06:33:11Z       5s
+preprocessing   OK       2026-06-03T06:34:39Z       2026-06-03T06:34:43Z       4s
+training        OK       2026-06-03T06:36:11Z       2026-06-03T06:36:16Z       5s
+model_service   FAILED   —                          —                          —         docker_image_not_found (...)
+```
+
+**Examples**
+
+```bash
+# Default: step timeline for all steps
+aigear-logs --run-id <run_id>
+
+# Raw JSON for all steps
+aigear-logs --run-id <run_id> --format full --limit 500
+
+# Single step — timeline (default) or raw JSON
+aigear-logs --run-id <run_id> --step training
+aigear-logs --run-id <run_id> --format full --step training --limit 500
+
+# Split infra vs container sections (requires --format full)
+aigear-logs --run-id <run_id> --format full --log-source all --limit 500
+```
+
+**Logging contract (`log_source` + `event`)**
+
+| Layer | `log_source` | Typical `event` | Query with |
+|-------|--------------|-----------------|------------|
+| Cloud Function / VM orchestration | `cloud_function` | `run_context_initialized`, `vm_created`, `vm_creation_failed`, **`vm_step_failed`** | `--log-source cloud_function` |
+| Container `aigear-task` | `ml_pipeline` | `pipeline_step_started`, **`pipeline_step_failed`**, … | `--log-source ml_pipeline` |
+
+Rules:
+
+- **Docker pull, startup script, VM create** failures are logged only under **`cloud_function`** as **`vm_step_failed`** (includes `exit_code`, `docker_image`).
+- **Python step exceptions** are logged only under **`ml_pipeline`** as **`pipeline_step_failed`** (`error_message` / `error_type` on lifecycle; truncated to 2KB).
+- Legacy deployments may still show `pipeline_step_failed` with `log_source=cloud_function` for VM errors; discover and query accept both.
+- VM serial / startup `echo` is **not** in Cloud Logging — use GCE serial port for raw stdout.
+
+**Failure troubleshooting**
+
+See **[Troubleshooting pipeline logs](troubleshooting-logs.md)** for the full guide: `cloud_function` (Docker / VM / startup script) vs `ml_pipeline` (container step), disambiguating legacy vs current `pipeline_step_failed`, command templates, Cloud Console filters, serial port fallback, and the post-deploy checklist.
+
+| Symptom | Command |
+|---------|---------|
+| Find runs for a day | `aigear-logs --version <v> --run-date <YYYY-MM-DD> [--discovery-limit 2000]` |
+| Quick step pass/fail (default) | `aigear-logs --run-id <id>` |
+| All step logs (raw JSON) | `aigear-logs --run-id <id> --format full --limit 500` |
+| One step only | `aigear-logs --run-id <id> --step <name>` or add `--format full` for JSON |
+| Infra / Docker failure | `aigear-logs --run-id <id> --format full --log-source cloud_function --limit 500` |
+| Step code failure | `aigear-logs --run-id <id> --format full --log-source ml_pipeline --limit 500` |
+| Unsure / both layers | `aigear-logs --run-id <id> --format full --log-source all --limit 500` |
+| Queried mid-run, need fresh logs | `aigear-logs --clear-cache` then re-query |
+
+Empty query results are **not** cached. After a run finishes, logs are stable for 3 hours in the local cache.
+
+**Pipeline logging (`env.json` → `aigear.gcp.logging`)**
+
+| Environment | Behavior |
+|---|---|
+| Local `aigear-task` | `Logging.for_task()` → stdout only |
+| VM + `gcp.logging=false` | stdout with run fields; lifecycle events to Cloud Logging |
+| VM + `gcp.logging=true` | stdout + all task logs to Cloud Logging (`log_source=ml_pipeline`, `run_id`, …) |
+
+Lifecycle events (`pipeline_step_started` / `finished` / `failed`, `vm_step_failed`, …) are always written to Cloud Logging and drive `--format concise`. **Business logs** (`logger.info`, metrics, stack traces) reach Cloud Logging only when `gcp.logging=true`; otherwise they stay on the VM serial port. Use `--step <name> --log-source ml_pipeline` to read per-step business output after enabling logging.
+
+Optional **`emit_step_result(ctx, result)`** (from `aigear.common.lifecycle_log`) publishes a `pipeline_step_result` lifecycle event with a structured `result` dict (e.g. `{"accuracy": 0.92, "rows": 1000}`). The concise timeline shows these values in **DETAIL** for OK steps. Pipelines are not required to call it; use it when you want key metrics visible without scanning raw JSON.
+
+**Flow**
+
+1. If `--run-id` is provided, query logs directly by `run_id` (or print a step timeline when `--format concise`).
+2. Otherwise discover run IDs for `--version` + `--run-date` (0/1/N branch):
+   - 0: exit with "no runs"
+   - 1: auto-select and query (or timeline)
+   - N: interactive selection, then query (or timeline)
+3. `--step` filters scope; default `all` does not filter. `--format concise` (default) prints the merged step timeline; `--format full` prints raw JSON.
+
+**Verification Checklist (post-deploy)**
+
+1. Trigger scheduler once, then filter Cloud Logging with `jsonPayload.event="run_context_initialized"` and verify `log_source=cloud_function` plus a non-empty `run_id`.
+2. Run `aigear-logs --version <v> --run-date <YYYY-MM-DD>` and confirm run discovery works.
+3. Query by source:
+   - `aigear-logs --run-id <id> --log-source cloud_function`
+   - `aigear-logs --run-id <id> --log-source ml_pipeline`
+   - or `aigear-logs --run-id <id> --log-source all` to print both sections in one run.
+4. Publish an invalid JSON message to the topic and verify:
+   - Cloud Function logs include `invalid_json_message`
+   - a terminal `task_invalid` error payload is published
+   - no new VM insert is triggered
+   - any follow-up error payload invocation exits at `vm_step_failed` without VM creation.
+5. After a VM/startup failure (e.g. `docker_image_not_found`), verify `vm_step_failed` in Cloud Logging includes `jsonPayload.run_id`, `log_source=cloud_function`, `exit_code`, and `docker_image` so `aigear-logs --run-id <id> --log-source cloud_function` shows the failure.
+6. After a step code failure (with `gcp.logging=false` is enough for lifecycle), verify `pipeline_step_failed` with `log_source=ml_pipeline` includes `error_message` and `error_type`; with `gcp.logging=true`, also expect per-module business ERROR logs.

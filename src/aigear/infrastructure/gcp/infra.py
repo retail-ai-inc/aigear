@@ -84,6 +84,7 @@ class Infra:
             topic_name=self.aigear_config.gcp.pub_sub.topic_name,
             project_id=self.project_id,
             service_account=self.service_account,
+            project_name=AppConfig.project_name(),
         )
 
         self.service_accounts = ServiceAccounts(
@@ -260,7 +261,7 @@ class Infra:
     def _run_parallel(self, tasks: dict, failed_steps: list):
         if not tasks:
             return
-        with ThreadPoolExecutor(max_workers=len(tasks)) as executor:
+        with ThreadPoolExecutor(max_workers=3) as executor:
             futures = {
                 executor.submit(self._step, title, fn): title
                 for title, fn in tasks.items()
@@ -441,17 +442,15 @@ class Infra:
                 f"({self.location}). Creating bucket..."
             )
             self.model_bucket.create()
-            self.model_bucket.add_permissions_to_gcs(
-                sa_email=self.service_accounts.sa_email
-            )
             logger.info(
                 f"Model bucket ({self.aigear_config.gcp.bucket.bucket_name}) created successfully."
             )
         else:
             logger.info(
                 f"Model bucket ({self.aigear_config.gcp.bucket.bucket_name}) already exists in location "
-                f"({self.location}). Skipping creation."
+                f"({self.location}). Skipping creation; re-applying IAM binding."
             )
+        self.model_bucket.add_permissions_to_gcs(sa_email=self.service_accounts.sa_email)
 
     def _ensure_release_bucket(self):
         exists = self.release_model_bucket.describe()
@@ -461,17 +460,17 @@ class Infra:
                 f"location ({self.location}). Creating bucket..."
             )
             self.release_model_bucket.create()
-            self.release_model_bucket.add_permissions_to_gcs(
-                sa_email=self.service_accounts.sa_email
-            )
             logger.info(
                 f"Release model bucket ({self.aigear_config.gcp.bucket.bucket_name_for_release}) created successfully."
             )
         else:
             logger.info(
                 f"Release model bucket ({self.aigear_config.gcp.bucket.bucket_name_for_release}) already exists in "
-                f"location ({self.location}). Skipping creation."
+                f"location ({self.location}). Skipping creation; re-applying IAM binding."
             )
+        self.release_model_bucket.add_permissions_to_gcs(
+            sa_email=self.service_accounts.sa_email
+        )
 
     def _ensure_artifacts(self):
         exists = self.artifacts.describe()
@@ -737,7 +736,13 @@ class Infra:
             self._step_skip(f"Cloud Function ({cfg.cloud_function.function_name})")
 
         if self._needs_eventarc(cfg):
-            self._step_no_update(self._eventarc_title())
+            title = self._eventarc_title()
+            if self.eventarc_trigger.describe():
+                tune_title = f"{title} (push ack/retry)"
+                if not self._step(tune_title, self.eventarc_trigger.tune_push_subscriptions):
+                    failed_steps.append(tune_title)
+            else:
+                self._step_no_update(title)
         elif cfg.pub_sub.on or cfg.cloud_function.on:
             self._step_skip(self._eventarc_title())
 

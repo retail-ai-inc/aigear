@@ -4,6 +4,19 @@ from aigear.common.logger import Logging
 logger = Logging(log_name=__name__).console_logging()
 
 
+def _parse_gcp_duration_seconds(value: str | None) -> int | None:
+    """Parse Pub/Sub duration strings such as ``60s`` into integer seconds."""
+    if not value:
+        return None
+    text = value.strip()
+    if text.endswith("s"):
+        text = text[:-1]
+    try:
+        return int(text)
+    except ValueError:
+        return None
+
+
 class PubSub:
     def __init__(
         self,
@@ -88,6 +101,78 @@ class PubSub:
             if sub and self.subscription_status(sub) == "healthy":
                 return sub
         return None
+
+    def find_all_healthy_subscriptions(self, candidates: list[str]) -> list[str]:
+        """Return every healthy candidate subscription (deduplicated, order preserved)."""
+        seen: set[str] = set()
+        healthy: list[str] = []
+        for sub in candidates:
+            if not sub or sub in seen:
+                continue
+            seen.add(sub)
+            if self.subscription_status(sub) == "healthy":
+                healthy.append(sub)
+        return healthy
+
+    def get_push_subscription_settings(
+        self, subscription: str
+    ) -> tuple[int | None, int | None]:
+        """
+        Read push ack deadline (seconds) and minimum retry backoff (seconds).
+
+        Returns (None, None) when describe fails.
+        """
+        sub_id = subscription.rsplit("/", 1)[-1]
+        event = run_sh(
+            [
+                "gcloud",
+                "pubsub",
+                "subscriptions",
+                "describe",
+                sub_id,
+                f"--project={self.project_id}",
+                "--format=value(ackDeadlineSeconds,retryPolicy.minimumBackoff)",
+            ]
+        )
+        if "ERROR" in event:
+            return None, None
+        parts = [p.strip() for p in event.replace("\t", "\n").splitlines() if p.strip()]
+        ack = int(parts[0]) if parts and parts[0].isdigit() else None
+        min_retry = _parse_gcp_duration_seconds(parts[1] if len(parts) > 1 else None)
+        return ack, min_retry
+
+    def ensure_push_subscription_tuned(
+        self,
+        subscription: str,
+        *,
+        ack_deadline_sec: int = 300,
+        min_retry_delay_sec: int = 60,
+    ) -> bool:
+        """
+        Apply push ack/retry when below target (Eventarc defaults to ~10s ack).
+
+        Returns True when settings already meet targets or were updated successfully.
+        """
+        sub_id = subscription.rsplit("/", 1)[-1]
+        ack, min_retry = self.get_push_subscription_settings(subscription)
+        needs_tune = (
+            ack is None
+            or ack < ack_deadline_sec
+            or min_retry is None
+            or min_retry < min_retry_delay_sec
+        )
+        if not needs_tune:
+            logger.info(
+                f"Pub/Sub subscription ({sub_id}): push settings already "
+                f"(ack-deadline={ack}s, min-retry-delay={min_retry}s)."
+            )
+            return True
+        self.tune_push_subscription(
+            subscription,
+            ack_deadline_sec=ack_deadline_sec,
+            min_retry_delay_sec=min_retry_delay_sec,
+        )
+        return True
 
     def find_orphan_subscriptions(self, candidates: list[str]) -> list[str]:
         """Return subscriptions that exist but are not bound to this topic."""

@@ -78,6 +78,7 @@ aigear-scheduler = "aigear.cli.gcp_scheduler:gcp_scheduler"
 aigear-model = "aigear.cli.model_service:run_model_cli"
 aigear-task = "aigear.cli.task_running:task_run"
 aigear-kms-env = "aigear.cli.kms_cli:kms_env"
+aigear-logs = "aigear.cli.gcp_logs:gcp_logs"
 
 
 [tool.setuptools.packages.find]

@@ -1,6 +1,9 @@
 from unittest.mock import patch
 
-from aigear.infrastructure.gcp.eventarc import EventarcPubSubTrigger, pubsub_trigger_name
+from aigear.infrastructure.gcp.eventarc import (
+    EventarcPubSubTrigger,
+    pubsub_trigger_name,
+)
 
 
 def _make_trigger():
@@ -49,13 +52,9 @@ def test_create_matches_official_gcloud_flags(mock_run_sh):
     assert "my-fn-pubsub" in cmd
     assert "--destination-run-service=my-fn" in cmd
     assert "--destination-run-region=asia-northeast1" in cmd
-    assert (
-        '--event-filters=type=google.cloud.pubsub.topic.v1.messagePublished' in cmd
-    )
+    assert "--event-filters=type=google.cloud.pubsub.topic.v1.messagePublished" in cmd
     assert "--transport-topic=projects/my-project/topics/my-topic" in cmd
-    assert (
-        "--service-account=sa@my-project.iam.gserviceaccount.com" in cmd
-    )
+    assert "--service-account=sa@my-project.iam.gserviceaccount.com" in cmd
 
 
 @patch("aigear.infrastructure.gcp.eventarc.run_sh")
@@ -80,9 +79,17 @@ def test_ensure_fast_path_when_subscription_healthy(mock_run_sh):
 @patch("aigear.infrastructure.gcp.eventarc.run_sh")
 def test_ensure_creates_trigger_when_missing(mock_run_sh):
     trigger = _make_trigger()
-    with patch.object(trigger, "_wait_for_ready", return_value=True):
-        with patch.object(trigger, "_describe_transport", return_value=(False, None)):
-            trigger.ensure()
+    transport_sub = "projects/my-project/subscriptions/eventarc-sub-727"
+    with patch.object(trigger, "_tune_push_subscription", return_value=True) as mock_tune:
+        with patch.object(trigger, "_wait_for_ready", return_value=True):
+            with patch.object(
+                trigger,
+                "_describe_transport",
+                side_effect=[(False, None), (True, transport_sub)],
+            ):
+                trigger.ensure()
+    mock_tune.assert_called_once()
+    assert mock_tune.call_args[0][1] == transport_sub
     assert mock_run_sh.call_count >= 2
 
 
@@ -116,9 +123,12 @@ def test_ensure_recreates_orphan_trigger(mock_run_sh, _mock_sleep):
                     ):
                         with patch.object(trigger, "_is_ready", return_value=False):
                             with patch.object(
-                                trigger, "_delete_orphan_subscriptions"
-                            ) as mock_cleanup:
-                                trigger.ensure()
+                                trigger, "_tune_push_subscription", return_value=True
+                            ):
+                                with patch.object(
+                                    trigger, "_delete_orphan_subscriptions"
+                                ) as mock_cleanup:
+                                    trigger.ensure()
     mock_cleanup.assert_called_once()
     mock_delete.assert_called_once()
     mock_create.assert_called_once()
@@ -131,6 +141,28 @@ def test_delete_if_exists_skips_when_missing(mock_run_sh):
     with patch.object(trigger, "describe", return_value=False):
         trigger.delete_if_exists()
     mock_run_sh.assert_not_called()
+
+
+@patch("aigear.infrastructure.gcp.eventarc.run_sh")
+def test_tune_push_subscriptions_when_trigger_exists(mock_run_sh):
+    trigger = _make_trigger()
+    transport_sub = "projects/my-project/subscriptions/eventarc-sub"
+    with patch.object(trigger, "describe", return_value=True):
+        with patch.object(
+            trigger, "_describe_transport", return_value=(True, transport_sub)
+        ):
+            with patch.object(trigger, "_tune_push_subscription", return_value=True) as mock_tune:
+                assert trigger.tune_push_subscriptions() is True
+    mock_tune.assert_called_once()
+
+
+@patch("aigear.infrastructure.gcp.eventarc.run_sh")
+def test_tune_push_subscriptions_skips_when_trigger_missing(mock_run_sh):
+    trigger = _make_trigger()
+    with patch.object(trigger, "describe", return_value=False):
+        with patch.object(trigger, "_tune_push_subscription") as mock_tune:
+            assert trigger.tune_push_subscriptions() is True
+    mock_tune.assert_not_called()
 
 
 @patch("aigear.infrastructure.gcp.eventarc.run_sh")
