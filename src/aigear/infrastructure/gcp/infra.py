@@ -421,10 +421,9 @@ class Infra:
         if not exists:
             logger.info(
                 f"Service account ({self.aigear_config.gcp.iam.account_name}) not found in project "
-                f"({self.project_id}). Creating service account and binding IAM policies..."
+                f"({self.project_id}). Creating service account..."
             )
             self.service_accounts.create()
-            self.service_accounts.add_iam_policy_binding()
             logger.info(
                 f"Service account ({self.aigear_config.gcp.iam.account_name}) created successfully."
             )
@@ -433,6 +432,11 @@ class Infra:
                 f"Service account ({self.aigear_config.gcp.iam.account_name}) already exists in project "
                 f"({self.project_id}). Skipping creation."
             )
+        logger.info(
+            f"Binding IAM policies for service account ({self.aigear_config.gcp.iam.account_name})..."
+        )
+        self.service_accounts.add_iam_policy_binding()
+        logger.info("IAM policy binding complete.")
 
     def _ensure_model_bucket(self):
         exists = self.model_bucket.describe()
@@ -497,9 +501,6 @@ class Infra:
                 f"({self.project_id}). Creating topic..."
             )
             self.pubsub.create()
-            self.pubsub.add_permissions_to_pubsub(
-                sa_email=self.service_accounts.sa_email
-            )
             logger.info(
                 f"Pub/Sub topic ({self.aigear_config.gcp.pub_sub.topic_name}) created successfully."
             )
@@ -508,6 +509,11 @@ class Infra:
                 f"Pub/Sub topic ({self.aigear_config.gcp.pub_sub.topic_name}) already exists in project "
                 f"({self.project_id}). Skipping creation."
             )
+        logger.info(
+            f"Binding Pub/Sub permissions for topic ({self.aigear_config.gcp.pub_sub.topic_name})..."
+        )
+        self.pubsub.add_permissions_to_pubsub(sa_email=self.service_accounts.sa_email)
+        logger.info(f"Pub/Sub permissions bound for topic ({self.aigear_config.gcp.pub_sub.topic_name}).")
 
     def _ensure_kms(self):
         if not self.cloud_kms.describe_keyring():
@@ -530,7 +536,6 @@ class Infra:
                 f"KMS key ({self.aigear_config.gcp.kms.key_name}) not found. Creating key..."
             )
             self.cloud_kms.create_key()
-            self.cloud_kms.add_permissions(sa_email=self.service_account)
             logger.info(
                 f"KMS key ({self.aigear_config.gcp.kms.key_name}) created successfully."
             )
@@ -547,6 +552,11 @@ class Infra:
             logger.info(
                 f"KMS key ({self.aigear_config.gcp.kms.key_name}) already exists. Skipping creation."
             )
+        logger.info(
+            f"Binding KMS permissions for key ({self.aigear_config.gcp.kms.key_name})..."
+        )
+        self.cloud_kms.add_permissions(sa_email=self.service_account)
+        logger.info(f"KMS permissions bound for key ({self.aigear_config.gcp.kms.key_name}).")
 
     def _ensure_cloud_build(self):
         exists = self.cloud_build.describe()
