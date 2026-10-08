@@ -141,7 +141,7 @@ class Infra:
 
         # Step 1: confirm gcloud is installed (prerequisite for everything below)
         try:
-            run_sh(["gcloud", "--version"])
+            run_sh(["gcloud", "--version"], check=True)
         except Exception:
             raise RuntimeError(
                 "`gcloud` CLI not found. Install Google Cloud SDK first."
@@ -153,14 +153,18 @@ class Infra:
 
         def _check_auth():
             try:
-                output = run_sh(["gcloud", "auth", "list", "--format=json"])
+                output = run_sh(
+                    ["gcloud", "auth", "list", "--format=json"], check=True
+                )
                 accounts = json.loads(output)
-                auth_result.extend([a for a in accounts if a.get("status") == "ACTIVE"])
+                auth_result[:] = [a for a in accounts if a.get("status") == "ACTIVE"]
             except Exception as e:
                 raise RuntimeError(f"Cannot check gcloud auth status: {e}")
 
         def _check_project():
-            current = run_sh(["gcloud", "config", "get-value", "project"]).strip()
+            current = run_sh(
+                ["gcloud", "config", "get-value", "project"], check=True
+            ).strip()
             project_result.append(current)
 
         with ThreadPoolExecutor(max_workers=2) as executor:
@@ -174,15 +178,25 @@ class Infra:
             logger.info(
                 "No active gcloud account detected. Running `gcloud auth login`..."
             )
-            run_sh(["gcloud", "auth", "login"])
-        else:
-            logger.info(f"Logged in as: {auth_result[0]['account']}")
+            run_sh(["gcloud", "auth", "login"], timeout=300, check=True)
+            _check_auth()
+            if not auth_result:
+                raise RuntimeError("No active gcloud account after login.")
+        logger.info(f"Logged in as: {auth_result[0]['account']}")
         logger.info("✅ Login check OK.")
 
         current_project = project_result[0]
         if current_project != self.project_id:
             logger.info(f"Switching gcloud project -> {self.project_id}")
-            run_sh(["gcloud", "config", "set", "project", self.project_id])
+            run_sh(
+                ["gcloud", "config", "set", "project", self.project_id], check=True
+            )
+            _check_project()
+            if project_result[-1] != self.project_id:
+                raise RuntimeError(
+                    f"gcloud project switch failed: expected {self.project_id}, "
+                    f"got {project_result[-1]}."
+                )
         else:
             logger.info(f"Project already set to {self.project_id}")
         logger.info("✅ Project switch OK.")
@@ -207,7 +221,9 @@ class Infra:
     def _step(self, title, fn):
         _thread_local.log_buffer = []
         try:
-            fn()
+            result = fn()
+            if result is False:
+                raise RuntimeError("Operation returned False.")
             success = True
             exc = None
         except Exception as e:
@@ -304,7 +320,7 @@ class Infra:
     # ================================================================
     # Public API called from CLI
     # ================================================================
-    def create(self):
+    def create(self) -> bool:
         self._preflight_check()
 
         logger.info("===================================================")
@@ -327,7 +343,11 @@ class Infra:
                 sa_exists = True  # step succeeded → SA is guaranteed to exist
         else:
             self._step_skip(f"Service Account ({cfg.iam.account_name})")
-            sa_exists = self.service_accounts.describe()  # iam off → must verify
+            # iam off still requires a verified, existing service account.
+            title = f"Verify Service Account ({cfg.iam.account_name})"
+            sa_exists = self._step(title, self.service_accounts.describe)
+            if not sa_exists:
+                failed_steps.append(title)
 
         # ── Gate 1→2: Service Account must exist ─────────────────────
         if not sa_exists:
@@ -339,7 +359,7 @@ class Infra:
                 f"Gate 1→2: Service Account ({cfg.iam.account_name}) not found"
             )
             self._log_summary(failed_steps, "Init")
-            return
+            return False
 
         # ── Phase 2: Independent resources (parallel) ─────────────────
         phase2_tasks = {}
@@ -403,7 +423,7 @@ class Infra:
         if self._needs_eventarc(cfg):
             if not self._gate_eventarc_ready(cfg, failed_steps):
                 self._log_summary(failed_steps, "Init")
-                return
+                return False
             title = self._eventarc_title()
             if not self._step(title, self.eventarc_trigger.ensure):
                 failed_steps.append(title)
@@ -411,6 +431,7 @@ class Infra:
             self._step_skip(self._eventarc_title())
 
         self._log_summary(failed_steps, "Init")
+        return not failed_steps
 
     # ================================================================
     # Actual infra actions (use your existing classes)
@@ -672,7 +693,7 @@ class Infra:
     # ================================================================
     # Public API: update
     # ================================================================
-    def update(self):
+    def update(self) -> bool:
         self._preflight_check()
 
         logger.info("===================================================")
@@ -749,21 +770,19 @@ class Infra:
 
         if self._needs_eventarc(cfg):
             title = self._eventarc_title()
-            if self.eventarc_trigger.describe():
-                tune_title = f"{title} (push ack/retry)"
-                if not self._step(tune_title, self.eventarc_trigger.tune_push_subscriptions):
-                    failed_steps.append(tune_title)
-            else:
-                self._step_no_update(title)
+            tune_title = f"{title} (push ack/retry)"
+            if not self._step(tune_title, self.eventarc_trigger.tune_push_subscriptions):
+                failed_steps.append(tune_title)
         elif cfg.pub_sub.on or cfg.cloud_function.on:
             self._step_skip(self._eventarc_title())
 
         self._log_summary(failed_steps, "Update")
+        return not failed_steps
 
     # ================================================================
     # Public API: delete
     # ================================================================
-    def delete(self):
+    def delete(self) -> bool:
         self._preflight_check()
 
         logger.info("===================================================")
@@ -774,14 +793,20 @@ class Infra:
         cfg = self.aigear_config.gcp
 
         # ── Phase 1: Eventarc trigger, then Cloud Function ───────────
+        eventarc_deleted = True
         if self._needs_eventarc(cfg):
             title = self._eventarc_title()
-            if not self._step(title, self.eventarc_trigger.delete_if_exists):
+            eventarc_deleted = self._step(title, self.eventarc_trigger.delete_if_exists)
+            if not eventarc_deleted:
                 failed_steps.append(title)
         elif cfg.pub_sub.on or cfg.cloud_function.on:
             self._step_skip(self._eventarc_title())
 
-        if cfg.cloud_function.on:
+        if cfg.cloud_function.on and not eventarc_deleted:
+            title = f"Cloud Function ({cfg.cloud_function.function_name})"
+            self._step_fail(title, "Eventarc deletion failed — deletion blocked")
+            failed_steps.append(title)
+        elif cfg.cloud_function.on:
             success = self._step(
                 f"Cloud Function ({cfg.cloud_function.function_name})",
                 self._delete_cloud_function,
@@ -815,12 +840,17 @@ class Infra:
             f"Artifact Registry ({cfg.artifacts.repository_name})",
             self._delete_artifacts,
         )
-        self._phase2_add(
-            phase2_tasks,
-            cfg.pub_sub.on,
-            f"Pub/Sub Topic ({cfg.pub_sub.topic_name})",
-            self._delete_pubsub,
-        )
+        if cfg.pub_sub.on and not eventarc_deleted:
+            title = f"Pub/Sub Topic ({cfg.pub_sub.topic_name})"
+            self._step_fail(title, "Eventarc deletion failed — deletion blocked")
+            failed_steps.append(title)
+        else:
+            self._phase2_add(
+                phase2_tasks,
+                cfg.pub_sub.on,
+                f"Pub/Sub Topic ({cfg.pub_sub.topic_name})",
+                self._delete_pubsub,
+            )
         self._phase2_add(
             phase2_tasks,
             cfg.kms.on,
@@ -845,7 +875,11 @@ class Infra:
         self._run_parallel(phase2_tasks, failed_steps)
 
         # ── Phase 3: Service Account (reverse of creation phase 1) ───
-        if cfg.iam.on:
+        if cfg.iam.on and failed_steps:
+            title = f"Service Account ({cfg.iam.account_name})"
+            self._step_fail(title, "cleanup failed or incomplete — service account retained")
+            failed_steps.append(title)
+        elif cfg.iam.on:
             success = self._step(
                 f"Service Account ({cfg.iam.account_name})",
                 self._delete_service_account,
@@ -856,6 +890,7 @@ class Infra:
             self._step_skip(f"Service Account ({cfg.iam.account_name})")
 
         self._log_summary(failed_steps, "Delete")
+        return not failed_steps
 
     # ================================================================
     # Actual delete actions
@@ -866,9 +901,9 @@ class Infra:
             logger.info(
                 f"Deleting Cloud Function ({self.aigear_config.gcp.cloud_function.function_name})..."
             )
-            self.cloud_function.delete()
+            self.cloud_function.delete(wait=True)
             logger.info(
-                f"Cloud Function ({self.aigear_config.gcp.cloud_function.function_name}) deletion initiated (async)."
+                f"Cloud Function ({self.aigear_config.gcp.cloud_function.function_name}) deleted successfully."
             )
         else:
             logger.info(
@@ -977,9 +1012,9 @@ class Infra:
             logger.info(
                 f"Deleting Kubernetes Cluster ({self.aigear_config.gcp.kubernetes.cluster_name})..."
             )
-            self.kubernetes_cluster.delete()
+            self.kubernetes_cluster.delete(wait=True)
             logger.info(
-                f"Kubernetes Cluster ({self.aigear_config.gcp.kubernetes.cluster_name}) deletion initiated (async)."
+                f"Kubernetes Cluster ({self.aigear_config.gcp.kubernetes.cluster_name}) deleted successfully."
             )
         else:
             logger.info(
@@ -1134,7 +1169,7 @@ class Infra:
         if not self.cloud_kms.describe_keyring():
             return "NOT_FOUND [keyring ❌]"
         if not self.cloud_kms.describe_key():
-            return "EXISTS [keyring ✅  key ❌]"
+            return "PARTIAL [keyring ✅  key ❌]"
         ver = "ENABLED" if self.cloud_kms.describe_enabled_key_version() else "DISABLED"
         return f"EXISTS [keyring ✅  key ✅  version {ver}]"
 

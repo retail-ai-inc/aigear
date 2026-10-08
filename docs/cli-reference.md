@@ -68,7 +68,13 @@ Phase 3 runs only when **both** `gcp.pub_sub.on` and `gcp.cloud_function.on` are
 
 Pub/Sub topic deletion removes any remaining subscriptions on that topic before the topic itself is deleted.
 
-- Each step is idempotent — existing resources are detected and skipped.
+- Cloud Function and GKE deletion waits for completion before service account deletion. The wait limits are 600 seconds for Cloud Function and 1800 seconds for GKE. A timeout means completion is unconfirmed and the cleanup is reported as failed.
+- If Eventarc deletion fails, Cloud Function and Pub/Sub topic deletion are blocked. Other independent cleanup continues. Any failed, blocked, or incomplete cleanup retains the service account and appears in the final summary.
+- Each resource's `on` flag controls whether it is managed. Disabled resources are skipped. Eventarc is managed only when both `pub_sub.on` and `cloud_function.on` are enabled; cleanup does not scan the project for other dependencies.
+- Creation skips existing resources while re-applying required settings and IAM bindings. Deletion skips resources confirmed to be absent. Permission errors, timeouts, and other query failures are reported as errors.
+- Preflight checks verify gcloud availability, an active account, and the configured project. Login and project changes are rechecked before resource operations start. Login has a 300-second timeout; other preflight commands have a 30-second timeout.
+- `--create`, `--update`, and `--delete` exit with code **0** on success and **1** on any operation or preflight failure, including blocked phases. Independent steps continue where possible so the summary includes their results. Invalid arguments retain argparse's exit code **2**.
+- `--status` reports `EXISTS`, `NOT_FOUND`, `PARTIAL`, or `ERROR`. A KMS keyring without its configured key is `PARTIAL` and counts toward the partial-resource total. Per-resource query errors appear in the table; the status query itself keeps its existing exit-code behavior.
 - If the GCP default subnet is not yet ready (common in new projects), Pre-VM Image creation retries automatically up to 5 times with a 30-second wait between attempts.
 - Requires owner-level GCP permissions. Recommended to run from Cloud Shell.
 
