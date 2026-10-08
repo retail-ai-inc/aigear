@@ -47,8 +47,11 @@ def run_sh(
                 f"Command failed (exit {result.returncode}): {output.strip()}"
             )
         return output
-    except subprocess.TimeoutExpired:
-        return f"Error: Command({command}) execution timeout."
+    except subprocess.TimeoutExpired as exc:
+        message = f"Error: Command({command}) execution timeout."
+        if check:
+            raise RuntimeError(message) from exc
+        return message
 
 
 def run_sh_stream(command: list, inputs: str | None = None) -> int:
