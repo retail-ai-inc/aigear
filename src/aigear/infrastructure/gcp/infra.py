@@ -344,7 +344,6 @@ class Infra:
         # ── Phase 2: Independent resources (parallel) ─────────────────
         phase2_tasks = {}
         cf_title = f"Cloud Function ({cfg.cloud_function.function_name})"
-        sa_email = self.service_accounts.sa_email
 
         if cfg.bucket.on:
             phase2_tasks[f"Model Bucket ({cfg.bucket.bucket_name})"] = (
@@ -396,7 +395,7 @@ class Infra:
             phase2_tasks,
             cfg.cloud_function.on,
             cf_title,
-            lambda: self.cloud_function.ensure(sa_email),
+            self._ensure_cloud_function,
         )
         self._run_parallel(phase2_tasks, failed_steps)
 
@@ -416,6 +415,9 @@ class Infra:
     # ================================================================
     # Actual infra actions (use your existing classes)
     # ================================================================
+    def _ensure_cloud_function(self):
+        self.cloud_function.ensure(self.service_accounts.sa_email)
+
     def _ensure_service_account(self):
         exists = self.service_accounts.describe()
         if not exists:
