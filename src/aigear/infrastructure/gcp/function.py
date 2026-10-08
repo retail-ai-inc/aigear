@@ -117,12 +117,12 @@ class CloudFunction:
             f"--region={self.region}",
             f"--member=serviceAccount:{sa_email}",
             "--role=roles/run.invoker",
+            f"--project={self.project_id}",
         ]
         run_sh(command, check=True)
         logger.info(f"✅ run.invoker granted on {self.function_name}")
 
     def describe(self):
-        is_exist = False
         command = [
             "gcloud",
             "run",
@@ -132,14 +132,15 @@ class CloudFunction:
             f"--region={self.region}",
             f"--project={self.project_id}",
         ]
-        event = run_sh(command)
-        if f"Service {self.function_name} in region {self.region}" in event:
-            is_exist = True
-        elif "ERROR" in event and "Cannot find service" not in event:
-            logger.error(
-                f"Unexpected error describing cloud function ({self.function_name}): {event}"
-            )
-        return is_exist
+        try:
+            event = run_sh(command, check=True)
+        except RuntimeError as exc:
+            if "Cannot find service" in str(exc) or "NOT_FOUND" in str(exc):
+                return False
+            raise
+        if not event.strip():
+            raise RuntimeError("Empty Cloud Function describe output.")
+        return True
 
     def list(self):
         command = [
@@ -154,7 +155,7 @@ class CloudFunction:
         event = run_sh(command)
         logger.info(f"\n{event}")
 
-    def delete(self):
+    def delete(self, wait: bool = False):
         command = [
             "gcloud",
             "run",
@@ -163,15 +164,10 @@ class CloudFunction:
             self.function_name,
             f"--region={self.region}",
             f"--project={self.project_id}",
-            "--async",
             "--quiet",
         ]
-        event = run_sh(command)
-        if "ERROR" in event:
-            logger.error(
-                f"Failed to delete cloud function ({self.function_name}): {event}"
-            )
-        else:
-            logger.info(
-                f"Cloud Function '{self.function_name}' deletion initiated (async)."
-            )
+        if not wait:
+            command.append("--async")
+        run_sh(command, check=True, timeout=600 if wait else 30)
+        state = "deleted" if wait else "deletion initiated (async)"
+        logger.info(f"Cloud Function '{self.function_name}' {state}.")

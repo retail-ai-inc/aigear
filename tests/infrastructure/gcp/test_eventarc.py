@@ -1,9 +1,16 @@
 from unittest.mock import patch
+import pytest
 
 from aigear.infrastructure.gcp.eventarc import (
     EventarcPubSubTrigger,
     pubsub_trigger_name,
 )
+
+
+@pytest.fixture(autouse=True)
+def isolate_pubsub_commands():
+    with patch("aigear.infrastructure.gcp.pub_sub.run_sh", return_value=""):
+        yield
 
 
 def _make_trigger():
@@ -39,7 +46,7 @@ def test_describe_transport_parses_subscription(mock_run_sh):
 
 @patch("aigear.infrastructure.gcp.eventarc.run_sh")
 def test_describe_returns_false_when_not_found(mock_run_sh):
-    mock_run_sh.return_value = "ERROR: NOT_FOUND"
+    mock_run_sh.side_effect = RuntimeError("ERROR: NOT_FOUND")
     assert _make_trigger().describe() is False
 
 
@@ -66,7 +73,7 @@ def test_ensure_fast_path_when_subscription_healthy(mock_run_sh):
             trigger, "_describe_transport", return_value=(True, transport_sub)
         ):
             with patch.object(trigger, "_is_ready", return_value=True):
-                with patch.object(trigger, "_tune_push_subscription") as mock_tune:
+                with patch.object(trigger, "_tune_push_subscription", return_value=True) as mock_tune:
                     with patch(
                         "aigear.infrastructure.gcp.pub_sub.PubSub.find_healthy_subscription",
                         return_value=transport_sub,
@@ -180,3 +187,36 @@ def test_delete_builds_correct_command(mock_run_sh):
         "--project=my-project",
         "--quiet",
     ]
+    assert mock_run_sh.call_args.kwargs["check"] is True
+
+
+@patch("aigear.infrastructure.gcp.eventarc.run_sh", side_effect=RuntimeError("PERMISSION_DENIED"))
+def test_delete_propagates_failure(mock_run_sh):
+    with pytest.raises(RuntimeError, match="PERMISSION_DENIED"):
+        _make_trigger().delete()
+
+
+@pytest.mark.parametrize("result", [False, True])
+def test_delete_if_exists_returns_delete_result(result):
+    trigger = _make_trigger()
+    with patch.object(trigger, "describe", return_value=True):
+        with patch.object(trigger, "delete", return_value=result):
+            assert trigger.delete_if_exists() is result
+
+
+def test_delete_if_exists_returns_true_when_missing():
+    trigger = _make_trigger()
+    with patch.object(trigger, "describe", return_value=False):
+        with patch.object(trigger, "delete") as delete:
+            assert trigger.delete_if_exists() is True
+    delete.assert_not_called()
+
+
+def test_ensure_existing_trigger_propagates_tuning_failure():
+    trigger = _make_trigger()
+    with patch.object(trigger, "_describe_transport", return_value=(True, "projects/p/subscriptions/sub")):
+        with patch.object(trigger, "_is_ready", return_value=True):
+            with patch.object(trigger, "_subscription_candidates", return_value=[]):
+                with patch.object(trigger, "_tune_push_subscription", return_value=False):
+                    with pytest.raises(RuntimeError, match="Failed to tune"):
+                        trigger.ensure()

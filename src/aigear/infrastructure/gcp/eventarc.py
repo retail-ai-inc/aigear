@@ -55,28 +55,27 @@ class EventarcPubSubTrigger:
 
     def _describe_transport(self) -> tuple[bool, str | None]:
         """Whether the trigger exists and its transport subscription path."""
-        event = run_sh(
-            [
-                "gcloud",
-                "eventarc",
-                "triggers",
-                "describe",
-                self.trigger_name,
-                f"--location={self.location}",
-                f"--project={self.project_id}",
-                "--format=value(name,transport.pubsub.subscription)",
-            ]
-        )
-        if "ERROR" in event:
-            if "NOT_FOUND" not in event:
-                logger.error(
-                    f"Unexpected error describing Eventarc trigger "
-                    f"({self.trigger_name}): {event}"
-                )
-            return False, None
+        try:
+            event = run_sh(
+                [
+                    "gcloud",
+                    "eventarc",
+                    "triggers",
+                    "describe",
+                    self.trigger_name,
+                    f"--location={self.location}",
+                    f"--project={self.project_id}",
+                    "--format=value(name,transport.pubsub.subscription)",
+                ],
+                check=True,
+            )
+        except RuntimeError as exc:
+            if "NOT_FOUND" in str(exc):
+                return False, None
+            raise
         parts = self._parse_gcloud_values(event)
         if not parts:
-            return False, None
+            raise RuntimeError("Empty Eventarc trigger describe output.")
         transport_sub = (
             parts[1] if len(parts) > 1 and parts[1].startswith("projects/") else None
         )
@@ -101,7 +100,8 @@ class EventarcPubSubTrigger:
                 f"--project={self.project_id}",
                 f"--filter=name:{prefix}",
                 "--uri",
-            ]
+            ],
+            check=True,
         )
         for line in event.splitlines():
             sub = line.strip()
@@ -128,11 +128,12 @@ class EventarcPubSubTrigger:
             )
             return False
         for sub in healthy:
-            pubsub.ensure_push_subscription_tuned(
+            if pubsub.ensure_push_subscription_tuned(
                 sub,
                 ack_deadline_sec=PUSH_ACK_DEADLINE_SEC,
                 min_retry_delay_sec=PUSH_MIN_RETRY_DELAY_SEC,
-            )
+            ) is False:
+                return False
         return True
 
     def tune_push_subscriptions(self) -> bool:
@@ -225,12 +226,7 @@ class EventarcPubSubTrigger:
             f"--project={self.project_id}",
             "--quiet",
         ]
-        event = run_sh(command)
-        if "ERROR" in event:
-            logger.error(
-                f"Failed to delete Eventarc trigger ({self.trigger_name}): {event}"
-            )
-            return False
+        run_sh(command, check=True)
         logger.info(f"Eventarc trigger '{self.trigger_name}' deleted.")
         return True
 
@@ -258,7 +254,11 @@ class EventarcPubSubTrigger:
             healthy = pubsub.find_healthy_subscription(
                 self._subscription_candidates(pubsub, transport_sub)
             )
-            self._tune_push_subscription(pubsub, transport_sub)
+            if not self._tune_push_subscription(pubsub, transport_sub):
+                raise RuntimeError(
+                    f"Failed to tune Pub/Sub push subscription for "
+                    f"Eventarc trigger ({self.trigger_name})."
+                )
             logger.info(
                 f"Eventarc trigger ({self.trigger_name}) already ready "
                 f"(subscription {healthy.rsplit('/', 1)[-1]} on {self.topic_name})."
@@ -301,8 +301,9 @@ class EventarcPubSubTrigger:
                     f"for Eventarc trigger ({self.trigger_name})."
                 )
 
-    def delete_if_exists(self):
+    def delete_if_exists(self) -> bool:
         if self.describe():
-            self.delete()
+            return self.delete()
         else:
             logger.info(f"Eventarc trigger ({self.trigger_name}) not found. Skipping.")
+            return True

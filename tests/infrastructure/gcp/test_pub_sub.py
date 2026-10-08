@@ -1,4 +1,5 @@
 from unittest.mock import patch
+import pytest
 
 from aigear.infrastructure.gcp.pub_sub import PubSub
 
@@ -30,23 +31,25 @@ def test_describe_returns_true_when_topic_exists(mock_run_sh):
 
 @patch("aigear.infrastructure.gcp.pub_sub.run_sh")
 def test_describe_returns_false_when_not_found(mock_run_sh):
-    mock_run_sh.return_value = "ERROR: NOT_FOUND"
+    mock_run_sh.side_effect = RuntimeError("ERROR: NOT_FOUND")
     ps = _make_pubsub()
     assert ps.describe() is False
 
 
 @patch("aigear.infrastructure.gcp.pub_sub.run_sh")
-def test_describe_returns_false_when_output_empty(mock_run_sh):
+def test_describe_raises_when_output_empty(mock_run_sh):
     mock_run_sh.return_value = ""
     ps = _make_pubsub()
-    assert ps.describe() is False
+    with pytest.raises(RuntimeError, match="Unexpected"):
+        ps.describe()
 
 
 @patch("aigear.infrastructure.gcp.pub_sub.run_sh")
-def test_describe_returns_false_when_name_not_in_output(mock_run_sh):
+def test_describe_raises_when_name_not_in_output(mock_run_sh):
     mock_run_sh.return_value = "some unrelated output"
     ps = _make_pubsub()
-    assert ps.describe() is False
+    with pytest.raises(RuntimeError, match="Unexpected"):
+        ps.describe()
 
 
 # ── PubSub.describe_subscription / subscription_status ──────────────────────
@@ -66,7 +69,7 @@ def test_describe_subscription_uses_gcloud_describe(mock_run_sh):
 
 @patch("aigear.infrastructure.gcp.pub_sub.run_sh")
 def test_describe_subscription_returns_none_when_missing(mock_run_sh):
-    mock_run_sh.return_value = "ERROR: NOT_FOUND"
+    mock_run_sh.side_effect = RuntimeError("ERROR: NOT_FOUND")
     ps = _make_pubsub()
     assert ps.describe_subscription("projects/my-project/subscriptions/gone") is None
 
@@ -91,9 +94,14 @@ def test_subscription_status_orphan(mock_run_sh):
     )
 
 
+@patch("aigear.infrastructure.gcp.pub_sub.run_sh", return_value="_deleted-topic_\n")
+def test_deleted_topic_subscription_is_orphan(mock_run_sh):
+    assert _make_pubsub().subscription_status("projects/my-project/subscriptions/sub") == "orphan"
+
+
 @patch("aigear.infrastructure.gcp.pub_sub.run_sh")
 def test_subscription_status_missing(mock_run_sh):
-    mock_run_sh.return_value = "ERROR: NOT_FOUND"
+    mock_run_sh.side_effect = RuntimeError("ERROR: NOT_FOUND")
     ps = _make_pubsub()
     assert (
         ps.subscription_status("projects/my-project/subscriptions/sub")
@@ -215,3 +223,30 @@ def test_delete_builds_correct_command(mock_run_sh):
     assert "delete" in cmd
     assert "my-topic" in cmd
     assert "--project=my-project" in cmd
+    assert mock_run_sh.call_args.kwargs["check"] is True
+
+
+@patch("aigear.infrastructure.gcp.pub_sub.run_sh")
+def test_delete_stops_before_topic_when_subscription_delete_fails(mock_run_sh):
+    mock_run_sh.side_effect = [
+        "projects/my-project/subscriptions/sub",
+        RuntimeError("PERMISSION_DENIED"),
+    ]
+    with pytest.raises(RuntimeError, match="PERMISSION_DENIED"):
+        _make_pubsub().delete()
+    assert mock_run_sh.call_count == 2
+    assert all(call.kwargs["check"] is True for call in mock_run_sh.call_args_list)
+    assert mock_run_sh.call_args.args[0][2] == "subscriptions"
+
+
+@patch("aigear.infrastructure.gcp.pub_sub.run_sh", side_effect=RuntimeError("PERMISSION_DENIED"))
+def test_describe_subscription_propagates_permission_error(mock_run_sh):
+    with pytest.raises(RuntimeError, match="PERMISSION_DENIED"):
+        _make_pubsub().describe_subscription("projects/my-project/subscriptions/sub")
+
+
+@patch("aigear.infrastructure.gcp.pub_sub.run_sh", side_effect=RuntimeError("execution timeout"))
+def test_push_settings_query_failure_does_not_start_update(mock_run_sh):
+    with pytest.raises(RuntimeError, match="timeout"):
+        _make_pubsub().ensure_push_subscription_tuned("projects/my-project/subscriptions/sub")
+    assert mock_run_sh.call_count == 1

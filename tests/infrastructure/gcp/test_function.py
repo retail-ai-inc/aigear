@@ -1,4 +1,5 @@
 from unittest.mock import patch
+import pytest
 
 from aigear.infrastructure.gcp.function import CloudFunction
 
@@ -36,3 +37,24 @@ def test_ensure_skips_deploy_when_exists(mock_run_sh):
         fn.ensure("invoker@my-project.iam.gserviceaccount.com")
     mock_deploy.assert_not_called()
     mock_perms.assert_called_once()
+
+
+@pytest.mark.parametrize("wait,timeout", [(False, 30), (True, 600)])
+@patch("aigear.infrastructure.gcp.function.run_sh")
+def test_delete_waits_only_when_requested(mock_run_sh, wait, timeout):
+    _make_function().delete(wait=wait)
+    command = mock_run_sh.call_args.args[0]
+    assert ("--async" in command) is (not wait)
+    assert mock_run_sh.call_args.kwargs == {"check": True, "timeout": timeout}
+
+
+@patch("aigear.infrastructure.gcp.function.run_sh", side_effect=RuntimeError("execution timeout"))
+def test_delete_propagates_timeout(mock_run_sh):
+    with pytest.raises(RuntimeError, match="timeout"):
+        _make_function().delete(wait=True)
+
+
+@patch("aigear.infrastructure.gcp.function.run_sh")
+def test_delete_defaults_to_async(mock_run_sh):
+    _make_function().delete()
+    assert "--async" in mock_run_sh.call_args.args[0]

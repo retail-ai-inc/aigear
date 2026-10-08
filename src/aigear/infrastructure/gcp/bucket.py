@@ -42,7 +42,6 @@ class Bucket:
         run_sh(command, check=True)
 
     def describe(self):
-        is_exist = False
         command = [
             "gcloud",
             "storage",
@@ -51,19 +50,18 @@ class Bucket:
             self.bucket_gs,
             f"--project={self.project_id}",
         ]
-        event = run_sh(command)
-        if self.bucket_gs in event and "ERROR" not in event:
-            is_exist = True
-        elif (
-            "ERROR" in event
-            and "BucketNotFoundException" not in event
-            and "NOT_FOUND" not in event
-            and "not found" not in event
-        ):
-            logger.error(
-                f"Unexpected error describing bucket ({self.bucket_gs}): {event}"
-            )
-        return is_exist
+        try:
+            event = run_sh(command, check=True)
+        except RuntimeError as exc:
+            if any(
+                marker in str(exc)
+                for marker in ("BucketNotFoundException", "NOT_FOUND", "not found")
+            ):
+                return False
+            raise
+        if self.bucket_gs not in event:
+            raise RuntimeError(f"Unexpected bucket describe output: {event}")
+        return True
 
     def list(self):
         command = [
@@ -86,5 +84,5 @@ class Bucket:
             self.bucket_gs,
             f"--project={self.project_id}",
         ]
-        event = run_sh(command)
+        event = run_sh(command, check=True)
         logger.info(event)

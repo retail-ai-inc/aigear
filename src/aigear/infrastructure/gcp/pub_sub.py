@@ -38,26 +38,27 @@ class PubSub:
         subscription does not exist (NOT_FOUND).
         """
         sub_id = subscription.rsplit("/", 1)[-1]
-        event = run_sh(
-            [
-                "gcloud",
-                "pubsub",
-                "subscriptions",
-                "describe",
-                sub_id,
-                f"--project={self.project_id}",
-                "--format=value(topic)",
-            ]
-        )
-        if "ERROR" in event:
-            if "NOT_FOUND" in event:
-                return None
-            logger.error(
-                f"Unexpected error describing subscription ({sub_id}): {event}"
+        try:
+            event = run_sh(
+                [
+                    "gcloud",
+                    "pubsub",
+                    "subscriptions",
+                    "describe",
+                    sub_id,
+                    f"--project={self.project_id}",
+                    "--format=value(topic)",
+                ],
+                check=True,
             )
-            return None
+        except RuntimeError as exc:
+            if "NOT_FOUND" in str(exc):
+                return None
+            raise
         topic = event.strip()
-        return topic if topic.startswith("projects/") else None
+        if not topic.startswith("projects/") and topic != "_deleted-topic_":
+            raise RuntimeError(f"Unexpected subscription describe output: {event}")
+        return topic
 
     def subscription_status(self, subscription: str) -> str:
         """
@@ -77,7 +78,7 @@ class PubSub:
 
     def delete_subscription(self, subscription: str):
         sub_id = subscription.rsplit("/", 1)[-1]
-        event = run_sh(
+        run_sh(
             [
                 "gcloud",
                 "pubsub",
@@ -86,14 +87,10 @@ class PubSub:
                 sub_id,
                 f"--project={self.project_id}",
                 "--quiet",
-            ]
+            ],
+            check=True,
         )
-        if "ERROR" in event:
-            logger.warning(
-                f"Could not delete Pub/Sub subscription ({sub_id}): {event.strip()}"
-            )
-        else:
-            logger.info(f"Deleted Pub/Sub subscription ({sub_id}).")
+        logger.info(f"Deleted Pub/Sub subscription ({sub_id}).")
 
     def find_healthy_subscription(self, candidates: list[str]) -> str | None:
         """Return the first candidate subscription that is healthy on this topic."""
@@ -120,7 +117,7 @@ class PubSub:
         """
         Read push ack deadline (seconds) and minimum retry backoff (seconds).
 
-        Returns (None, None) when describe fails.
+        Missing settings are returned as None; command failures raise.
         """
         sub_id = subscription.rsplit("/", 1)[-1]
         event = run_sh(
@@ -132,10 +129,9 @@ class PubSub:
                 sub_id,
                 f"--project={self.project_id}",
                 "--format=value(ackDeadlineSeconds,retryPolicy.minimumBackoff)",
-            ]
+            ],
+            check=True,
         )
-        if "ERROR" in event:
-            return None, None
         parts = [p.strip() for p in event.replace("\t", "\n").splitlines() if p.strip()]
         ack = int(parts[0]) if parts and parts[0].isdigit() else None
         min_retry = _parse_gcp_duration_seconds(parts[1] if len(parts) > 1 else None)
@@ -241,7 +237,6 @@ class PubSub:
             logger.info(f"✅ Successfully granted: {role}")
 
     def describe(self):
-        is_exist = False
         command = [
             "gcloud",
             "pubsub",
@@ -250,14 +245,15 @@ class PubSub:
             self.topic_name,
             f"--project={self.project_id}",
         ]
-        event = run_sh(command)
-        if "name: projects" in event:
-            is_exist = True
-        elif "ERROR" in event and "NOT_FOUND" not in event:
-            logger.error(
-                f"Unexpected error describing topic ({self.topic_name}): {event}"
-            )
-        return is_exist
+        try:
+            event = run_sh(command, check=True)
+        except RuntimeError as exc:
+            if "NOT_FOUND" in str(exc):
+                return False
+            raise
+        if "name: projects" not in event:
+            raise RuntimeError(f"Unexpected Pub/Sub topic describe output: {event}")
+        return True
 
     def list_subscriptions(self) -> list[str]:
         event = run_sh(
@@ -269,7 +265,8 @@ class PubSub:
                 self.topic_name,
                 f"--project={self.project_id}",
                 "--uri",
-            ]
+            ],
+            check=True,
         )
         subs: list[str] = []
         for line in event.splitlines():
@@ -299,8 +296,9 @@ class PubSub:
             "delete",
             self.topic_name,
             f"--project={self.project_id}",
+            "--quiet",
         ]
-        event = run_sh(command)
+        event = run_sh(command, check=True)
         logger.info(event)
 
     def list(self):

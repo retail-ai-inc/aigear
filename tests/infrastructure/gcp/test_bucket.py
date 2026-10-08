@@ -1,4 +1,5 @@
 from unittest.mock import patch
+import pytest
 
 from aigear.infrastructure.gcp.bucket import Bucket
 
@@ -44,24 +45,25 @@ def test_describe_returns_true_when_bucket_found(mock_run_sh):
 
 @patch("aigear.infrastructure.gcp.bucket.run_sh")
 def test_describe_returns_false_when_not_found_error(mock_run_sh):
-    mock_run_sh.return_value = "ERROR: BucketNotFoundException: NOT_FOUND"
+    mock_run_sh.side_effect = RuntimeError("ERROR: BucketNotFoundException: NOT_FOUND")
     bucket = _make_bucket()
     assert bucket.describe() is False
 
 
 @patch("aigear.infrastructure.gcp.bucket.run_sh")
-def test_describe_returns_false_when_bucket_gs_missing_from_output(mock_run_sh):
+def test_describe_raises_when_bucket_gs_missing_from_output(mock_run_sh):
     mock_run_sh.return_value = "some other output"
     bucket = _make_bucket()
-    assert bucket.describe() is False
+    with pytest.raises(RuntimeError, match="Unexpected"):
+        bucket.describe()
 
 
 @patch("aigear.infrastructure.gcp.bucket.run_sh")
-def test_describe_returns_false_when_error_in_output(mock_run_sh):
-    # bucket_gs is in output but so is ERROR → False
-    mock_run_sh.return_value = "gs://my-bucket ERROR: something bad"
+def test_describe_raises_when_permission_denied(mock_run_sh):
+    mock_run_sh.side_effect = RuntimeError("gs://my-bucket ERROR: PERMISSION_DENIED")
     bucket = _make_bucket()
-    assert bucket.describe() is False
+    with pytest.raises(RuntimeError, match="PERMISSION_DENIED"):
+        bucket.describe()
 
 
 # ── Bucket.add_permissions_to_gcs ────────────────────────────────────────────
@@ -92,5 +94,6 @@ def test_delete_builds_correct_command(mock_run_sh):
         [
             "gcloud", "storage", "rm", "-r", "gs://my-bucket",
             "--project=my-project",
-        ]
+        ],
+        check=True,
     )
