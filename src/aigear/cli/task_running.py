@@ -10,7 +10,7 @@ from aigear.common.run_log_context import RunLogContext
 from aigear.service.grpc.grpc_service import grpc_service
 
 
-def run_workflow(pipeline_version: str, step_name: str) -> None:
+def run_workflow(pipeline_version: str, step_name: str) -> bool:
     aigear_config = AigearConfig.get_config()
     ctx = RunLogContext.install_from_env(
         gcp_logging=aigear_config.gcp.logging,
@@ -19,16 +19,16 @@ def run_workflow(pipeline_version: str, step_name: str) -> None:
     logger = Logging(log_name=__name__).for_task()
     try:
         pipeline_config = PipelinesConfig.get_version_config(pipeline_version)
-        if pipeline_config is None:
+        if not pipeline_config:
             logger.error(f"No config found for version: {pipeline_version}")
-            return
+            return False
         module_path = pipeline_config.get(step_name, {}).get("pipeline_step")
         if not module_path:
             logger.error(
                 f"No pipeline_step found for step '{step_name}' "
                 f"in version '{pipeline_version}'"
             )
-            return
+            return False
 
         step_started_at: float | None = None
         try:
@@ -48,6 +48,7 @@ def run_workflow(pipeline_version: str, step_name: str) -> None:
                     ctx,
                     extra=extra or None,
                 )
+            return True
         except Exception as e:
             if ctx:
                 extra = {
@@ -61,6 +62,7 @@ def run_workflow(pipeline_version: str, step_name: str) -> None:
                     )
                 emit_lifecycle_log("pipeline_step_failed", ctx, extra=extra)
             logger.error(f"Error while executing {module_path}: {e}")
+            return False
     finally:
         RunLogContext.clear()
 
@@ -97,7 +99,8 @@ def task_run() -> None:
 
     args = get_argument()
     if args.subcommand == "workflow":
-        run_workflow(args.version, args.step)
+        if not run_workflow(args.version, args.step):
+            raise SystemExit(1)
     elif args.subcommand == "grpc":
         pipeline_config = PipelinesConfig.get_version_config(args.version)
         model_class_path = (

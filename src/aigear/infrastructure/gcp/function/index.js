@@ -256,6 +256,7 @@ function assertSafeShellArg(value, label) {
 
 function buildPipelineCommand(current) {
   if (!current.step_name) return '';
+  if (current.step_name === 'model_service' && current.model_class_path) return '';
 
   assertSafeShellArg(current.pipeline_version, 'pipeline_version');
   assertSafeShellArg(current.step_name, 'step_name');
@@ -281,6 +282,7 @@ function buildFatalErrorMessagePrefix({
   projectName,
   stepName,
   dockerImage,
+  cancelledSteps = [],
 }) {
   const json = JSON.stringify({
     error: true,
@@ -290,6 +292,7 @@ function buildFatalErrorMessagePrefix({
     step_name: stepName || undefined,
     project_name: projectName || undefined,
     docker_image: dockerImage || undefined,
+    cancelled_steps: cancelledSteps.length ? cancelledSteps : undefined,
   });
   return json.slice(0, -1);
 }
@@ -370,6 +373,7 @@ function buildStartupScript({
     projectName,
     stepName,
     dockerImage,
+    cancelledSteps: JSON.parse(nextMessage).map(task => buildRunLogFields(task)),
   });
 
   // Shared handler: publish terminal error to Pub/Sub and delete this VM.
@@ -755,6 +759,22 @@ async function failTaskAndStop(getAuthClient, err, forcedExitCode, logFn) {
   await publishPipelineError(authClient, err, forcedExitCode);
 }
 
+async function writeCancelledStepLogs(steps, failedTask) {
+  if (!Array.isArray(steps)) return;
+  const failedStep = resolveStepName(failedTask || {});
+  for (const step of steps) {
+    await writeCloudFunctionLog({
+      event: 'pipeline_step_cancelled',
+      message: 'pipeline_step_cancelled',
+      task: step,
+      extra: {
+        failed_step: failedStep,
+        detail: `Stopped after ${failedStep} failed`,
+      },
+    });
+  }
+}
+
 /**
  * Poll the insert operation briefly so fatal errors (e.g. missing custom image)
  * are caught before acking Pub/Sub, without waiting for the full VM boot.
@@ -986,6 +1006,7 @@ functions.cloudEvent('cronjobProcessPubSub', async cloudEvent => {
         error_output_truncated: cronjobInfo.error_output_truncated,
       },
     });
+    await writeCancelledStepLogs(cronjobInfo.cancelled_steps, errorTask);
     return;
   }
 
@@ -1032,6 +1053,14 @@ functions.cloudEvent('cronjobProcessPubSub', async cloudEvent => {
   }
 
   const [current, ...remaining] = cronjobInfo;
+  const remainingWithRun = remaining.map(task => ({
+    ...task,
+    run_id: task.run_id || current.run_id,
+    run_started_at_utc: task.run_started_at_utc || current.run_started_at_utc,
+    project_name: task.project_name || current.project_name,
+    pipeline_version: task.pipeline_version || current.pipeline_version,
+    step_name: task.step_name || resolveStepName(task),
+  }));
   await writeCloudFunctionLog({
     event: 'run_context_initialized',
     message: 'run_context_initialized',
@@ -1054,9 +1083,10 @@ functions.cloudEvent('cronjobProcessPubSub', async cloudEvent => {
       task: current,
       extra: { error: err.message },
     });
+    await writeCancelledStepLogs(remainingWithRun, current);
     try {
       const client = await getAuthClient();
-      await publishPipelineError(client, err, 'task_invalid');
+      await publishPipelineError(client, err, 'task_invalid', current);
     } catch (publishErr) {
       console.error(`Failed to publish validation error: ${publishErr.message}`);
     }
@@ -1079,9 +1109,10 @@ functions.cloudEvent('cronjobProcessPubSub', async cloudEvent => {
       task: current,
       extra: { error: err.message },
     });
+    await writeCancelledStepLogs(remainingWithRun, current);
     try {
       const client = await getAuthClient();
-      await publishPipelineError(client, err, 'task_invalid');
+      await publishPipelineError(client, err, 'task_invalid', current);
     } catch (publishErr) {
       console.error(`Failed to publish validation error: ${publishErr.message}`);
     }
@@ -1106,14 +1137,6 @@ functions.cloudEvent('cronjobProcessPubSub', async cloudEvent => {
   });
 
   // Build startup script
-  const remainingWithRun = remaining.map(task => ({
-    ...task,
-    run_id: task.run_id || current.run_id,
-    run_started_at_utc: task.run_started_at_utc || current.run_started_at_utc,
-    project_name: task.project_name || current.project_name,
-    pipeline_version: task.pipeline_version || current.pipeline_version,
-    step_name: task.step_name || resolveStepName(task),
-  }));
   const nextMessage   = JSON.stringify(remainingWithRun);
   const startupScript = buildStartupScript({
     dockerImage:    current.docker_image,
@@ -1169,6 +1192,7 @@ functions.cloudEvent('cronjobProcessPubSub', async cloudEvent => {
       task: { ...current, instance_name: vmName },
       extra: { error: err.message || String(err) },
     });
+    await writeCancelledStepLogs(remainingWithRun, current);
     if (authClient) {
       await publishPipelineError(authClient, err, null, {
         run_id: current.run_id,

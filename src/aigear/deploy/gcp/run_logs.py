@@ -419,7 +419,19 @@ def build_step_timeline(
             row.status = "OK"
         elif event == "pipeline_step_result":
             row.result = _format_result_value(payload.get("result"))
-        elif event in ("pipeline_step_failed", "vm_step_failed", "vm_creation_failed"):
+        elif event == "pipeline_step_cancelled":
+            if row.status in ("PENDING", "CANCELLED"):
+                row.status = "CANCELLED"
+                row.detail = payload.get("detail") or (
+                    f"Stopped after {payload.get('failed_step', 'previous step')} failed"
+                )
+        elif event in (
+            "pipeline_step_failed",
+            "vm_step_failed",
+            "vm_creation_failed",
+            "task_validation_failed",
+            "pipeline_command_build_failed",
+        ):
             if timestamp:
                 row.finished_at = timestamp
             row.status = "FAILED"
@@ -428,8 +440,15 @@ def build_step_timeline(
                 row.duration_ms = duration_ms
             if event == "vm_creation_failed":
                 row.detail = "vm_creation_failed"
+            elif event in ("task_validation_failed", "pipeline_command_build_failed"):
+                row.detail = str(error_message or event)
             elif event == "vm_step_failed" or log_source == "cloud_function" or payload.get("exit_code"):
-                row.detail = _format_cf_fail_detail(payload)
+                if (
+                    event != "vm_step_failed"
+                    or payload.get("exit_code") != "pipeline_failed"
+                    or not row.detail
+                ):
+                    row.detail = _format_cf_fail_detail(payload)
             else:
                 error_message = payload.get("error_message")
                 row.detail = str(error_message) if error_message is not None else "step failed"
