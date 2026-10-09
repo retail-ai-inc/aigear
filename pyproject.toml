@@ -100,3 +100,6 @@ include = [
 "*" = ["__pycache__/*", "*/__pycache__/*", "*.pyc", "*.pyo"]
 
 [tool.setuptools_scm]
+
+[tool.pytest.ini_options]
+addopts = "--tb=short"

@@ -229,6 +229,8 @@ Contributions, issues, and PRs are welcome. Share internal use-cases to help evo
 
 Run the unit tests with `python -m pytest tests/ -v`. Cloud Function behavior tests also require Node.js 24, matching the deployed runtime; they mock GCP APIs and do not access cloud resources. Tests marked `xfail(strict=True)` describe known code defects: an unexpected pass fails the suite so the marker can be removed after a fix.
 
+Tests use an isolated session directory under `.pytest_cache/tmp/`, cleaned up after the run, so they do not depend on access to a shared system temporary directory. An explicit `--basetemp` overrides this default. Tracebacks are concise by default; use `--tb=long` for full details. If Node.js is unavailable, Cloud Function behavior cases are reported as skipped.
+
 - **Issues**: [GitHub Issues](https://github.com/retail-ai-inc/aigear/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/retail-ai-inc/aigear/discussions)
 
