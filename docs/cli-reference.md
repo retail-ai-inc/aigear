@@ -29,7 +29,7 @@ aigear-init [--name NAME] [--pipeline_versions VERSIONS]
 | `--name` | `template_project` | Project name (used as the directory name) |
 | `--pipeline_versions` | `pipeline_version_1` | Comma-separated pipeline version names, e.g. `v1,v2` |
 
-> **Git pre-commit hook**: `aigear-init` automatically installs a pre-commit hook in the new project's `.git/hooks/` directory. The hook blocks any commit where `env.json` is newer than its encrypted counterpart, preventing accidental commits of plaintext configuration.
+> **Git pre-commit hook**: `aigear-init` installs a pre-commit hook in the new project's `.git/hooks/` directory. It blocks commits when `env.json` exists but no ciphertext is present under `kms/`, or when any ciphertext is older than `env.json`. It does not inspect staged files. The generated `.gitignore` excludes `env.json`; do not force-add plaintext configuration.
 
 ---
 
@@ -75,8 +75,9 @@ Pub/Sub topic deletion removes any remaining subscriptions on that topic before 
 - Preflight checks verify gcloud availability, an active account, and the configured project. Login and project changes are rechecked before resource operations start. Login has a 300-second timeout; other preflight commands have a 30-second timeout.
 - `--create`, `--update`, and `--delete` exit with code **0** on success and **1** on any operation or preflight failure, including blocked phases. Independent steps continue where possible so the summary includes their results. Invalid arguments retain argparse's exit code **2**.
 - `--status` reports `EXISTS`, `NOT_FOUND`, `PARTIAL`, or `ERROR`. A KMS keyring without its configured key is `PARTIAL` and counts toward the partial-resource total. Per-resource query errors appear in the table; the status query itself keeps its existing exit-code behavior.
-- If the GCP default subnet is not yet ready (common in new projects), Pre-VM Image creation retries automatically up to 5 times with a 30-second wait between attempts.
+- If the GCP default subnet is not yet ready, Pre-VM Image creation makes up to 5 attempts per zone with a 30-second wait between attempts, then tries the next fallback zone (`a`, `b`, `c`). Capacity exhaustion moves directly to the next zone; unrelated errors propagate.
 - Requires owner-level GCP permissions. Recommended to run from Cloud Shell.
+- Existing Cloud Function source is not redeployed: `--create` re-applies timeout and invoker permissions, while `--update` skips function updates. To deploy revised source, follow [the explicit redeployment procedure](troubleshooting-logs.md#redeploy-existing-cloud-function-source).
 
 ---
 
@@ -100,6 +101,8 @@ aigear-task workflow --version VERSION --step STEP_NAME
 |---|---|
 | `--version` | Pipeline version (e.g., `logistic_regression`) |
 | `--step` | Step name as defined in `env.json` (e.g., `fetch_data`). The full module path is looked up from `env.json`. |
+
+Successful workflow execution exits with code **0**. Missing pipeline/step configuration, module loading failures, and step exceptions exit with code **1**. A scheduled step failure stops the queue; subsequent steps are logged as `pipeline_step_cancelled` and appear as `CANCELLED` in `aigear-logs`.
 
 #### Subcommand: `grpc`
 
@@ -217,6 +220,8 @@ One action (`--create`, `--delete`, `--clear`, `--retag`) is required. `--push` 
 | omitted | `false` (default) | pipeline image |
 | omitted | `true` | service image |
 
+**Current build limitation:** the omitted Dockerfile scopes above select the image, but `--create` currently forwards no Dockerfile to the builder. Use `--create --dockerfile_path Dockerfile.pl`, `--create --dockerfile_path Dockerfile.ms`, or `--create --all` to build successfully. `--push` requires an action; to push an already-built image without rebuilding, authenticate Docker and run `docker push <full-image-path>:<tag>` directly. Image operation failures currently print an error without reliably returning a nonzero CLI exit code.
+
 ---
 
 ### `aigear-model`
@@ -257,6 +262,8 @@ aigear-model --version VERSION {--local | --staging | --production}
 | `--port` | `50051` | External service port |
 
 > **Auto-force:** Passing any of `--service_ports`, `--replicas`, or `--port` automatically overwrites the existing YAML, so the new parameters take effect immediately. `--yaml` always overwrites.
+
+Always provide `--version` and a valid `model_service.model_class_path`; the current CLI does not enforce the version argument during parsing. Context-switch and kubectl failures are not consistently propagated as nonzero exits. Verify the active Kubernetes context before deployment and inspect command output afterward.
 
 **Examples**
 
@@ -363,6 +370,10 @@ aigear-logs [--version VERSION --run-date YYYY-MM-DD]
 
 `--format concise` merges `cloud_function` and `ml_pipeline` lifecycle events into one table. Infrastructure failures (`vm_step_failed`, `vm_creation_failed`, legacy CF `pipeline_step_failed`) and container failures (`pipeline_step_failed` on `ml_pipeline`) appear in the **DETAIL** column. When a step calls `emit_step_result()`, structured metrics show in **DETAIL** for successful steps.
 
+Task validation and command-building failures also appear as `FAILED`. After a step failure, unexecuted steps appear as `CANCELLED` with the failed step in **DETAIL**. Cancellation does not replace an already running, successful, or failed step. A later CF `vm_step_failed` entry with `exit_code=pipeline_failed` preserves an earlier Python failure summary.
+
+Failed rows are followed by **Failure details**, including captured multiline output, `failure_stage`, and `command_exit_code` when available. Command output is limited to the last **8192 bytes**, with a truncation notice when exceeded. Duplicate error messages are shown once. If no output was captured, the CLI explains that only the failure summary is available and that VM command details require the updated Cloud Function startup script.
+
 Example timeline:
 
 ```
@@ -395,13 +406,13 @@ aigear-logs --run-id <run_id> --format full --log-source all --limit 500
 
 | Layer | `log_source` | Typical `event` | Query with |
 |-------|--------------|-----------------|------------|
-| Cloud Function / VM orchestration | `cloud_function` | `run_context_initialized`, `vm_created`, `vm_creation_failed`, **`vm_step_failed`** | `--log-source cloud_function` |
+| Cloud Function / VM orchestration | `cloud_function` | `run_context_initialized`, `vm_created`, `vm_creation_failed`, **`vm_step_failed`**, `pipeline_step_cancelled`, `task_validation_failed`, `pipeline_command_build_failed` | `--log-source cloud_function` |
 | Container `aigear-task` | `ml_pipeline` | `pipeline_step_started`, **`pipeline_step_failed`**, … | `--log-source ml_pipeline` |
 
 Rules:
 
-- **Docker pull, startup script, VM create** failures are logged only under **`cloud_function`** as **`vm_step_failed`** (includes `exit_code`, `docker_image`).
-- **Python step exceptions** are logged only under **`ml_pipeline`** as **`pipeline_step_failed`** (`error_message` / `error_type` on lifecycle; truncated to 2KB).
+- **Docker pull, authentication, and deploy command** failures are logged under **`cloud_function`** as **`vm_step_failed`** (includes `exit_code`, `docker_image`, and captured command output). VM creation failures use **`vm_creation_failed`**.
+- **Python step exceptions** produce **`pipeline_step_failed`** under **`ml_pipeline`** (`error_message` / `error_type` on lifecycle; strings truncated to 2KB). The updated startup script also reports the nonzero container exit under **`cloud_function`** as **`vm_step_failed`**, with `exit_code=pipeline_failed` and the last 8192 bytes of command output, even when `gcp.logging=false`.
 - Legacy deployments may still show `pipeline_step_failed` with `log_source=cloud_function` for VM errors; discover and query accept both.
 - VM serial / startup `echo` is **not** in Cloud Logging — use GCE serial port for raw stdout.
 
@@ -430,7 +441,7 @@ Empty query results are **not** cached. After a run finishes, logs are stable fo
 | VM + `gcp.logging=false` | stdout with run fields; lifecycle events to Cloud Logging |
 | VM + `gcp.logging=true` | stdout + all task logs to Cloud Logging (`log_source=ml_pipeline`, `run_id`, …) |
 
-Lifecycle events (`pipeline_step_started` / `finished` / `failed`, `vm_step_failed`, …) are always written to Cloud Logging and drive `--format concise`. **Business logs** (`logger.info`, metrics, stack traces) reach Cloud Logging only when `gcp.logging=true`; otherwise they stay on the VM serial port. Use `--step <name> --log-source ml_pipeline` to read per-step business output after enabling logging.
+Lifecycle events (`pipeline_step_started` / `finished` / `failed`, `vm_step_failed`, …) are written to Cloud Logging for runs with installed run context and drive `--format concise`. **Business logs** are sent individually to Cloud Logging when `gcp.logging=true`. Otherwise they stay on the VM serial port, except that the updated startup script captures the tail of failed command output in the CF failure payload. Use `--step <name> --log-source ml_pipeline` to read individual business entries after enabling logging.
 
 Optional **`emit_step_result(ctx, result)`** (from `aigear.common.lifecycle_log`) publishes a `pipeline_step_result` lifecycle event with a structured `result` dict (e.g. `{"accuracy": 0.92, "rows": 1000}`). The concise timeline shows these values in **DETAIL** for OK steps. Pipelines are not required to call it; use it when you want key metrics visible without scanning raw JSON.
 

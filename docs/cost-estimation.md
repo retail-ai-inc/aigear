@@ -28,7 +28,7 @@ Same three team sizes; **Aigear baseline** = ephemeral training VMs + shared GKE
 
 - **Small:** few models/versions, few runs/month, 1 GKE node, mostly CPU training.  
 - **Medium / large:** more versions & runs, more storage; large scenarios assume **GPU training** (main driver of VM cost).  
-- Pub/Sub, Cloud Functions, Firestore: **within free tier** in these examples.
+- Pub/Sub and Cloud Functions are assumed to fit within their free tiers in these examples. Aigear does not use Firestore for pipeline coordination.
 
 ---
 
@@ -38,14 +38,14 @@ Same three team sizes; **Aigear baseline** = ephemeral training VMs + shared GKE
 2. **Kubeflow** only makes sense when a **big always-on cluster** is justified.  
 3. **Vertex AI** is simple to operate but **serving cost scales linearly** with endpoints.
 
-**Parallel DAG:** parallel steps do **not** increase VM cost (same VM·hours); they shorten wall time. Firestore fan-in stays in free tier at these scales.
+**Current orchestration:** pipeline tasks run sequentially through Pub/Sub. A failed task stops the queue and cancels remaining tasks. Parallel DAG execution and Firestore fan-in are not implemented; these estimates do not model them. Infrastructure provisioning can run independent resource operations in parallel, which is separate from pipeline execution.
 
 ---
 
 ## Ideas to spend less
 
 - **GPU for training, CPU for inference** in `model_service.resources` where possible.  
-- **Spot / preemptible** for training VMs.  
+- **Spot / preemptible** requires custom provisioning; the current Cloud Function VM configuration sets `preemptible=false`.
 - **Scale GKE to zero** (or down) when serving can tolerate it — big win on small teams.  
 - **Committed use** on steady GKE nodes; **mixed precision** to shorten GPU time; **Nearline GCS** if cold artifacts are OK.
 

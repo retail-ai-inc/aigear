@@ -27,7 +27,8 @@ Aigear runs split into **infrastructure** (Cloud Function, VM, Docker, startup s
 | VM creation failed (GCE insert) | `cloud_function` | `vm_creation_failed` | Written only by Cloud Function; VM never started |
 | Docker pull / registry auth / startup script | `cloud_function` | **`vm_step_failed`** + `exit_code`, `docker_image` | VM `fatal_error` → Pub/Sub → CF |
 | GKE deploy failed inside startup | `cloud_function` | **`vm_step_failed`**, `exit_code=deploy_failed` | Same path as Docker/startup failures |
-| Python step exception in container | `ml_pipeline` | `pipeline_step_started` / **`pipeline_step_failed`** (logger `aigear-task`) | Full stack traces need `gcp.logging=true` |
+| Python step exception in container | `ml_pipeline`, then `cloud_function` | `pipeline_step_failed`; terminal `vm_step_failed` with `exit_code=pipeline_failed` | Updated startup scripts also capture the failed command's output tail |
+| Steps not executed after a failure | `cloud_function` | `pipeline_step_cancelled`, `failed_step`, `detail` | Concise output shows `CANCELLED` |
 | Not sure / run already finished | **`all`** | Both sides | Non-zero step exit can still produce CF-side failure logs via startup `fatal_error` |
 
 ---
@@ -40,9 +41,11 @@ Historically, Cloud Function logged VM/orchestration failures as **`pipeline_ste
 
 | `event` | `log_source` | Meaning |
 |---------|--------------|---------|
-| **`vm_step_failed`** | `cloud_function` | Infrastructure: Docker, startup script, deploy, etc. |
+| **`vm_step_failed`** | `cloud_function` | VM command failure: Docker, startup, deploy, or a nonzero pipeline container exit (`exit_code=pipeline_failed`) |
 | **`pipeline_step_failed`** | `ml_pipeline` | Container: business step failed |
 | `vm_creation_failed` | `cloud_function` | CF could not create the VM |
+| `task_validation_failed` / `pipeline_command_build_failed` | `cloud_function` | Task rejected before VM creation |
+| `pipeline_step_cancelled` | `cloud_function` | Remaining task stopped after an earlier step failed |
 
 **Legacy deployments (older Cloud Function)**
 
@@ -105,6 +108,21 @@ aigear-logs --clear-cache
 
 Empty query results are **not** cached; you should not need `--clear-cache` only because the first fetch was empty after the run completed.
 
+## Failure details and cancelled steps
+
+`aigear-task workflow` exits with code 1 when configuration lookup, module loading, or step execution fails. The VM startup script treats a nonzero container exit as terminal, publishes the failure, and deletes the VM instead of starting the next task. Cloud Function also stops the queue on task validation, command construction, or VM creation failures. Remaining tasks produce `pipeline_step_cancelled` with their run context, `failed_step`, and a readable reason.
+
+The concise timeline shows failed and cancelled rows separately. A later CF `vm_step_failed` report with `exit_code=pipeline_failed` preserves the original Python failure summary. The **Failure details** section displays captured multiline errors and removes duplicate messages. Relevant fields are:
+
+| Field | Meaning |
+|-------|---------|
+| `failure_stage` | Failed command stage, such as `registry_auth`, `docker_pull`, `pipeline_step`, `deployment_yaml_extract`, `gke_get_credentials`, or `kubectl_apply` |
+| `command_exit_code` | Numeric exit code of the failed command |
+| `error_message` | Last 8192 bytes of combined command output; a fallback message is used when output is empty |
+| `error_output_truncated` | True when earlier output was omitted; concise output includes a truncation notice |
+
+These fields require the updated Cloud Function startup script. They apply to newly created VMs; redeployment does not replace a script on an already running VM. Older failures may only have a summary. The complete successful command stream and output beyond the captured tail remain serial-console data unless business logging is enabled.
+
 ---
 
 ## Step failures when `gcp.logging=false`
@@ -112,12 +130,13 @@ Empty query results are **not** cached; you should not need `--clear-cache` only
 | Source | What you get |
 |--------|----------------|
 | `ml_pipeline` lifecycle | `pipeline_step_failed` with `error_message` / `error_type` (truncated) |
-| Per-module `logger.error` | **Not** in Cloud Logging — stdout only |
-| Detail | GCE **serial port** output (see below) |
+| Per-module `logger.error` | Not sent as individual Cloud Logging entries; remains on stdout |
+| Failed command output | Updated startup scripts include its last 8192 bytes in the CF `vm_step_failed` payload |
+| Complete command stream | GCE **serial port** output (see below) |
 
-`--format concise` still shows lifecycle outcomes (including infra `vm_step_failed` from `cloud_function`) without `gcp.logging=true`. It does **not** surface per-module business logs or training metrics — only lifecycle **DETAIL** and optional `pipeline_step_result` from `emit_step_result()`.
+`--format concise` shows lifecycle outcomes, cancellation, and captured failure output without `gcp.logging=true`. It does not expose individual business log entries or successful command output. Structured metrics require an optional `pipeline_step_result` from `emit_step_result()`.
 
-For full ERROR lines, `logger.info` metrics, and stack traces in Logging, set `aigear.gcp.logging` to `true` in `env.json` for that environment (staging is a common choice), then query with `--step <name> --log-source ml_pipeline`.
+For individual ERROR lines and `logger.info` metrics in Logging, set `aigear.gcp.logging` to `true`, rebuild the affected image, and query with `--step <name> --log-source ml_pipeline`. Stack traces are available only if the application logs or prints them; the lifecycle error summary does not generate a traceback.
 
 ---
 
@@ -140,7 +159,7 @@ Restrict by time range and Cloud Function / Cloud Run resource labels for your p
 
 ## Serial port (not in `aigear-logs`)
 
-Startup script output, `docker pull`, and `aigear-task` stdout/stderr when `gcp.logging=false` often appear only on the VM **serial console**, not in Cloud Logging.
+The complete startup script and command output remain on the VM **serial console**. Updated startup scripts additionally send the last 8192 bytes of a failed command's stdout/stderr through Pub/Sub to Cloud Logging. Successful output and serial `echo` markers are not automatically uploaded.
 
 1. Open **Compute Engine → VM instances** → select the instance for the run.
 2. **Serial port** (or “Connect to serial console”) — read `docker pull`, startup echoes, and task stdout.
@@ -158,10 +177,34 @@ Complete these after infra or function changes; order matters for consistent beh
 |------|--------|-----|
 | 1 | Grant **`roles/logging.logWriter`** to the runtime service account(s) used by Cloud Function and VM task | Without it, structured / lifecycle logs never reach Logging |
 | 2 | `aigear-infra --update` | Re-applies Pub/Sub push ack **300s** and min retry **60s** (avoids duplicate CF invocations during long VM create) |
-| 3 | Redeploy **Cloud Function** (via `aigear-infra --create` / `--update` when function config changes) | `vm_step_failed`, `log_source=cloud_function`, and removed `console.error` paths require the deployed `index.js` |
-| 4 | `aigear-image --create --push` (or your image workflow) | Fixes `docker_image_not_found` and related `exit_code`s |
+| 3 | Explicitly [redeploy Cloud Function source](#redeploy-existing-cloud-function-source) | `--create` skips existing source and `--update` does not redeploy it |
+| 4 | `aigear-image --create --push --all` (or specify `--dockerfile_path`) | Includes current task exit behavior and the images referenced by scheduled tasks |
 | 5 | `aigear-logs --clear-cache` once after deploy | Drops stale cached queries from mid-run debugging |
 | 6 | Run [Verification Checklist](cli-reference.md#aigear-logs) items 1–6 | Confirms discover, split sources, and failure payloads |
+
+## Redeploy existing Cloud Function source
+
+After installing the Aigear version you intend to deploy, run the following from the project directory with authenticated GCP access and the target configuration selected. It uses the same deploy method as initial provisioning, renders fresh bundled source under `cloud_function/`, and deploys it to the configured function:
+
+```bash
+python - <<'PY'
+from aigear.common.config import AppConfig
+from aigear.infrastructure.gcp.function import CloudFunction
+
+gcp = AppConfig.aigear().gcp
+CloudFunction(
+    function_name=gcp.cloud_function.function_name,
+    region=gcp.location,
+    entry_point="cronjobProcessPubSub",
+    topic_name=gcp.pub_sub.topic_name,
+    project_id=gcp.gcp_project_id,
+    service_account=f"{gcp.iam.account_name}@{gcp.gcp_project_id}.iam.gserviceaccount.com",
+    project_name=AppConfig.project_name() or "",
+).deploy()
+PY
+```
+
+On PowerShell, run the Python statements in a Python session instead of using the Bash heredoc wrapper. `aigear-infra --create` creates source only when the function is absent; for an existing function it adjusts timeout and invoker permissions. `--update` tunes Eventarc subscriptions but skips Cloud Function source updates. After redeployment, trigger a new run to verify cancellation and captured command errors.
 
 ---
 

@@ -58,3 +58,20 @@ def test_delete_propagates_timeout(mock_run_sh):
 def test_delete_defaults_to_async(mock_run_sh):
     _make_function().delete()
     assert "--async" in mock_run_sh.call_args.args[0]
+
+
+def test_function_source_render_refreshes_stale_files(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    fn = _make_function()
+    fn.project_name = "demo"
+    source = tmp_path / "cloud_function/index.js"
+    fn._function_path()
+    text = source.read_text(encoding="utf-8")
+    assert "{{PROJECTID}}" not in text
+    assert "{{VENVBASEDIR}}" not in text
+    assert "projectId: 'my-project'" in text
+    assert "projectName: 'demo'" in text
+    source.write_text("stale source", encoding="utf-8")
+    fn._function_path()
+    assert source.read_text(encoding="utf-8") == text
+    assert (tmp_path / "cloud_function/package.json").exists()

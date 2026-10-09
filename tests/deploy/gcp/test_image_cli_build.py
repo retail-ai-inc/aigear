@@ -1,0 +1,48 @@
+from types import SimpleNamespace
+from unittest.mock import Mock
+
+import pytest
+
+from aigear.cli import artifacts_image as cli
+from aigear.deploy.gcp import artifacts_image as images
+
+
+@pytest.fixture
+def docker(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    for filename, venv in (("Dockerfile.pl", "pl"), ("Dockerfile.ms", "ms")):
+        (tmp_path / filename).write_text(f"ENV VENV_BASE=/opt/venv\nENV VENV=${{VENV_BASE}}/{venv}\n", encoding="utf-8")
+    monkeypatch.setattr(images.AigearConfig, "get_config", lambda: SimpleNamespace(gcp=SimpleNamespace(location="region")))
+    monkeypatch.setattr(images.AppConfig, "pipelines", lambda: {"v1": {"venv_pl": "pl", "model_service": {"venv_ms": "ms"}}})
+    monkeypatch.setattr(images, "get_image_path", lambda **kwargs: "registry/ms:v1" if kwargs.get("is_service") else "registry/pl:v1")
+    stream = Mock(return_value=0)
+    monkeypatch.setattr(images, "run_sh_stream", stream)
+    return stream
+
+
+def test_all_build_reaches_docker_for_both_images(docker, monkeypatch):
+    monkeypatch.setattr("sys.argv", ["aigear-image", "--create", "--all"])
+    cli.docker_image()
+    assert [call.args[0] for call in docker.call_args_list] == [
+        ["docker", "build", "-f", "Dockerfile.pl", "-t", "registry/pl:v1", "."],
+        ["docker", "build", "-f", "Dockerfile.ms", "-t", "registry/ms:v1", "."],
+    ]
+
+
+@pytest.mark.parametrize("service,filename", [(False, "Dockerfile.pl"), (True, "Dockerfile.ms")])
+@pytest.mark.xfail(strict=True, reason="Known defect: default image build passes dockerfile_path=None and never invokes docker")
+def test_default_build_uses_correct_dockerfile(docker, monkeypatch, service, filename, capsys):
+    monkeypatch.setattr("sys.argv", ["aigear-image", "--create", *(["--is_service"] if service else [])])
+    cli.docker_image()
+    assert docker.call_count == 1
+    assert docker.call_args.args[0][3] == filename
+    assert "operation completed" in capsys.readouterr().out
+
+
+@pytest.mark.xfail(strict=True, reason="Known defect: image CLI prints failures but exits successfully")
+def test_build_failure_exits_nonzero(docker, monkeypatch):
+    docker.return_value = 1
+    monkeypatch.setattr("sys.argv", ["aigear-image", "--create", "--dockerfile_path", "Dockerfile.pl"])
+    with pytest.raises(SystemExit) as exc:
+        cli.docker_image()
+    assert exc.value.code == 1
