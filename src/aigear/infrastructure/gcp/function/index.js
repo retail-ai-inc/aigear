@@ -374,10 +374,37 @@ function buildStartupScript({
 
   // Shared handler: publish terminal error to Pub/Sub and delete this VM.
   const fatalErrorFn = `
+# Capture command output while keeping it visible in the VM startup logs.
+error_log=$(mktemp /tmp/aigear-step-error.XXXXXX)
+run_logged_command() {
+  "$@" 2>&1 | tee "$error_log"
+}
+
 # Publish a terminal error and delete this VM (stops the Pub/Sub pipeline).
 fatal_error() {
   local exit_code="$1"
-  gcloud pubsub topics publish '${esc(topicName)}' --message '${esc(fatalErrorPrefix)},"exit_code":"'"$exit_code"'"}' || true
+  local failure_stage="$2"
+  local command_exit_code="$3"
+  local error_payload
+  error_payload=$(python3 - '${esc(fatalErrorPrefix)}' "$exit_code" "$failure_stage" "$command_exit_code" "$error_log" <<'PY'
+import json
+import sys
+
+payload = json.loads(sys.argv[1] + "}")
+payload.update(exit_code=sys.argv[2], failure_stage=sys.argv[3], command_exit_code=int(sys.argv[4]))
+with open(sys.argv[5], "rb") as stream:
+    stream.seek(0, 2)
+    size = stream.tell()
+    stream.seek(max(0, size - 8192))
+    output = stream.read().decode("utf-8", errors="replace").strip()
+payload["error_message"] = output or "Command failed without output"
+payload["error_output_truncated"] = size > 8192
+print(json.dumps(payload, ensure_ascii=True))
+PY
+) || error_payload='${esc(fatalErrorPrefix)},"exit_code":"'"$exit_code"'"}'
+  echo "$error_payload"
+  rm -f "$error_log"
+  gcloud pubsub topics publish '${esc(topicName)}' --message "$error_payload" || true
   gcp_zone=$(curl -sf -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/zone | cut -d/ -f4)
   sleep ${CONFIG.vm.sleepBeforeDelete}
   gcloud compute instances delete "$(hostname | cut -d. -f1)" --zone "$gcp_zone" --quiet
@@ -398,9 +425,9 @@ fatal_error() {
   const runPipeline = pipelineCommand ? `
 # ── Pipeline step ──
 docker_exit_code=0
-docker run ${gpuFlag} ${dockerEnvArgs} '${esc(dockerImage)}' sh -c '${esc(pipelineCommand)}' || docker_exit_code=$?
+run_logged_command docker run ${gpuFlag} ${dockerEnvArgs} '${esc(dockerImage)}' sh -c '${esc(pipelineCommand)}' || docker_exit_code=$?
 if [ "$docker_exit_code" -ne 0 ]; then
-  fatal_error pipeline_failed
+  fatal_error pipeline_failed pipeline_step "$docker_exit_code"
 fi
 ` : '';
 
@@ -420,15 +447,15 @@ fi
 # ── Deploy step (VM-native kubectl) ──
 # 1. Extract yaml from image without starting a container
 create_exit_code=0
-DEPLOY_CID=$(docker create '${esc(dockerImage)}') || create_exit_code=$?
+DEPLOY_CID=$(docker create '${esc(dockerImage)}' 2> "$error_log") || create_exit_code=$?
 if [ "$create_exit_code" -ne 0 ]; then
-  fatal_error docker_image_not_found
+  fatal_error docker_image_not_found docker_create "$create_exit_code"
 fi
 cp_exit_code=0
-docker cp "$DEPLOY_CID":'${esc(yamlPathInImage)}' /tmp/grpc_deployment.yaml || cp_exit_code=$?
+run_logged_command docker cp "$DEPLOY_CID":'${esc(yamlPathInImage)}' /tmp/grpc_deployment.yaml || cp_exit_code=$?
 docker rm "$DEPLOY_CID" || true
 if [ "$cp_exit_code" -ne 0 ]; then
-  fatal_error deploy_failed
+  fatal_error deploy_failed deployment_yaml_extract "$cp_exit_code"
 fi
 
 # 2. Fetch GKE credentials (gcloud pre-installed in the custom VM image)
@@ -437,22 +464,22 @@ fi
 # regardless of which user/HOME the metadata script runner uses.
 export KUBECONFIG=/tmp/gke-kubeconfig
 credentials_exit_code=0
-gcloud container clusters get-credentials '${esc(gkeCluster)}' \
+run_logged_command gcloud container clusters get-credentials '${esc(gkeCluster)}' \
   --region '${esc(gkeZone)}' --project '${esc(CONFIG.projectId)}' || credentials_exit_code=$?
 if [ "$credentials_exit_code" -ne 0 ]; then
   rm -f /tmp/gke-kubeconfig
   rm -f /tmp/grpc_deployment.yaml
-  fatal_error deploy_failed
+  fatal_error deploy_failed gke_get_credentials "$credentials_exit_code"
 fi
 
 # 3. Apply (capture exit code without aborting under set -e)
 deploy_exit_code=0
-kubectl apply -f /tmp/grpc_deployment.yaml --validate=false || deploy_exit_code=$?
+run_logged_command kubectl apply -f /tmp/grpc_deployment.yaml --validate=false || deploy_exit_code=$?
 rm -f /tmp/gke-kubeconfig
 rm -f /tmp/grpc_deployment.yaml
 
 if [ "$deploy_exit_code" -ne 0 ]; then
-  fatal_error deploy_failed
+  fatal_error deploy_failed kubectl_apply "$deploy_exit_code"
 fi
 ` : '';
 
@@ -487,18 +514,19 @@ echo '${esc(startupMarker)}'
 # Extract registry hostname from the image path (e.g. asia-northeast1-docker.pkg.dev)
 REGISTRY=$(echo '${esc(dockerImage)}' | cut -d/ -f1)
 auth_exit_code=0
-gcloud auth configure-docker "$REGISTRY" --quiet || auth_exit_code=$?
+run_logged_command gcloud auth configure-docker "$REGISTRY" --quiet || auth_exit_code=$?
 if [ "$auth_exit_code" -ne 0 ]; then
-  fatal_error registry_auth_failed
+  fatal_error registry_auth_failed registry_auth "$auth_exit_code"
 fi
 
 pull_exit_code=0
-docker pull '${esc(dockerImage)}' || pull_exit_code=$?
+run_logged_command docker pull '${esc(dockerImage)}' || pull_exit_code=$?
 if [ "$pull_exit_code" -ne 0 ]; then
-  fatal_error docker_image_not_found
+  fatal_error docker_image_not_found docker_pull "$pull_exit_code"
 fi
 ${runPipeline}
 ${runDeploy}
+rm -f "$error_log"
 # ── Notify next step and self-delete ──
 gcloud pubsub topics publish '${esc(topicName)}' --message '${esc(publishMessage)}'
 gcp_zone=$(curl -sf -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/zone | cut -d/ -f4)
@@ -952,6 +980,10 @@ functions.cloudEvent('cronjobProcessPubSub', async cloudEvent => {
         detail: cronjobInfo.detail || undefined,
         docker_image: cronjobInfo.docker_image || undefined,
         failure_layer: 'infrastructure',
+        failure_stage: cronjobInfo.failure_stage || undefined,
+        command_exit_code: cronjobInfo.command_exit_code,
+        error_message: cronjobInfo.error_message || undefined,
+        error_output_truncated: cronjobInfo.error_output_truncated,
       },
     });
     return;

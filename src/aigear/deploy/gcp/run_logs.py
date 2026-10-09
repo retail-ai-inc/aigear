@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -70,9 +70,10 @@ def extract_log_fields(entry: dict[str, Any]) -> dict[str, Any] | None:
         return None
 
     stripped = text_payload.strip()
-    if stripped.startswith("{"):
+    json_start = stripped.find("{")
+    if json_start >= 0:
         try:
-            parsed = json.loads(stripped)
+            parsed, _ = json.JSONDecoder().raw_decode(stripped[json_start:])
             if isinstance(parsed, dict):
                 return parsed
         except json.JSONDecodeError:
@@ -300,6 +301,7 @@ class StepTimelineRow:
     duration_ms: int | None = None
     detail: str | None = None
     result: str | None = None
+    errors: list[str] = field(default_factory=list)
 
 
 def _format_cf_fail_detail(payload: dict[str, Any]) -> str:
@@ -312,7 +314,7 @@ def _format_cf_fail_detail(payload: dict[str, Any]) -> str:
     if isinstance(docker_image, str) and docker_image:
         suffix = docker_image if not parts else f"({docker_image})"
         parts.append(suffix)
-    elif isinstance(detail, str) and detail:
+    if isinstance(detail, str) and detail:
         suffix = detail if not parts else f"({detail})"
         parts.append(suffix)
     return " ".join(parts) if parts else "infrastructure failure"
@@ -356,14 +358,24 @@ def build_step_timeline(
 
     for entry in sorted(entries, key=_timeline_timestamp):
         payload = extract_log_fields(entry) or {}
-        step_name = payload.get("step_name")
+        step_name = _query_fields(entry).get("step_name")
         if not isinstance(step_name, str) or not step_name:
             continue
         if step_filter and step_name != step_filter:
             continue
 
         event = payload.get("event")
-        if not isinstance(event, str) or not event:
+        severity = str(
+            payload.get("level") or payload.get("severity") or entry.get("severity", "")
+        ).upper()
+        error_message = payload.get("error_message")
+        if not error_message and isinstance(payload.get("error"), str):
+            error_message = payload["error"]
+        if not error_message and severity in ("ERROR", "CRITICAL", "ALERT", "EMERGENCY"):
+            message = payload.get("message") or entry.get("textPayload")
+            if message != event:
+                error_message = message
+        if not event and not error_message:
             continue
 
         timestamp = _timeline_timestamp(entry)
@@ -373,9 +385,26 @@ def build_step_timeline(
             row = StepTimelineRow(step_name=step_name, status="PENDING")
             states[step_name] = row
 
-        if event == "pipeline_step_started":
+        if isinstance(error_message, str) and error_message.strip():
+            failure_stage = payload.get("failure_stage")
+            command_exit_code = payload.get("command_exit_code")
+            context = str(failure_stage) if failure_stage else ""
+            if command_exit_code is not None:
+                context += f" (exit code {command_exit_code})"
+            error = f"{context.strip()}: {error_message}" if context else error_message
+            if payload.get("error_output_truncated"):
+                error += "\n[Output truncated to the last 8192 bytes]"
+            if error not in row.errors:
+                row.errors.append(error)
+            if not event:
+                row.status = "FAILED"
+                row.finished_at = timestamp or row.finished_at
+                row.detail = error_message.splitlines()[0]
+
+        if event in ("pipeline_step_started", "vm_startup"):
             if timestamp:
-                row.started_at = timestamp
+                if event == "pipeline_step_started" or not row.started_at:
+                    row.started_at = timestamp
             row.status = "RUNNING"
         elif event == "pipeline_step_finished":
             if timestamp:
@@ -404,6 +433,10 @@ def build_step_timeline(
             else:
                 error_message = payload.get("error_message")
                 row.detail = str(error_message) if error_message is not None else "step failed"
+
+            detail = payload.get("detail")
+            if isinstance(detail, str) and detail and detail not in row.errors:
+                row.errors.append(detail)
 
     rows = list(states.values())
     if step_filter:
@@ -450,6 +483,18 @@ def format_step_timeline(
             f"{started:<{started_width}} {finished:<{finished_width}} "
             f"{duration:<{duration_width}} {detail}"
         )
+
+    failed_rows = [row for row in rows if row.status == "FAILED"]
+    if failed_rows:
+        lines.extend(["", "=== Failure details ==="])
+        for row in failed_rows:
+            lines.append(f"{row.step_name}:")
+            if row.errors:
+                for error in row.errors:
+                    lines.extend(f"  {line}" for line in error.splitlines())
+            else:
+                lines.append("  No error message was captured; only the failure summary is available.")
+                lines.append("  VM command errors require the updated Cloud Function startup script.")
 
     if show_hint:
         lines.append("")
