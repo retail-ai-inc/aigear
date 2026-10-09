@@ -58,7 +58,18 @@ def test_model_parser_rejects_conflicting_or_missing_groups(args):
     assert exc.value.code == 2
 
 
-@pytest.mark.xfail(strict=True, reason="Known defect: model CLI does not require --version")
-def test_model_parser_requires_pipeline_version():
-    with pytest.raises(SystemExit):
-        model_service._get_parser().parse_args(["--local", "--yaml"])
+@pytest.mark.parametrize("operation", ["yaml", "deploy", "update", "delete", "status"])
+def test_model_cli_requires_pipeline_version(monkeypatch, capsys, operation):
+    monkeypatch.setattr("sys.argv", ["aigear-model", "--local", f"--{operation}"])
+    create = Mock()
+    lookup = Mock()
+    monkeypatch.setattr(model_service, "create_helm_file", create)
+    monkeypatch.setattr(model_service, "get_helm_path", lookup)
+
+    with pytest.raises(SystemExit) as exc:
+        model_service.run_model_cli()
+
+    assert exc.value.code == 2
+    assert "--version" in capsys.readouterr().err
+    create.assert_not_called()
+    lookup.assert_not_called()

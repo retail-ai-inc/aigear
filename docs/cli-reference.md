@@ -263,7 +263,7 @@ aigear-model --version VERSION {--local | --staging | --production}
 
 > **Auto-force:** Passing any of `--service_ports`, `--replicas`, or `--port` automatically overwrites the existing YAML, so the new parameters take effect immediately. `--yaml` always overwrites.
 
-Always provide `--version` and a valid `model_service.model_class_path`; the current CLI does not enforce the version argument during parsing. Context-switch and kubectl failures are not consistently propagated as nonzero exits. Verify the active Kubernetes context before deployment and inspect command output afterward.
+`--version` is required for every operation. Omitting it exits with code **2** before YAML generation or Kubernetes operations. Always configure a valid `model_service.model_class_path`. Context-switch and kubectl failures are not consistently propagated as nonzero exits. Verify the active Kubernetes context before deployment and inspect command output afterward.
 
 **Examples**
 
