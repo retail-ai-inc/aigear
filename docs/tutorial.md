@@ -572,7 +572,7 @@ print("Model prediction results:", response)
 ### Local Kubernetes (Docker Desktop)
 Before deploying to GKE, validate the Kubernetes deployment locally using **Docker Desktop's built-in Kubernetes**. Enable it via **Settings → Kubernetes → Enable Kubernetes**.
 
-> **Tip:** Docker Desktop uses **kubeadm** to provision its local cluster and shares the same Docker daemon as the host. This means any image built with `docker build` (or `aigear-image --create`) is immediately available to the cluster — no registry push required. `imagePullPolicy: Never` is set automatically for local deployments to enforce this behaviour.
+> **Tip:** Docker Desktop uses **kubeadm** to provision its local cluster and shares the same Docker daemon as the host. This means any image built with `docker build` (or `aigear-image --create --all`) is immediately available to the cluster — no registry push required. `imagePullPolicy: Never` is set automatically for local deployments to enforce this behaviour.
 
 **Prerequisites**
 

@@ -30,7 +30,7 @@ def get_argument() -> argparse.Namespace:
     parser.add_argument(
         "--dockerfile_path",
         default=None,
-        help="Path of Dockerfile. If omitted with --create, operates on all default images.",
+        help="Path of Dockerfile. Required with --create unless --all is provided.",
     )
     parser.add_argument(
         "--build_context", default=".", help="Docker build context path."
@@ -52,6 +52,8 @@ def get_argument() -> argparse.Namespace:
 
     args = parser.parse_args()
 
+    if args.create and not (args.dockerfile_path or args.all):
+        parser.error("--create requires --dockerfile_path or --all.")
     if args.retag and args.src_tag is None:
         parser.error("--retag requires --src_tag.")
     if args.retag and args.target_tag is None:

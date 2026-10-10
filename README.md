@@ -120,7 +120,7 @@ gcloud auth configure-docker REGION-docker.pkg.dev
 docker push REGION-docker.pkg.dev/PROJECT/REPOSITORY/IMAGE:TAG
 ```
 
-To build one image, specify `--dockerfile_path Dockerfile.pl` or `--dockerfile_path Dockerfile.ms`. The current CLI requires an action with `--push`; standalone `aigear-image --push` is not supported. For `--create`, use an explicit Dockerfile or `--all` because the current default Dockerfile resolution is incomplete.
+To build one image, specify `--dockerfile_path Dockerfile.pl` or `--dockerfile_path Dockerfile.ms`. The current CLI requires an action with `--push`; standalone `aigear-image --push` is not supported. `--create` requires `--dockerfile_path` or `--all`; omitting both exits with code **2** before building.
 
 ### 7. Schedule pipeline steps
 

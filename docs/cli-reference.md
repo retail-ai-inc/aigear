@@ -176,7 +176,7 @@ aigear-image {--create | --delete | --clear | --retag}
              [--src_tag TAG] [--target_tag TAG]
 ```
 
-One action (`--create`, `--delete`, `--clear`, `--retag`) is required. `--push` syncs the operation to Artifact Registry after the local step succeeds.
+One action (`--create`, `--delete`, `--clear`, `--retag`) is required. `--create` also requires at least one of `--dockerfile_path PATH` or `--all`; omitting both exits with code **2** before building. When both are provided, `--all` takes precedence. Other actions do not require either scope argument. `--push` syncs the operation to Artifact Registry after the local step succeeds.
 
 **Actions (mutually exclusive)**
 
@@ -217,10 +217,10 @@ One action (`--create`, `--delete`, `--clear`, `--retag`) is required. `--push` 
 | `Dockerfile.pl` | any | pipeline image |
 | custom path | `false` (default) | pipeline image |
 | custom path | `true` | service image |
-| omitted | `false` (default) | pipeline image |
-| omitted | `true` | service image |
+| omitted (except `--create`) | `false` (default) | pipeline image |
+| omitted (except `--create`) | `true` | service image |
 
-**Current build limitation:** the omitted Dockerfile scopes above select the image, but `--create` currently forwards no Dockerfile to the builder. Use `--create --dockerfile_path Dockerfile.pl`, `--create --dockerfile_path Dockerfile.ms`, or `--create --all` to build successfully. `--push` requires an action; to push an already-built image without rebuilding, authenticate Docker and run `docker push <full-image-path>:<tag>` directly. Image operation failures currently print an error without reliably returning a nonzero CLI exit code.
+Use `--create --dockerfile_path Dockerfile.pl`, `--create --dockerfile_path Dockerfile.ms`, or `--create --all` to build. `--is_service` alone does not satisfy the build scope requirement. `--push` requires an action; to push an already-built image without rebuilding, authenticate Docker and run `docker push <full-image-path>:<tag>` directly. Image operation failures currently print an error without reliably returning a nonzero CLI exit code.
 
 ---
 

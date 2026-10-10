@@ -30,13 +30,21 @@ def test_all_build_reaches_docker_for_both_images(docker, monkeypatch):
 
 
 @pytest.mark.parametrize("service,filename", [(False, "Dockerfile.pl"), (True, "Dockerfile.ms")])
-@pytest.mark.xfail(strict=True, reason="Known defect: default image build passes dockerfile_path=None and never invokes docker")
-def test_default_build_uses_correct_dockerfile(docker, monkeypatch, service, filename, capsys):
-    monkeypatch.setattr("sys.argv", ["aigear-image", "--create", *(["--is_service"] if service else [])])
+def test_explicit_build_uses_correct_dockerfile(docker, monkeypatch, service, filename, capsys):
+    monkeypatch.setattr("sys.argv", ["aigear-image", "--create", "--dockerfile_path", filename, *(["--is_service"] if service else [])])
     cli.docker_image()
     assert docker.call_count == 1
     assert docker.call_args.args[0][3] == filename
     assert "operation completed" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("extra", [[], ["--is_service"]])
+def test_missing_build_scope_never_invokes_docker(docker, monkeypatch, extra):
+    monkeypatch.setattr("sys.argv", ["aigear-image", "--create", *extra])
+    with pytest.raises(SystemExit) as exc:
+        cli.docker_image()
+    assert exc.value.code == 2
+    docker.assert_not_called()
 
 
 @pytest.mark.xfail(strict=True, reason="Known defect: image CLI prints failures but exits successfully")
