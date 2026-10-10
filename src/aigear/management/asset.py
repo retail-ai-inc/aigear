@@ -21,6 +21,8 @@ class AssetManagement:
         if bucket_on:
             self.bucket_client = RealGCS(project_id, bucket_name)
         else:
+            if not bucket_name:
+                raise ValueError("bucket_name is required when bucket_on=False (local mode).")
             local_bucket_mock_path = self.project_dir / "asset" / bucket_name
             self.bucket_client = LocalGCSMock(project_id, local_bucket_mock_path)
 

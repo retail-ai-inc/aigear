@@ -53,14 +53,15 @@ def test_local_bucket_accepts_string_and_default_name(tmp_path, monkeypatch, nam
     assert target.read_bytes() == b"data"
 
 
-@pytest.mark.xfail(strict=True, reason="Known defect: local AssetManagement cannot combine its default bucket_name=None with Path")
-def test_local_asset_has_usable_default_bucket(tmp_path, monkeypatch):
+@pytest.mark.parametrize("name", [None, ""])
+def test_local_asset_requires_bucket_name(tmp_path, monkeypatch, name):
     monkeypatch.chdir(tmp_path)
-    manager = asset.AssetManagement("v1", "training", bucket_on=False)
-    path = manager.get_local_path("model.bin")
-    path.write_bytes(b"model")
-    manager.upload("model.bin")
-    assert manager.download("model.bin").read_bytes() == b"model"
+    constructor = Mock()
+    monkeypatch.setattr(asset, "LocalGCSMock", constructor)
+    with pytest.raises(ValueError, match="bucket_name.*bucket_on=False"):
+        asset.AssetManagement("v1", "training", bucket_name=name, bucket_on=False)
+    constructor.assert_not_called()
+    assert not (tmp_path / "asset").exists()
 
 
 @pytest.mark.xfail(strict=True, reason="Known defect: local copy_blob does not create the destination parent")
