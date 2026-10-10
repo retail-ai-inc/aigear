@@ -72,6 +72,7 @@ class LocalGCSMock(BucketABC):
     def copy_blob(self, source_blob_name, destination_blob_name):
         original_path = self.bucket_path / source_blob_name
         target_path = self.bucket_path / destination_blob_name
+        target_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(original_path, target_path)
 
 

@@ -64,12 +64,13 @@ def test_local_asset_requires_bucket_name(tmp_path, monkeypatch, name):
     assert not (tmp_path / "asset").exists()
 
 
-@pytest.mark.xfail(strict=True, reason="Known defect: local copy_blob does not create the destination parent")
 def test_local_copy_creates_nested_destination(tmp_path):
     client = bucket.LocalGCSMock("project", tmp_path / "bucket")
     (client.bucket_path / "source.bin").write_bytes(b"data")
-    client.copy_blob("source.bin", "nested/copy.bin")
-    assert (client.bucket_path / "nested/copy.bin").read_bytes() == b"data"
+    client.copy_blob("source.bin", "nested/models/copy.bin")
+    assert (client.bucket_path / "nested/models/copy.bin").read_bytes() == b"data"
+    client.copy_blob("source.bin", "nested/models/copy.bin")
+    assert (client.bucket_path / "nested/models/copy.bin").read_bytes() == b"data"
 
 
 def test_real_gcs_download_upload_and_copy_use_expected_blob_names(tmp_path, monkeypatch):
