@@ -47,10 +47,44 @@ def test_missing_build_scope_never_invokes_docker(docker, monkeypatch, extra):
     docker.assert_not_called()
 
 
-@pytest.mark.xfail(strict=True, reason="Known defect: image CLI prints failures but exits successfully")
-def test_build_failure_exits_nonzero(docker, monkeypatch):
+def test_build_failure_exits_nonzero(docker, monkeypatch, capsys):
     docker.return_value = 1
     monkeypatch.setattr("sys.argv", ["aigear-image", "--create", "--dockerfile_path", "Dockerfile.pl"])
     with pytest.raises(SystemExit) as exc:
         cli.docker_image()
     assert exc.value.code == 1
+    assert "operation failed" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("operation,function,extra", [
+    ("create", "create_artifacts_image", ["--dockerfile_path", "Dockerfile.pl"]),
+    ("delete", "delete_artifacts_image", []),
+    ("clear", "clear_artifacts_image", []),
+    ("retag", "retag_artifacts_image", ["--src_tag", "v1", "--target_tag", "v2"]),
+])
+def test_image_operation_failure_exits_nonzero(monkeypatch, capsys, operation, function, extra):
+    monkeypatch.setattr("sys.argv", ["aigear-image", f"--{operation}", *extra])
+    action = Mock(return_value=False)
+    monkeypatch.setattr(cli, function, action)
+    with pytest.raises(SystemExit) as exc:
+        cli.docker_image()
+    assert exc.value.code == 1
+    action.assert_called_once()
+    assert "operation failed" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("results", [(False, True), (True, False), (False, False), (True, True)])
+def test_all_images_report_each_result_and_fail_if_any_operation_failed(monkeypatch, capsys, results):
+    monkeypatch.setattr("sys.argv", ["aigear-image", "--create", "--all"])
+    action = Mock(side_effect=results)
+    monkeypatch.setattr(cli, "create_artifacts_image", action)
+    if all(results):
+        cli.docker_image()
+    else:
+        with pytest.raises(SystemExit) as exc:
+            cli.docker_image()
+        assert exc.value.code == 1
+    assert action.call_count == 2
+    output = capsys.readouterr().out
+    assert output.count("operation completed") == sum(results)
+    assert output.count("operation failed") == len(results) - sum(results)

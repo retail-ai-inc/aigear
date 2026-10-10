@@ -103,6 +103,7 @@ def docker_image():
     else:
         targets = [(None, args.is_service)]
 
+    all_succeeded = True
     for dockerfile_path, is_service in targets:
         label = dockerfile_path or ("service" if is_service else "pipeline")
         print(f"Processing image: '{label}'...")
@@ -112,7 +113,11 @@ def docker_image():
         if success:
             print(f"The image({label}) operation completed.")
         else:
+            all_succeeded = False
             print(
                 f"The image({label}) operation failed, please check the errors above."
             )
         print("-----------------------------------")
+
+    if not all_succeeded:
+        raise SystemExit(1)

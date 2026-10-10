@@ -55,8 +55,57 @@ def test_successful_context_switch_precedes_kubectl(monkeypatch, module, suffix,
 
 
 @pytest.mark.parametrize("operation", ["kubectl_apply", "kubectl_delete", "kubectl_status"])
-@pytest.mark.xfail(strict=True, reason="Known defect: kubectl helpers do not propagate nonzero command exit codes")
-def test_kubectl_command_failure_is_propagated(monkeypatch, operation):
-    monkeypatch.setattr(sh.subprocess, "run", Mock(return_value=SimpleNamespace(returncode=1, stdout=b"", stderr=b"forbidden")))
-    with pytest.raises(RuntimeError, match="forbidden"):
+@pytest.mark.parametrize("failure", ["nonzero", "timeout"])
+def test_kubectl_command_failure_is_logged_and_propagated(monkeypatch, operation, failure):
+    monkeypatch.setattr(sh.platform, "system", lambda: "Windows")
+    run = Mock(return_value=SimpleNamespace(returncode=1, stdout=b"resource output\n", stderr=b"forbidden"))
+    if failure == "timeout":
+        run.side_effect = subprocess.TimeoutExpired("kubectl", 30)
+    monkeypatch.setattr(sh.subprocess, "run", run)
+    error = Mock()
+    monkeypatch.setattr(kubectl_command.logger, "error", error)
+    message = "forbidden" if failure == "nonzero" else "timeout"
+    with pytest.raises(RuntimeError, match=message) as exc:
         getattr(kubectl_command, operation)(Path("manifest.yaml"))
+    error.assert_called_once_with(str(exc.value))
+    if failure == "nonzero":
+        assert "resource output" in str(exc.value)
+        assert "exit 1" in str(exc.value)
+
+
+@pytest.mark.parametrize("operation,command", [
+    ("kubectl_apply", ["kubectl", "apply", "-f", "manifest.yaml"]),
+    ("kubectl_delete", ["kubectl", "delete", "-f", "manifest.yaml", "--wait=false"]),
+    ("kubectl_status", ["kubectl", "get", "-f", "manifest.yaml"]),
+])
+def test_successful_kubectl_command_preserves_output_and_return_value(monkeypatch, operation, command):
+    output = "first line\nsecond line\n"
+    run = Mock(return_value=output)
+    monkeypatch.setattr(kubectl_command, "run_sh", run)
+    info = Mock()
+    error = Mock()
+    monkeypatch.setattr(kubectl_command.logger, "info", info)
+    monkeypatch.setattr(kubectl_command.logger, "error", error)
+    result = getattr(kubectl_command, operation)(Path("manifest.yaml"))
+    run.assert_called_once_with(command, check=True)
+    assert result == (None if operation == "kubectl_delete" else output)
+    if operation == "kubectl_status":
+        assert [call.args[0] for call in info.call_args_list] == output.splitlines()
+    else:
+        info.assert_called_once_with(output)
+    error.assert_not_called()
+
+
+@pytest.mark.parametrize("module,suffix,switch", [
+    (grpc_local_deploy, "local", "switch_local_context"),
+    (grpc_gcp_deploy, "gcp", "_switch_context"),
+])
+@pytest.mark.parametrize("operation", ["deploy", "update"])
+def test_failed_apply_does_not_log_deployment_success(monkeypatch, module, suffix, switch, operation):
+    monkeypatch.setattr(module, switch, Mock())
+    monkeypatch.setattr(module, "kubectl_apply", Mock(side_effect=RuntimeError("forbidden")))
+    info = Mock()
+    monkeypatch.setattr(module.logger, "info", info)
+    with pytest.raises(RuntimeError, match="forbidden"):
+        getattr(module, f"{operation}_{suffix}_grpc")(Path("manifest.yaml"))
+    info.assert_not_called()

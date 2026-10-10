@@ -220,7 +220,7 @@ One action (`--create`, `--delete`, `--clear`, `--retag`) is required. `--create
 | omitted (except `--create`) | `false` (default) | pipeline image |
 | omitted (except `--create`) | `true` | service image |
 
-Use `--create --dockerfile_path Dockerfile.pl`, `--create --dockerfile_path Dockerfile.ms`, or `--create --all` to build. `--is_service` alone does not satisfy the build scope requirement. `--push` requires an action; to push an already-built image without rebuilding, authenticate Docker and run `docker push <full-image-path>:<tag>` directly. Image operation failures currently print an error without reliably returning a nonzero CLI exit code.
+Use `--create --dockerfile_path Dockerfile.pl`, `--create --dockerfile_path Dockerfile.ms`, or `--create --all` to build. `--is_service` alone does not satisfy the build scope requirement. `--push` requires an action; to push an already-built image without rebuilding, authenticate Docker and run `docker push <full-image-path>:<tag>` directly. Image operation failures retain their error output and exit with code **1**. With `--all`, both images are processed; the command exits with code **1** if either operation fails.
 
 ---
 
@@ -263,7 +263,7 @@ aigear-model --version VERSION {--local | --staging | --production}
 
 > **Auto-force:** Passing any of `--service_ports`, `--replicas`, or `--port` automatically overwrites the existing YAML, so the new parameters take effect immediately. `--yaml` always overwrites.
 
-`--version` is required for every operation. Omitting it exits with code **2** before YAML generation or Kubernetes operations. Deployment, update, deletion, and status operations proceed only after the local or GCP context-switch command succeeds; a nonzero exit or timeout aborts the operation. Failures from the subsequent kubectl operation are not consistently propagated as nonzero exits; inspect command output afterward.
+`--version` is required for every operation. Omitting it exits with code **2** before YAML generation or Kubernetes operations. Deployment, update, deletion, and status operations proceed only after the local or GCP context-switch command succeeds; a nonzero exit or timeout aborts the operation. A subsequent kubectl apply, delete, or status failure (including timeout) is logged at ERROR level and raises a `RuntimeError`; the CLI exits with a nonzero code. Nonzero command exits include stdout and stderr in the error message.
 
 When `model_service.model_class_path` is configured, YAML is generated in the model module directory and includes `aigear-task grpc --version VERSION` as the container command (using `venv_ms` when configured). If the class path or the entire `model_service` section is omitted, YAML is generated at the project root as `grpc_deployment_<environment>.yaml`, without container `command` or `args`. In that case, the image must provide its own working startup configuration (`ENTRYPOINT`/`CMD`); YAML generation alone does not ensure a gRPC service will start.
 
