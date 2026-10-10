@@ -25,16 +25,17 @@ def test_describe_keyring_returns_true_when_exists(mock_run_sh):
 
 @patch("aigear.infrastructure.gcp.kms.run_sh")
 def test_describe_keyring_returns_false_when_not_found(mock_run_sh):
-    mock_run_sh.return_value = "ERROR: NOT_FOUND"
+    mock_run_sh.side_effect = RuntimeError("ERROR: NOT_FOUND")
     kms = _make_kms()
     assert kms.describe_keyring() is False
 
 
 @patch("aigear.infrastructure.gcp.kms.run_sh")
-def test_describe_keyring_returns_false_when_output_empty(mock_run_sh):
+def test_describe_keyring_raises_when_output_empty(mock_run_sh):
     mock_run_sh.return_value = ""
     kms = _make_kms()
-    assert kms.describe_keyring() is False
+    with pytest.raises(RuntimeError, match="Unexpected"):
+        kms.describe_keyring()
 
 
 # ── CloudKMS.describe_key ─────────────────────────────────────────────────────
@@ -48,7 +49,7 @@ def test_describe_key_returns_true_when_exists(mock_run_sh):
 
 @patch("aigear.infrastructure.gcp.kms.run_sh")
 def test_describe_key_returns_false_when_not_found(mock_run_sh):
-    mock_run_sh.return_value = "ERROR: NOT_FOUND"
+    mock_run_sh.side_effect = RuntimeError("ERROR: NOT_FOUND")
     kms = _make_kms()
     assert kms.describe_key() is False
 
@@ -70,10 +71,11 @@ def test_describe_enabled_version_returns_false_when_list_empty(mock_run_sh):
 
 
 @patch("aigear.infrastructure.gcp.kms.run_sh")
-def test_describe_enabled_version_returns_false_on_invalid_json(mock_run_sh):
+def test_describe_enabled_version_raises_on_invalid_json(mock_run_sh):
     mock_run_sh.return_value = "not valid json"
     kms = _make_kms()
-    assert kms.describe_enabled_key_version() is False
+    with pytest.raises(RuntimeError, match="parse"):
+        kms.describe_enabled_key_version()
 
 
 # ── CloudKMS.encrypt_env / decrypt_env ───────────────────────────────────────
@@ -176,3 +178,30 @@ def test_delete_destroys_enabled_and_disabled_versions(mock_run_sh):
     kms.delete()
     # 1 list call + 2 destroy calls (ENABLED + DISABLED); DESTROYED is skipped
     assert mock_run_sh.call_count == 3
+    assert all(c.kwargs["check"] is True for c in mock_run_sh.call_args_list)
+
+
+@pytest.mark.parametrize("output", ["invalid json", "{}", '[{"state": "ENABLED"}]'])
+@patch("aigear.infrastructure.gcp.kms.run_sh")
+def test_delete_rejects_invalid_version_list(mock_run_sh, output):
+    mock_run_sh.return_value = output
+    with pytest.raises(RuntimeError):
+        _make_kms().delete()
+    assert mock_run_sh.call_count == 1
+
+
+@patch("aigear.infrastructure.gcp.kms.run_sh", side_effect=RuntimeError("PERMISSION_DENIED"))
+def test_delete_propagates_version_list_failure(mock_run_sh):
+    with pytest.raises(RuntimeError, match="PERMISSION_DENIED"):
+        _make_kms().delete()
+    assert mock_run_sh.call_count == 1
+
+
+@patch("aigear.infrastructure.gcp.kms.run_sh")
+def test_delete_propagates_destroy_failure(mock_run_sh):
+    mock_run_sh.side_effect = [
+        json.dumps([{"name": "versions/1", "state": "ENABLED"}]),
+        RuntimeError("execution timeout"),
+    ]
+    with pytest.raises(RuntimeError, match="timeout"):
+        _make_kms().delete()

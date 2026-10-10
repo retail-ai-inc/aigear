@@ -95,9 +95,7 @@ class CloudBuild:
             command.append(f"--description={self.description}")
         if self.substitutions:
             command.append(f"--substitutions={self.substitutions}")
-        event = run_sh(command)
-        if "ERROR" in event:
-            raise RuntimeError(event)
+        event = run_sh(command, check=True)
         logger.info(event)
 
     def update(self):
@@ -123,13 +121,10 @@ class CloudBuild:
         command.append(f"--build-config={_CLOUD_BUILD_CONFIG}")
         if self.substitutions:
             command.append(f"--substitutions={self.substitutions}")
-        event = run_sh(command)
-        if "ERROR" in event:
-            raise RuntimeError(event)
+        event = run_sh(command, check=True)
         logger.info(event)
 
     def describe(self) -> bool:
-        is_exist = False
         command = [
             "gcloud",
             "builds",
@@ -139,14 +134,15 @@ class CloudBuild:
             f"--region={self.region}",
             f"--project={self.project_id}",
         ]
-        event = run_sh(command)
-        if self.trigger_name in event and "ERROR" not in event:
-            is_exist = True
-        elif "ERROR" in event and "NOT_FOUND" not in event:
-            logger.error(
-                f"Unexpected error describing trigger ({self.trigger_name}): {event}"
-            )
-        return is_exist
+        try:
+            event = run_sh(command, check=True)
+        except RuntimeError as exc:
+            if "NOT_FOUND" in str(exc):
+                return False
+            raise
+        if self.trigger_name not in event:
+            raise RuntimeError(f"Unexpected Cloud Build describe output: {event}")
+        return True
 
     def delete(self):
         command = [
@@ -157,8 +153,9 @@ class CloudBuild:
             self.trigger_name,
             f"--region={self.region}",
             f"--project={self.project_id}",
+            "--quiet",
         ]
-        event = run_sh(command)
+        event = run_sh(command, check=True)
         logger.info(event)
 
     def run(self, branch: str = None):

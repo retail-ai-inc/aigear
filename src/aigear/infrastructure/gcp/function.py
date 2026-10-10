@@ -7,6 +7,9 @@ from aigear.common.logger import Logging
 
 logger = Logging(log_name=__name__).console_logging()
 
+# Must be >= Pub/Sub push ack deadline (see eventarc.PUSH_ACK_DEADLINE_SEC).
+REQUEST_TIMEOUT_SEC = 300
+
 
 class CloudFunction:
     def __init__(
@@ -17,6 +20,7 @@ class CloudFunction:
         topic_name,
         project_id,
         service_account,
+        project_name: str | None = None,
     ):
         self.function_name = function_name
         self.region = region
@@ -24,6 +28,7 @@ class CloudFunction:
         self.topic_name = topic_name
         self.project_id = project_id
         self.service_account = service_account
+        self.project_name = project_name or ""
 
     def _function_path(self):
         source_path = Path(__file__).resolve().parent / "function"
@@ -32,20 +37,20 @@ class CloudFunction:
 
         function_path_src = source_path / "index.js"
         function_file_dst = destination_path / "index.js"
-        if not function_file_dst.exists():
-            content = Path(function_path_src).read_text(encoding="utf-8")
-            content = (
-                content.replace("{{PROJECTID}}", self.project_id)
-                .replace("{{REGION}}", self.region)
-                .replace("{{TOPICSNAME}}", self.topic_name)
-                .replace("{{VENVBASEDIR}}", VENV_BASE_DIR)
-            )
-            function_file_dst.write_text(content, encoding="utf-8")
+        # Always rewrite rendered source so local cache does not keep stale config/code.
+        content = Path(function_path_src).read_text(encoding="utf-8")
+        content = (
+            content.replace("{{PROJECTID}}", self.project_id)
+            .replace("{{PROJECTNAME}}", self.project_name)
+            .replace("{{REGION}}", self.region)
+            .replace("{{TOPICSNAME}}", self.topic_name)
+            .replace("{{VENVBASEDIR}}", VENV_BASE_DIR)
+        )
+        function_file_dst.write_text(content, encoding="utf-8")
 
         package_file_src = source_path / "package.json"
         package_file_dst = destination_path / "package.json"
-        if not package_file_dst.exists():
-            shutil.copy(package_file_src, package_file_dst)
+        shutil.copy(package_file_src, package_file_dst)
 
         return destination_path.as_posix()
 
@@ -60,14 +65,47 @@ class CloudFunction:
             "--runtime=nodejs24",
             f"--region={self.region}",
             f"--entry-point={self.entry_point}",
-            f"--trigger-topic={self.topic_name}",
             f"--source={source_path}",
             f"--project={self.project_id}",
             f"--service-account={self.service_account}",
+            # Gen2 requires a trigger when creating a new function.
+            "--trigger-http",
+            f"--timeout={REQUEST_TIMEOUT_SEC}s",
             "--quiet",
             "--no-allow-unauthenticated",
         ]
         run_sh(command, timeout=600, check=True)
+
+    def _ensure_request_timeout(self):
+        run_sh(
+            [
+                "gcloud",
+                "run",
+                "services",
+                "update",
+                self.function_name,
+                f"--region={self.region}",
+                f"--project={self.project_id}",
+                f"--timeout={REQUEST_TIMEOUT_SEC}",
+                "--quiet",
+            ],
+            check=True,
+        )
+        logger.info(
+            f"Cloud Function ({self.function_name}) request timeout "
+            f"set to {REQUEST_TIMEOUT_SEC}s"
+        )
+
+    def ensure(self, invoker_sa_email: str):
+        """Deploy if missing, then ensure run.invoker for the trigger identity."""
+        if not self.describe():
+            logger.info(
+                f"Deploying Cloud Function ({self.function_name}) in {self.region}..."
+            )
+            self.deploy()
+        else:
+            self._ensure_request_timeout()
+        self.add_permissions_to_cloud_function(sa_email=invoker_sa_email)
 
     def add_permissions_to_cloud_function(self, sa_email):
         command = [
@@ -79,12 +117,12 @@ class CloudFunction:
             f"--region={self.region}",
             f"--member=serviceAccount:{sa_email}",
             "--role=roles/run.invoker",
+            f"--project={self.project_id}",
         ]
         run_sh(command, check=True)
         logger.info(f"✅ run.invoker granted on {self.function_name}")
 
     def describe(self):
-        is_exist = False
         command = [
             "gcloud",
             "run",
@@ -94,14 +132,15 @@ class CloudFunction:
             f"--region={self.region}",
             f"--project={self.project_id}",
         ]
-        event = run_sh(command)
-        if f"Service {self.function_name} in region {self.region}" in event:
-            is_exist = True
-        elif "ERROR" in event and "Cannot find service" not in event:
-            logger.error(
-                f"Unexpected error describing cloud function ({self.function_name}): {event}"
-            )
-        return is_exist
+        try:
+            event = run_sh(command, check=True)
+        except RuntimeError as exc:
+            if "Cannot find service" in str(exc) or "NOT_FOUND" in str(exc):
+                return False
+            raise
+        if not event.strip():
+            raise RuntimeError("Empty Cloud Function describe output.")
+        return True
 
     def list(self):
         command = [
@@ -116,7 +155,7 @@ class CloudFunction:
         event = run_sh(command)
         logger.info(f"\n{event}")
 
-    def delete(self):
+    def delete(self, wait: bool = False):
         command = [
             "gcloud",
             "run",
@@ -125,15 +164,10 @@ class CloudFunction:
             self.function_name,
             f"--region={self.region}",
             f"--project={self.project_id}",
-            "--async",
             "--quiet",
         ]
-        event = run_sh(command)
-        if "ERROR" in event:
-            logger.error(
-                f"Failed to delete cloud function ({self.function_name}): {event}"
-            )
-        else:
-            logger.info(
-                f"Cloud Function '{self.function_name}' deletion initiated (async)."
-            )
+        if not wait:
+            command.append("--async")
+        run_sh(command, check=True, timeout=600 if wait else 30)
+        state = "deleted" if wait else "deletion initiated (async)"
+        logger.info(f"Cloud Function '{self.function_name}' {state}.")

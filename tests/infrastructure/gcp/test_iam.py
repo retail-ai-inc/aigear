@@ -1,4 +1,5 @@
 from unittest.mock import patch
+import pytest
 
 from aigear.infrastructure.gcp.iam import ServiceAccounts
 
@@ -64,23 +65,69 @@ def test_describe_returns_true_when_sa_exists(mock_run_sh):
 
 @patch("aigear.infrastructure.gcp.iam.run_sh")
 def test_describe_returns_false_when_not_found(mock_run_sh):
-    mock_run_sh.return_value = "ERROR: NOT_FOUND"
+    mock_run_sh.side_effect = RuntimeError("ERROR: NOT_FOUND")
     sa = _make_sa()
     assert sa.describe() is False
 
 
 @patch("aigear.infrastructure.gcp.iam.run_sh")
-def test_describe_returns_false_when_permission_denied(mock_run_sh):
-    mock_run_sh.return_value = "ERROR: PERMISSION_DENIED"
+def test_describe_raises_when_permission_denied(mock_run_sh):
+    mock_run_sh.side_effect = [
+        RuntimeError("ERROR: PERMISSION_DENIED"),
+        RuntimeError("ERROR: PERMISSION_DENIED: list denied"),
+    ]
     sa = _make_sa()
-    assert sa.describe() is False
+    with pytest.raises(RuntimeError, match="list denied"):
+        sa.describe()
+
+
+@pytest.mark.parametrize("accounts, expected", [
+    ([], False),
+    ([{"email": "my-sa@my-project.iam.gserviceaccount.com"}], True),
+    ([{"email": "other@my-project.iam.gserviceaccount.com"}], False),
+])
+@patch("aigear.infrastructure.gcp.iam.run_sh")
+def test_describe_disambiguates_permission_denied_with_project_list(mock_run_sh, accounts, expected):
+    import json
+
+    mock_run_sh.side_effect = [RuntimeError("ERROR: PERMISSION_DENIED"), json.dumps(accounts)]
+    assert _make_sa().describe() is expected
+    command = mock_run_sh.call_args_list[1].args[0]
+    assert "list" in command
+    assert "--project=my-project" in command
+    assert "--filter=email=my-sa@my-project.iam.gserviceaccount.com" in command
+    assert mock_run_sh.call_args.kwargs["check"] is True
 
 
 @patch("aigear.infrastructure.gcp.iam.run_sh")
-def test_describe_returns_false_when_output_empty(mock_run_sh):
+def test_describe_does_not_retry_unrelated_failures(mock_run_sh):
+    mock_run_sh.side_effect = RuntimeError("execution timeout")
+    with pytest.raises(RuntimeError, match="execution timeout"):
+        _make_sa().describe()
+    mock_run_sh.assert_called_once()
+
+
+@patch("aigear.infrastructure.gcp.iam.run_sh")
+def test_describe_raises_when_output_empty(mock_run_sh):
     mock_run_sh.return_value = ""
     sa = _make_sa()
-    assert sa.describe() is False
+    with pytest.raises(RuntimeError, match="Unexpected"):
+        sa.describe()
+
+
+# ── ServiceAccounts.add_iam_policy_binding ────────────────────────────────────
+
+@patch("aigear.infrastructure.gcp.iam.run_sh")
+@patch.object(ServiceAccounts, "_wait_for_sa_ready")
+def test_add_iam_policy_binding_includes_logging_log_writer(mock_wait, mock_run_sh):
+    sa = _make_sa()
+    sa.add_iam_policy_binding()
+    project_cmds = [
+        call[0][0]
+        for call in mock_run_sh.call_args_list
+        if call[0][0][0] == "gcloud" and "projects" in call[0][0]
+    ]
+    assert any("--role=roles/logging.logWriter" in cmd for cmd in project_cmds)
 
 
 # ── ServiceAccounts.delete ────────────────────────────────────────────────────

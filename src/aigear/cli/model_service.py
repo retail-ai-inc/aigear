@@ -9,7 +9,7 @@ def _get_parser() -> argparse.ArgumentParser:
         description="Manage gRPC model service: generate YAML, deploy, update, delete, or check status.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--version", help="Pipeline version")
+    parser.add_argument("--version", required=True, help="Pipeline version")
     parser.add_argument(
         "--service_ports", default=None, help="Internal interface of service"
     )

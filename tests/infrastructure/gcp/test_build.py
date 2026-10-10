@@ -74,16 +74,17 @@ def test_describe_returns_true_when_trigger_found(mock_run_sh):
 
 @patch("aigear.infrastructure.gcp.build.run_sh")
 def test_describe_returns_false_when_not_found(mock_run_sh):
-    mock_run_sh.return_value = "ERROR: NOT_FOUND"
+    mock_run_sh.side_effect = RuntimeError("ERROR: NOT_FOUND")
     cb = _make_build()
     assert cb.describe() is False
 
 
 @patch("aigear.infrastructure.gcp.build.run_sh")
-def test_describe_returns_false_when_trigger_name_missing_from_output(mock_run_sh):
+def test_describe_raises_when_trigger_name_missing_from_output(mock_run_sh):
     mock_run_sh.return_value = "some unrelated output"
     cb = _make_build()
-    assert cb.describe() is False
+    with pytest.raises(RuntimeError, match="Unexpected"):
+        cb.describe()
 
 
 # ── CloudBuild.create ─────────────────────────────────────────────────────────
@@ -118,10 +119,11 @@ def test_create_uses_pubsub_subcommand_for_pubsub_event(mock_run_sh):
 
 @patch("aigear.infrastructure.gcp.build.run_sh")
 def test_create_raises_on_error_in_output(mock_run_sh):
-    mock_run_sh.return_value = "ERROR: something went wrong"
+    mock_run_sh.side_effect = RuntimeError("ERROR: something went wrong")
     cb = _make_build()
     with pytest.raises(RuntimeError):
         cb.create()
+    assert mock_run_sh.call_args.kwargs["check"] is True
 
 
 @patch("aigear.infrastructure.gcp.build.run_sh")
@@ -137,10 +139,11 @@ def test_create_includes_substitutions_when_set(mock_run_sh):
 
 @patch("aigear.infrastructure.gcp.build.run_sh")
 def test_update_raises_on_error_in_output(mock_run_sh):
-    mock_run_sh.return_value = "ERROR: trigger not found"
+    mock_run_sh.side_effect = RuntimeError("ERROR: trigger not found")
     cb = _make_build()
     with pytest.raises(RuntimeError):
         cb.update()
+    assert mock_run_sh.call_args.kwargs["check"] is True
 
 
 @patch("aigear.infrastructure.gcp.build.run_sh")

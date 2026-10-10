@@ -10,6 +10,7 @@ from aigear.infrastructure.gcp.artifacts import Artifacts
 from aigear.infrastructure.gcp.bucket import Bucket
 from aigear.infrastructure.gcp.build import CloudBuild
 from aigear.infrastructure.gcp.constant import entry_point_of_cloud_fuction
+from aigear.infrastructure.gcp.eventarc import EventarcPubSubTrigger, pubsub_trigger_name
 from aigear.infrastructure.gcp.function import CloudFunction
 from aigear.infrastructure.gcp.iam import ServiceAccounts
 from aigear.infrastructure.gcp.kms import CloudKMS
@@ -83,6 +84,7 @@ class Infra:
             topic_name=self.aigear_config.gcp.pub_sub.topic_name,
             project_id=self.project_id,
             service_account=self.service_account,
+            project_name=AppConfig.project_name(),
         )
 
         self.service_accounts = ServiceAccounts(
@@ -117,6 +119,17 @@ class Infra:
             key_name=self.aigear_config.gcp.kms.key_name,
         )
 
+        function_name = self.aigear_config.gcp.cloud_function.function_name
+        self.eventarc_trigger = EventarcPubSubTrigger(
+            trigger_name=pubsub_trigger_name(function_name),
+            location=self.location,
+            project_id=self.project_id,
+            function_name=function_name,
+            function_region=self.location,
+            topic_name=self.aigear_config.gcp.pub_sub.topic_name,
+            trigger_service_account=self.service_account,
+        )
+
     # ================================================================
     # Preflight checks: gcloud login + project switch
     # ================================================================
@@ -128,7 +141,7 @@ class Infra:
 
         # Step 1: confirm gcloud is installed (prerequisite for everything below)
         try:
-            run_sh(["gcloud", "--version"])
+            run_sh(["gcloud", "--version"], check=True)
         except Exception:
             raise RuntimeError(
                 "`gcloud` CLI not found. Install Google Cloud SDK first."
@@ -140,14 +153,18 @@ class Infra:
 
         def _check_auth():
             try:
-                output = run_sh(["gcloud", "auth", "list", "--format=json"])
+                output = run_sh(
+                    ["gcloud", "auth", "list", "--format=json"], check=True
+                )
                 accounts = json.loads(output)
-                auth_result.extend([a for a in accounts if a.get("status") == "ACTIVE"])
+                auth_result[:] = [a for a in accounts if a.get("status") == "ACTIVE"]
             except Exception as e:
                 raise RuntimeError(f"Cannot check gcloud auth status: {e}")
 
         def _check_project():
-            current = run_sh(["gcloud", "config", "get-value", "project"]).strip()
+            current = run_sh(
+                ["gcloud", "config", "get-value", "project"], check=True
+            ).strip()
             project_result.append(current)
 
         with ThreadPoolExecutor(max_workers=2) as executor:
@@ -161,15 +178,25 @@ class Infra:
             logger.info(
                 "No active gcloud account detected. Running `gcloud auth login`..."
             )
-            run_sh(["gcloud", "auth", "login"])
-        else:
-            logger.info(f"Logged in as: {auth_result[0]['account']}")
+            run_sh(["gcloud", "auth", "login"], timeout=300, check=True)
+            _check_auth()
+            if not auth_result:
+                raise RuntimeError("No active gcloud account after login.")
+        logger.info(f"Logged in as: {auth_result[0]['account']}")
         logger.info("✅ Login check OK.")
 
         current_project = project_result[0]
         if current_project != self.project_id:
             logger.info(f"Switching gcloud project -> {self.project_id}")
-            run_sh(["gcloud", "config", "set", "project", self.project_id])
+            run_sh(
+                ["gcloud", "config", "set", "project", self.project_id], check=True
+            )
+            _check_project()
+            if project_result[-1] != self.project_id:
+                raise RuntimeError(
+                    f"gcloud project switch failed: expected {self.project_id}, "
+                    f"got {project_result[-1]}."
+                )
         else:
             logger.info(f"Project already set to {self.project_id}")
         logger.info("✅ Project switch OK.")
@@ -194,7 +221,9 @@ class Infra:
     def _step(self, title, fn):
         _thread_local.log_buffer = []
         try:
-            fn()
+            result = fn()
+            if result is False:
+                raise RuntimeError("Operation returned False.")
             success = True
             exc = None
         except Exception as e:
@@ -232,6 +261,49 @@ class Infra:
         logger.error(f"❌ {title} FAILED ({reason})")
         logger.info("---------------------------------------------------")
 
+    @staticmethod
+    def _needs_eventarc(cfg) -> bool:
+        return cfg.pub_sub.on and cfg.cloud_function.on
+
+    def _eventarc_title(self) -> str:
+        return f"Eventarc Pub/Sub Trigger ({self.eventarc_trigger.trigger_name})"
+
+    def _phase2_add(self, tasks: dict, enabled: bool, title: str, fn):
+        if enabled:
+            tasks[title] = fn
+        else:
+            self._step_skip(title)
+
+    def _run_parallel(self, tasks: dict, failed_steps: list):
+        if not tasks:
+            return
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = {
+                executor.submit(self._step, title, fn): title
+                for title, fn in tasks.items()
+            }
+            for future in as_completed(futures):
+                title = futures[future]
+                if not future.result():
+                    failed_steps.append(title)
+
+    def _gate_eventarc_ready(self, cfg, failed_steps: list) -> bool:
+        if not self._needs_eventarc(cfg):
+            return True
+        required = (
+            f"Pub/Sub Topic ({cfg.pub_sub.topic_name})",
+            f"Cloud Function ({cfg.cloud_function.function_name})",
+        )
+        missing = [title for title in required if title in failed_steps]
+        if not missing:
+            return True
+        self._step_fail(
+            "Gate 2→3: Eventarc Pub/Sub Trigger",
+            f"prerequisites missing ({', '.join(missing)}) — Phase 3 skipped",
+        )
+        failed_steps.append("Gate 2→3: Eventarc Pub/Sub Trigger prerequisites missing")
+        return False
+
     def _log_summary(self, failed_steps, title):
         logger.info("===================================================")
         if failed_steps:
@@ -248,7 +320,7 @@ class Infra:
     # ================================================================
     # Public API called from CLI
     # ================================================================
-    def create(self):
+    def create(self) -> bool:
         self._preflight_check()
 
         logger.info("===================================================")
@@ -271,22 +343,27 @@ class Infra:
                 sa_exists = True  # step succeeded → SA is guaranteed to exist
         else:
             self._step_skip(f"Service Account ({cfg.iam.account_name})")
-            sa_exists = self.service_accounts.describe()  # iam off → must verify
+            # iam off still requires a verified, existing service account.
+            title = f"Verify Service Account ({cfg.iam.account_name})"
+            sa_exists = self._step(title, self.service_accounts.describe)
+            if not sa_exists:
+                failed_steps.append(title)
 
         # ── Gate 1→2: Service Account must exist ─────────────────────
         if not sa_exists:
             self._step_fail(
                 f"Gate 1→2: Service Account ({cfg.iam.account_name})",
-                "not found — Phase 2 and Phase 3 skipped",
+                "setup or verification failed — Phase 2 and Phase 3 skipped",
             )
             failed_steps.append(
-                f"Gate 1→2: Service Account ({cfg.iam.account_name}) not found"
+                f"Gate 1→2: Service Account ({cfg.iam.account_name}) setup or verification failed"
             )
             self._log_summary(failed_steps, "Init")
-            return
+            return False
 
         # ── Phase 2: Independent resources (parallel) ─────────────────
         phase2_tasks = {}
+        cf_title = f"Cloud Function ({cfg.cloud_function.function_name})"
 
         if cfg.bucket.on:
             phase2_tasks[f"Model Bucket ({cfg.bucket.bucket_name})"] = (
@@ -301,91 +378,67 @@ class Infra:
                 f"Release Model Bucket ({cfg.bucket.bucket_name_for_release})"
             )
 
-        if cfg.artifacts.on:
-            phase2_tasks[f"Artifact Registry ({cfg.artifacts.repository_name})"] = (
-                self._ensure_artifacts
-            )
-        else:
-            self._step_skip(f"Artifact Registry ({cfg.artifacts.repository_name})")
+        self._phase2_add(
+            phase2_tasks,
+            cfg.artifacts.on,
+            f"Artifact Registry ({cfg.artifacts.repository_name})",
+            self._ensure_artifacts,
+        )
+        self._phase2_add(
+            phase2_tasks,
+            cfg.pub_sub.on,
+            f"Pub/Sub Topic ({cfg.pub_sub.topic_name})",
+            self._ensure_pubsub,
+        )
+        self._phase2_add(
+            phase2_tasks,
+            cfg.kms.on,
+            f"Cloud KMS ({cfg.kms.keyring_name}/{cfg.kms.key_name})",
+            self._ensure_kms,
+        )
+        self._phase2_add(
+            phase2_tasks,
+            cfg.cloud_build.on,
+            f"Cloud Build Trigger ({cfg.cloud_build.trigger_name})",
+            self._ensure_cloud_build,
+        )
+        self._phase2_add(
+            phase2_tasks, cfg.pre_vm_image.on, "Pre-VM Image (pre_vm_image)", self._ensure_pre_vm_image
+        )
+        self._phase2_add(
+            phase2_tasks,
+            cfg.kubernetes.on,
+            f"Kubernetes Cluster ({cfg.kubernetes.cluster_name})",
+            self._ensure_kubernetes_cluster,
+        )
+        self._phase2_add(
+            phase2_tasks,
+            cfg.cloud_function.on,
+            cf_title,
+            self._ensure_cloud_function,
+        )
+        self._run_parallel(phase2_tasks, failed_steps)
 
-        if cfg.pub_sub.on:
-            phase2_tasks[f"Pub/Sub Topic ({cfg.pub_sub.topic_name})"] = (
-                self._ensure_pubsub
-            )
-        else:
-            self._step_skip(f"Pub/Sub Topic ({cfg.pub_sub.topic_name})")
-
-        if cfg.kms.on:
-            phase2_tasks[f"Cloud KMS ({cfg.kms.keyring_name}/{cfg.kms.key_name})"] = (
-                self._ensure_kms
-            )
-        else:
-            self._step_skip(f"Cloud KMS ({cfg.kms.keyring_name}/{cfg.kms.key_name})")
-
-        if cfg.cloud_build.on:
-            phase2_tasks[f"Cloud Build Trigger ({cfg.cloud_build.trigger_name})"] = (
-                self._ensure_cloud_build
-            )
-        else:
-            self._step_skip(f"Cloud Build Trigger ({cfg.cloud_build.trigger_name})")
-
-        if cfg.pre_vm_image.on:
-            phase2_tasks["Pre-VM Image (pre_vm_image)"] = self._ensure_pre_vm_image
-        else:
-            self._step_skip("Pre-VM Image (pre_vm_image)")
-
-        if cfg.kubernetes.on:
-            phase2_tasks[f"Kubernetes Cluster ({cfg.kubernetes.cluster_name})"] = (
-                self._ensure_kubernetes_cluster
-            )
-        else:
-            self._step_skip(f"Kubernetes Cluster ({cfg.kubernetes.cluster_name})")
-
-        if phase2_tasks:
-            with ThreadPoolExecutor(max_workers=len(phase2_tasks)) as executor:
-                futures = {
-                    executor.submit(self._step, title, fn): title
-                    for title, fn in phase2_tasks.items()
-                }
-                for future in as_completed(futures):
-                    title = futures[future]
-                    if not future.result():
-                        failed_steps.append(title)
-
-        # ── Gate 2→3: Pub/Sub must exist ──────────────────────────────
-        # Phase 2 already verified pubsub state; reuse that result instead of
-        # calling describe() again.
-        pubsub_step_key = f"Pub/Sub Topic ({cfg.pub_sub.topic_name})"
-        pubsub_ok = cfg.pub_sub.on and pubsub_step_key not in failed_steps
-        if cfg.cloud_function.on and not pubsub_ok:
-            self._step_fail(
-                f"Gate 2→3: Pub/Sub Topic ({cfg.pub_sub.topic_name})",
-                "not found — Phase 3 skipped",
-            )
-            failed_steps.append(
-                f"Gate 2→3: Pub/Sub Topic ({cfg.pub_sub.topic_name}) not found"
-            )
-            self._log_summary(failed_steps, "Init")
-            return
-
-        # ── Phase 3: Cloud Function ────────────────────────────────────
-        if cfg.cloud_function.on:
-            success = self._step(
-                f"Cloud Function ({cfg.cloud_function.function_name})",
-                self._ensure_cloud_function,
-            )
-            if not success:
-                failed_steps.append(
-                    f"Cloud Function ({cfg.cloud_function.function_name})"
-                )
-        else:
-            self._step_skip(f"Cloud Function ({cfg.cloud_function.function_name})")
+        # ── Phase 3: Eventarc Pub/Sub trigger ─────────────────────────
+        if self._needs_eventarc(cfg):
+            if not self._gate_eventarc_ready(cfg, failed_steps):
+                self._log_summary(failed_steps, "Init")
+                return False
+            title = self._eventarc_title()
+            if not self._step(title, self.eventarc_trigger.ensure):
+                failed_steps.append(title)
+        elif cfg.pub_sub.on or cfg.cloud_function.on:
+            self._step_skip(self._eventarc_title())
 
         self._log_summary(failed_steps, "Init")
+        return not failed_steps
 
     # ================================================================
     # Actual infra actions (use your existing classes)
     # ================================================================
+    def _ensure_cloud_function(self):
+        self.cloud_function.ensure(self.service_accounts.sa_email)
+
     def _ensure_service_account(self):
         exists = self.service_accounts.describe()
         if not exists:
@@ -422,13 +475,9 @@ class Infra:
         else:
             logger.info(
                 f"Model bucket ({self.aigear_config.gcp.bucket.bucket_name}) already exists in location "
-                f"({self.location}). Skipping creation."
+                f"({self.location}). Skipping creation; re-applying IAM binding."
             )
-        logger.info(
-            f"Binding GCS permissions for model bucket ({self.aigear_config.gcp.bucket.bucket_name})..."
-        )
         self.model_bucket.add_permissions_to_gcs(sa_email=self.service_accounts.sa_email)
-        logger.info(f"GCS permissions bound for model bucket ({self.aigear_config.gcp.bucket.bucket_name}).")
 
     def _ensure_release_bucket(self):
         exists = self.release_model_bucket.describe()
@@ -444,13 +493,11 @@ class Infra:
         else:
             logger.info(
                 f"Release model bucket ({self.aigear_config.gcp.bucket.bucket_name_for_release}) already exists in "
-                f"location ({self.location}). Skipping creation."
+                f"location ({self.location}). Skipping creation; re-applying IAM binding."
             )
-        logger.info(
-            f"Binding GCS permissions for release model bucket ({self.aigear_config.gcp.bucket.bucket_name_for_release})..."
+        self.release_model_bucket.add_permissions_to_gcs(
+            sa_email=self.service_accounts.sa_email
         )
-        self.release_model_bucket.add_permissions_to_gcs(sa_email=self.service_accounts.sa_email)
-        logger.info(f"GCS permissions bound for release model bucket ({self.aigear_config.gcp.bucket.bucket_name_for_release}).")
 
     def _ensure_artifacts(self):
         exists = self.artifacts.describe()
@@ -566,30 +613,6 @@ class Infra:
             f"Cloud Build trigger ({self.aigear_config.gcp.cloud_build.trigger_name}) updated successfully."
         )
 
-    def _ensure_cloud_function(self):
-        exists = self.cloud_function.describe()
-        if not exists:
-            logger.info(
-                f"Cloud Function ({self.aigear_config.gcp.cloud_function.function_name}) not found in region "
-                f"({self.location}). Deploying Cloud Function..."
-            )
-            self.cloud_function.deploy()
-            logger.info(
-                f"Cloud Function ({self.aigear_config.gcp.cloud_function.function_name}) deployed successfully."
-            )
-        else:
-            logger.info(
-                f"Cloud Function ({self.aigear_config.gcp.cloud_function.function_name}) already exists in region "
-                f"({self.location}). Skipping deployment."
-            )
-        logger.info(
-            f"Binding Cloud Function permissions for ({self.aigear_config.gcp.cloud_function.function_name})..."
-        )
-        self.cloud_function.add_permissions_to_cloud_function(
-            sa_email=self.service_accounts.sa_email
-        )
-        logger.info(f"Cloud Function permissions bound for ({self.aigear_config.gcp.cloud_function.function_name}).")
-
     def _ensure_pre_vm_image(self):
         from aigear.infrastructure.gcp.pre_vm_image import PreVMImage
 
@@ -670,7 +693,7 @@ class Infra:
     # ================================================================
     # Public API: update
     # ================================================================
-    def update(self):
+    def update(self) -> bool:
         self._preflight_check()
 
         logger.info("===================================================")
@@ -738,29 +761,28 @@ class Infra:
         else:
             self._step_skip("Pre-VM Image (pre_vm_image)")
 
-        if phase2_tasks:
-            with ThreadPoolExecutor(max_workers=len(phase2_tasks)) as executor:
-                futures = {
-                    executor.submit(self._step, title, fn): title
-                    for title, fn in phase2_tasks.items()
-                }
-                for future in as_completed(futures):
-                    title = futures[future]
-                    if not future.result():
-                        failed_steps.append(title)
+        self._run_parallel(phase2_tasks, failed_steps)
 
-        # ── Phase 3: Cloud Function ────────────────────────────────────
         if cfg.cloud_function.on:
             self._step_no_update(f"Cloud Function ({cfg.cloud_function.function_name})")
         else:
             self._step_skip(f"Cloud Function ({cfg.cloud_function.function_name})")
 
+        if self._needs_eventarc(cfg):
+            title = self._eventarc_title()
+            tune_title = f"{title} (push ack/retry)"
+            if not self._step(tune_title, self.eventarc_trigger.tune_push_subscriptions):
+                failed_steps.append(tune_title)
+        elif cfg.pub_sub.on or cfg.cloud_function.on:
+            self._step_skip(self._eventarc_title())
+
         self._log_summary(failed_steps, "Update")
+        return not failed_steps
 
     # ================================================================
     # Public API: delete
     # ================================================================
-    def delete(self):
+    def delete(self) -> bool:
         self._preflight_check()
 
         logger.info("===================================================")
@@ -770,8 +792,21 @@ class Infra:
         failed_steps = []
         cfg = self.aigear_config.gcp
 
-        # ── Phase 1: Cloud Function (reverse of creation phase 3) ────
-        if cfg.cloud_function.on:
+        # ── Phase 1: Eventarc trigger, then Cloud Function ───────────
+        eventarc_deleted = True
+        if self._needs_eventarc(cfg):
+            title = self._eventarc_title()
+            eventarc_deleted = self._step(title, self.eventarc_trigger.delete_if_exists)
+            if not eventarc_deleted:
+                failed_steps.append(title)
+        elif cfg.pub_sub.on or cfg.cloud_function.on:
+            self._step_skip(self._eventarc_title())
+
+        if cfg.cloud_function.on and not eventarc_deleted:
+            title = f"Cloud Function ({cfg.cloud_function.function_name})"
+            self._step_fail(title, "Eventarc deletion failed — deletion blocked")
+            failed_steps.append(title)
+        elif cfg.cloud_function.on:
             success = self._step(
                 f"Cloud Function ({cfg.cloud_function.function_name})",
                 self._delete_cloud_function,
@@ -799,59 +834,52 @@ class Infra:
                 f"Release Model Bucket ({cfg.bucket.bucket_name_for_release})"
             )
 
-        if cfg.artifacts.on:
-            phase2_tasks[f"Artifact Registry ({cfg.artifacts.repository_name})"] = (
-                self._delete_artifacts
+        self._phase2_add(
+            phase2_tasks,
+            cfg.artifacts.on,
+            f"Artifact Registry ({cfg.artifacts.repository_name})",
+            self._delete_artifacts,
+        )
+        if cfg.pub_sub.on and not eventarc_deleted:
+            title = f"Pub/Sub Topic ({cfg.pub_sub.topic_name})"
+            self._step_fail(title, "Eventarc deletion failed — deletion blocked")
+            failed_steps.append(title)
+        else:
+            self._phase2_add(
+                phase2_tasks,
+                cfg.pub_sub.on,
+                f"Pub/Sub Topic ({cfg.pub_sub.topic_name})",
+                self._delete_pubsub,
             )
-        else:
-            self._step_skip(f"Artifact Registry ({cfg.artifacts.repository_name})")
-
-        if cfg.pub_sub.on:
-            phase2_tasks[f"Pub/Sub Topic ({cfg.pub_sub.topic_name})"] = (
-                self._delete_pubsub
-            )
-        else:
-            self._step_skip(f"Pub/Sub Topic ({cfg.pub_sub.topic_name})")
-
-        if cfg.kms.on:
-            phase2_tasks[f"Cloud KMS ({cfg.kms.keyring_name}/{cfg.kms.key_name})"] = (
-                self._delete_kms
-            )
-        else:
-            self._step_skip(f"Cloud KMS ({cfg.kms.keyring_name}/{cfg.kms.key_name})")
-
-        if cfg.cloud_build.on:
-            phase2_tasks[f"Cloud Build Trigger ({cfg.cloud_build.trigger_name})"] = (
-                self._delete_cloud_build
-            )
-        else:
-            self._step_skip(f"Cloud Build Trigger ({cfg.cloud_build.trigger_name})")
-
-        if cfg.pre_vm_image.on:
-            phase2_tasks["Pre-VM Image (pre_vm_image)"] = self._delete_pre_vm_image
-        else:
-            self._step_skip("Pre-VM Image (pre_vm_image)")
-
-        if cfg.kubernetes.on:
-            phase2_tasks[f"Kubernetes Cluster ({cfg.kubernetes.cluster_name})"] = (
-                self._delete_kubernetes_cluster
-            )
-        else:
-            self._step_skip(f"Kubernetes Cluster ({cfg.kubernetes.cluster_name})")
-
-        if phase2_tasks:
-            with ThreadPoolExecutor(max_workers=len(phase2_tasks)) as executor:
-                futures = {
-                    executor.submit(self._step, title, fn): title
-                    for title, fn in phase2_tasks.items()
-                }
-                for future in as_completed(futures):
-                    title = futures[future]
-                    if not future.result():
-                        failed_steps.append(title)
+        self._phase2_add(
+            phase2_tasks,
+            cfg.kms.on,
+            f"Cloud KMS ({cfg.kms.keyring_name}/{cfg.kms.key_name})",
+            self._delete_kms,
+        )
+        self._phase2_add(
+            phase2_tasks,
+            cfg.cloud_build.on,
+            f"Cloud Build Trigger ({cfg.cloud_build.trigger_name})",
+            self._delete_cloud_build,
+        )
+        self._phase2_add(
+            phase2_tasks, cfg.pre_vm_image.on, "Pre-VM Image (pre_vm_image)", self._delete_pre_vm_image
+        )
+        self._phase2_add(
+            phase2_tasks,
+            cfg.kubernetes.on,
+            f"Kubernetes Cluster ({cfg.kubernetes.cluster_name})",
+            self._delete_kubernetes_cluster,
+        )
+        self._run_parallel(phase2_tasks, failed_steps)
 
         # ── Phase 3: Service Account (reverse of creation phase 1) ───
-        if cfg.iam.on:
+        if cfg.iam.on and failed_steps:
+            title = f"Service Account ({cfg.iam.account_name})"
+            self._step_fail(title, "cleanup failed or incomplete — service account retained")
+            failed_steps.append(title)
+        elif cfg.iam.on:
             success = self._step(
                 f"Service Account ({cfg.iam.account_name})",
                 self._delete_service_account,
@@ -862,6 +890,7 @@ class Infra:
             self._step_skip(f"Service Account ({cfg.iam.account_name})")
 
         self._log_summary(failed_steps, "Delete")
+        return not failed_steps
 
     # ================================================================
     # Actual delete actions
@@ -872,9 +901,9 @@ class Infra:
             logger.info(
                 f"Deleting Cloud Function ({self.aigear_config.gcp.cloud_function.function_name})..."
             )
-            self.cloud_function.delete()
+            self.cloud_function.delete(wait=True)
             logger.info(
-                f"Cloud Function ({self.aigear_config.gcp.cloud_function.function_name}) deletion initiated (async)."
+                f"Cloud Function ({self.aigear_config.gcp.cloud_function.function_name}) deleted successfully."
             )
         else:
             logger.info(
@@ -983,9 +1012,9 @@ class Infra:
             logger.info(
                 f"Deleting Kubernetes Cluster ({self.aigear_config.gcp.kubernetes.cluster_name})..."
             )
-            self.kubernetes_cluster.delete()
+            self.kubernetes_cluster.delete(wait=True)
             logger.info(
-                f"Kubernetes Cluster ({self.aigear_config.gcp.kubernetes.cluster_name}) deletion initiated (async)."
+                f"Kubernetes Cluster ({self.aigear_config.gcp.kubernetes.cluster_name}) deleted successfully."
             )
         else:
             logger.info(
@@ -1066,6 +1095,11 @@ class Infra:
                 cfg.cloud_function.on,
                 self.cloud_function.describe,
             ),
+            (
+                self._eventarc_title(),
+                self._needs_eventarc(cfg),
+                self.eventarc_trigger.describe,
+            ),
         ]
 
         results = [None] * len(tasks)
@@ -1135,7 +1169,7 @@ class Infra:
         if not self.cloud_kms.describe_keyring():
             return "NOT_FOUND [keyring ❌]"
         if not self.cloud_kms.describe_key():
-            return "EXISTS [keyring ✅  key ❌]"
+            return "PARTIAL [keyring ✅  key ❌]"
         ver = "ENABLED" if self.cloud_kms.describe_enabled_key_version() else "DISABLED"
         return f"EXISTS [keyring ✅  key ✅  version {ver}]"
 

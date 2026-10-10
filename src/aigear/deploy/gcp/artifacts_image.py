@@ -1,5 +1,7 @@
 import re
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 from aigear.common import run_sh, run_sh_stream
 from aigear.common.config import AigearConfig, AppConfig
@@ -8,6 +10,13 @@ from aigear.common.image import get_image_path
 from aigear.common.logger import Logging
 
 logger = Logging(log_name=__name__).console_logging()
+
+
+@dataclass
+class ImageCreationResult:
+    image_path: str = ""
+    created: bool = False
+    pushed: Optional[bool] = None
 
 
 class LocalImage:
@@ -205,26 +214,33 @@ def create_artifacts_image(
     is_service=False,
     is_build=True,
     is_push=False,
+    result: Optional[ImageCreationResult] = None,
 ) -> bool:
-    """Returns True if the requested operations succeeded, False otherwise."""
+    """Return overall success and optionally record per-stage outcomes in result."""
+    if result is None:
+        result = ImageCreationResult()
     log_tag = "model service" if is_service else "pipeline"
     aigear_config = AigearConfig.get_config()
     image_path = get_image_path(is_service=is_service)
+    result.image_path = image_path
     local = LocalImage(image_path)
     registry = RegistryImage(image_path)
 
     if is_build:
         if dockerfile_path:
             _validate_dockerfile_venvs(dockerfile_path, is_service)
-        if not local.build(
+        result.created = local.build(
             dockerfile_path=dockerfile_path, build_context=build_context
-        ):
+        )
+        if not result.created:
             return False
         logger.info(f"The {log_tag} image has been created.")
 
     if is_push:
+        result.pushed = False
         registry.configure_auth(aigear_config.gcp.location)
-        if not registry.push():
+        result.pushed = registry.push()
+        if not result.pushed:
             return False
         logger.info(f"The {log_tag} image has been pushed.")
     return True

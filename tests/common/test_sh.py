@@ -6,6 +6,13 @@ import pytest
 from aigear.common.sh import _clean_output, run_sh
 
 
+@pytest.fixture(autouse=True)
+def isolate_platform_detection():
+    # platform.system() may itself use subprocess on Windows.
+    with patch("aigear.common.sh.platform.system", return_value="Windows"):
+        yield
+
+
 @patch("aigear.common.sh.platform.system", return_value="Linux")
 def test_clean_output_on_non_windows_returns_unchanged(mock_sys):
     result = _clean_output("hello\nworld\n")
@@ -88,6 +95,12 @@ def test_run_sh_does_not_raise_on_nonzero_exit_without_check(mock_run):
 def test_run_sh_returns_timeout_message_on_timeout(mock_run):
     result = run_sh(["slow-command"])
     assert "timeout" in result.lower()
+
+
+@patch("aigear.common.sh.subprocess.run", side_effect=subprocess.TimeoutExpired(cmd=["x"], timeout=30))
+def test_run_sh_raises_on_timeout_when_check_true(mock_run):
+    with pytest.raises(RuntimeError, match="timeout"):
+        run_sh(["slow-command"], check=True)
 
 
 @patch("aigear.common.sh.subprocess.run")

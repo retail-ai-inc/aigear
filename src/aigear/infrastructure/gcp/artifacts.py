@@ -32,7 +32,6 @@ class Artifacts:
         run_sh(command, check=True)
 
     def describe(self):
-        is_exist = False
         command = [
             "gcloud",
             "artifacts",
@@ -42,14 +41,15 @@ class Artifacts:
             f"--location={self.location}",
             f"--project={self.project_id}",
         ]
-        event = run_sh(command)
-        if "ERROR" not in event:
-            is_exist = True
-        elif "NOT_FOUND" not in event:
-            logger.error(
-                f"Unexpected error describing artifact registry ({self.repository_name}): {event}"
-            )
-        return is_exist
+        try:
+            event = run_sh(command, check=True)
+        except RuntimeError as exc:
+            if "NOT_FOUND" in str(exc):
+                return False
+            raise
+        if not event.strip():
+            raise RuntimeError("Empty Artifact Registry describe output.")
+        return True
 
     def delete(self):
         command = [
@@ -62,8 +62,5 @@ class Artifacts:
             f"--project={self.project_id}",
             "--quiet",
         ]
-        event = run_sh(command)
-        if "ERROR" in event:
-            logger.error(
-                f"Failed to delete artifact registry ({self.repository_name}): {event}"
-            )
+        event = run_sh(command, check=True)
+        logger.info(event)

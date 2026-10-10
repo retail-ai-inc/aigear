@@ -1,5 +1,5 @@
 import importlib
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 import pytest
 
@@ -21,6 +21,7 @@ def test_create_dispatches_to_create_artifacts_image():
         is_service=False,
         is_build=True,
         is_push=False,
+        result=ANY,
     )
 
 
@@ -38,22 +39,20 @@ def test_create_push_sets_is_push_true():
     assert mock_fn.call_args.kwargs["is_push"] is True
 
 
-def test_create_no_dockerfile_defaults_to_pipeline():
-    with patch("sys.argv", ["cmd", "--create"]):
+@pytest.mark.parametrize("extra", [[], ["--is_service"], ["--push"], ["--dockerfile_path", ""]])
+def test_create_requires_dockerfile_or_all(extra, capsys):
+    with patch("sys.argv", ["cmd", "--create", *extra]):
         import aigear.cli.artifacts_image as cli_mod
 
         importlib.reload(cli_mod)
         with patch(
             "aigear.cli.artifacts_image.create_artifacts_image", return_value=True
         ) as mock_fn:
-            cli_mod.docker_image()
-    mock_fn.assert_called_once_with(
-        dockerfile_path=None,
-        build_context=".",
-        is_service=False,
-        is_build=True,
-        is_push=False,
-    )
+            with pytest.raises(SystemExit) as exc:
+                cli_mod.docker_image()
+    assert exc.value.code == 2
+    assert "--create requires --dockerfile_path or --all" in capsys.readouterr().err
+    mock_fn.assert_not_called()
 
 
 def test_create_dockerfile_ms_infers_is_service():
@@ -71,6 +70,7 @@ def test_create_dockerfile_ms_infers_is_service():
         is_service=True,
         is_build=True,
         is_push=False,
+        result=ANY,
     )
 
 
@@ -152,10 +152,11 @@ def test_retag_without_target_tag_exits():
 # ── --all ─────────────────────────────────────────────────────────────────────
 
 
-def test_all_create_dispatches_both_images():
+@pytest.mark.parametrize("extra", [[], ["--dockerfile_path", "Custom.Dockerfile"]])
+def test_all_create_dispatches_both_images(extra):
     from aigear.common.constant import DOCKERFILE_PIPELINE, DOCKERFILE_SERVICE
 
-    with patch("sys.argv", ["cmd", "--create", "--all"]):
+    with patch("sys.argv", ["cmd", "--create", "--all", *extra]):
         import aigear.cli.artifacts_image as cli_mod
 
         importlib.reload(cli_mod)
@@ -170,6 +171,7 @@ def test_all_create_dispatches_both_images():
         is_service=False,
         is_build=True,
         is_push=False,
+        result=ANY,
     )
     mock_fn.assert_any_call(
         dockerfile_path=DOCKERFILE_SERVICE,
@@ -177,6 +179,7 @@ def test_all_create_dispatches_both_images():
         is_service=True,
         is_build=True,
         is_push=False,
+        result=ANY,
     )
 
 

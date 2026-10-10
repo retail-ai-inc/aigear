@@ -110,14 +110,17 @@ Fill in the generated scaffold with your own code:
 
 ```bash
 # Build both pipeline and model service images
-aigear-image --create
+aigear-image --create --all
 
 # Build and push to Artifact Registry in one step
-aigear-image --create --push
+aigear-image --create --push --all
 
 # Push a previously built image without rebuilding
-aigear-image --push
+gcloud auth configure-docker REGION-docker.pkg.dev
+docker push REGION-docker.pkg.dev/PROJECT/REPOSITORY/IMAGE:TAG
 ```
+
+To build one image, specify `--dockerfile_path Dockerfile.pl` or `--dockerfile_path Dockerfile.ms`. The current CLI requires an action with `--push`; standalone `aigear-image --push` is not supported. `--create` requires `--dockerfile_path` or `--all`; omitting both exits with code **2** before building.
 
 ### 7. Schedule pipeline steps
 
@@ -197,6 +200,7 @@ See the full [CLI Reference](docs/cli-reference.md) for all commands and argumen
 | `aigear-model` | Generate YAML and manage the full lifecycle of a gRPC model service (deploy, update, delete, status) |
 | `aigear-env-schema` | Generate, delete, or show the Pydantic schema derived from `env.json` |
 | `aigear-kms-env` | Encrypt or decrypt `env.json` using Cloud KMS |
+| `aigear-logs` | Discover pipeline runs and inspect step outcomes and failure details |
 
 ---
 
@@ -204,13 +208,14 @@ See the full [CLI Reference](docs/cli-reference.md) for all commands and argumen
 
 **Currently supported:**
 - **Cloud:** Google Cloud Platform (GCS, Pub/Sub, Cloud Scheduler, Cloud Functions, Compute Engine, Kubernetes Engine, Artifact Registry)
-- **Notifications:** Slack
 - **Compute:** Ephemeral VMs(self-terminating after each job)
 
 **Known limitations:**
 - Some commands only support creation — update operations are not yet available for all resources
 - Resource management is incomplete — version tracking and lifecycle management are missing
 - Pipeline orchestration is step-based only — no DAG/dependency analysis yet
+- Slack configuration is reserved; built-in Slack notification delivery is not implemented
+- Existing Cloud Function source is not redeployed by `aigear-infra --create` or `--update`; see the [redeployment procedure](docs/troubleshooting-logs.md#redeploy-existing-cloud-function-source)
 
 **Planned:**
 - Improve functionality
@@ -221,6 +226,10 @@ See the full [CLI Reference](docs/cli-reference.md) for all commands and argumen
 ## Contributing & Contact
 
 Contributions, issues, and PRs are welcome. Share internal use-cases to help evolve common conventions. For questions or feature requests, open an issue in the repository or contact the maintainers.
+
+Run the unit tests with `python -m pytest tests/ -v`.
+
+Tests use an isolated session directory under `.pytest_cache/tmp/`, cleaned up after the run, so they do not depend on access to a shared system temporary directory. An explicit `--basetemp` overrides this default. Tracebacks are concise by default; use `--tb=long` for full details.
 
 - **Issues**: [GitHub Issues](https://github.com/retail-ai-inc/aigear/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/retail-ai-inc/aigear/discussions)

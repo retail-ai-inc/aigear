@@ -7,6 +7,8 @@
 | `project_name` | `string` | Project name | `aigear_sklearn_pipeline` |
 | `environment` | `string` | Operating environment | `local` |
 
+Configuration is loaded once per process. Set `AIGEAR_ENV_PATH` before starting Aigear to read a different JSON file; otherwise it reads `env.json` in the working directory. Restart the process after changing the file. Generated schemas are written to `config_schema/env_schema.py` in the working directory.
+
 ---
 
 ## 2. AIGear Configuration (`aigear`)
@@ -35,7 +37,7 @@
 | `description` | `string` | Trigger description | `Trigger for sklearn pipeline` |
 | `repo_owner` | `string` | Repository owner | `my-org` |
 | `repo_name` | `string` | Repository name | `my-repo` |
-| `event` | `string` | Trigger event type (`push` or `tag`) | `push` |
+| `event` | `string` | Trigger event type; `push`, `tag`, and `pull_request` have GitHub repository argument handling. The command builder also has `manual`, `pubsub`, and `webhook` branches, but exposes no event-specific topic/webhook settings. | `push` |
 | `branch_pattern` | `string` | Branch name or regex pattern (used when `event` is `push`) | `^main$` |
 | `tag_pattern` | `string` | Tag pattern (used when `event` is `tag`) | `^v.*$` |
 > The Cloud Build config file path is fixed at `/cloudbuild/cloudbuild.yaml` and cannot be changed. `aigear-init` generates this file automatically.
@@ -65,6 +67,8 @@
 | `on` | `boolean` | Enable Cloud Function creation | `true` |
 | `function_name` | `string` | Function name | `test-sklearn-pipeline-run` |
 
+> Deploys a Gen2 function (Cloud Run service) in Phase 2 of `aigear-infra --create` **without** a Pub/Sub trigger. To connect the function to a topic, also enable `pub_sub` so Phase 3 can create an Eventarc Pub/Sub trigger.
+
 #### 2.1.6 IAM (`iam`)
 
 | Parameter | Type | Description | Example |
@@ -78,6 +82,8 @@
 | :--- | :--- | :--- | :--- |
 | `on` | `boolean` | Enable Pub/Sub topic creation | `true` |
 | `topic_name` | `string` | Topic name | `test-sklearn-pipeline-pubsub` |
+
+> Phase 2 creates the **topic** only. A **subscription** (managed by Eventarc) is created in Phase 3 when **both** `pub_sub.on` and `cloud_function.on` are `true`. Cloud Scheduler and other publishers send messages to the topic; the subscription forwards them to the Cloud Function.
 
 #### 2.1.8 Artifact Registry (`artifacts`)
 
@@ -108,6 +114,8 @@
 ---
 
 ### 2.2 Slack Configuration (`aigear.slack`)
+
+This block is reserved configuration. The current implementation does not read it to send Slack notifications; setting `on: true` does not enable delivery.
 
 | Parameter | Type | Description | Example |
 | :--- | :--- | :--- | :--- |
@@ -157,6 +165,8 @@ Each pipeline step (e.g., `fetch_data`, `preprocessing`, `training`) shares the 
 | `resources.spec` | `string` | Machine type — [reference](https://docs.cloud.google.com/compute/docs/general-purpose-machines#e2-shared-core) | `e2-medium` |
 | `resources.gpu` | `boolean` | Whether to attach a GPU | `false` |
 
+For Kubernetes YAML generation, `model_class_path` is optional when the image supplies its own startup configuration. If it is omitted (or `model_service` is absent), `aigear-model` writes `grpc_deployment_<environment>.yaml` at the project root and leaves container `command` and `args` unset, using the image's `ENTRYPOINT`/`CMD`. Configure a valid class path to generate the `aigear-task grpc --version VERSION` command automatically.
+
 #### 3.3.1 gRPC Configuration (`model_service.grpc`)
 
 | Parameter | Type | Description | Example |
@@ -169,17 +179,13 @@ Each pipeline step (e.g., `fetch_data`, `preprocessing`, `training`) shares the 
 | `multi_processing.process_count` | `integer` | Number of processes | `2` |
 | `multi_processing.thread_count` | `integer` | Threads per process | `10` |
 | `multi_processing.disable_omp` | `boolean` | Disable OpenMP/framework-level thread parallelism | `false` |
-
-> **`disable_omp`**: Controls whether OpenMP and framework-level thread parallelism (used internally by NumPy, scikit-learn, PyTorch, etc.) is disabled across worker processes.
->
-> Set to `true` **only** when all of the following apply:
-> - Inference is **online / single-request** (not batch) — batch inference benefits from internal parallelism to process multiple samples simultaneously
-> - There are **no significant I/O operations** — I/O naturally yields the CPU, so internal threads do not compete
->
-> When both conditions hold, each worker process spawns as many OMP threads as there are CPU cores (the default). With multiple processes running, the total number of threads far exceeds the available cores, causing the OS scheduler to context-switch excessively and reducing API throughput. Setting `disable_omp: true` caps each process to a single internal thread, so threads across processes no longer compete for cores.
 | `sentry.on` | `boolean` | Enable Sentry error monitoring | `false` |
 | `sentry.dsn` | `string` | Sentry DSN | `https://...@o0.ingest.sentry.io/0` |
 | `sentry.traces_sample_rate` | `float` | Sentry trace sample rate | `1.0` |
+
+The values above are examples. If omitted, runtime defaults are `process_count=2`, `thread_count=5`, and `disable_omp=true`. Windows uses a single server process even when `multi_processing.on=true`. `INFERENCE_NUM_THREADS` sets the thread cap used when `disable_omp` is enabled; its default is `1`.
+
+> **`disable_omp`**: When enabled, Aigear sets ML/BLAS thread environment variables before loading the model, then applies thread limits to already imported PyTorch and TensorFlow modules. The limit is `INFERENCE_NUM_THREADS` (default `1`), independent of gRPC's `thread_count`. Disabling this option skips these settings; it does not restore limits set earlier in the process.
 
 ---
 
@@ -333,7 +339,7 @@ Each pipeline step (e.g., `fetch_data`, `preprocessing`, `training`) shares the 
 
 ## 5. CLI Command Reference
 
-All CLI commands read `env.json` from the current working directory.
+Commands that load configuration use `AIGEAR_ENV_PATH` when set, otherwise `env.json` from the current working directory. `aigear-init` scaffolds files without loading configuration. KMS `--input` and `--output` control encryption/decryption file paths independently; their defaults still use the working directory.
 
 | Command | Arguments | Description |
 | :--- | :--- | :--- |
@@ -342,10 +348,11 @@ All CLI commands read `env.json` from the current working directory.
 | `aigear-env-schema` | `--generate`, `--delete`, `--show`, `--force` | Manage the lifecycle of the Pydantic schema generated from `env.json` |
 | `aigear-kms-env` | `--encrypt`, `--decrypt`, `--environment`, `--input`, `--output`, `--project-id`, `--location`, `--keyring`, `--key` | Encrypt or decrypt `env.json` using Cloud KMS |
 | `aigear-image` | `--create`, `--delete`, `--clear`, `--retag`, `--push`, `--all`, `--dockerfile_path`, `--build_context`, `--is_service`, `--src_tag`, `--target_tag` | Build, delete, clear, or re-tag Docker images; optionally sync to Artifact Registry |
-| `aigear-scheduler` | `--create`, `--update`, `--delete`, `--status`, `--list`, `--run`, `--pause`, `--resume`, `--version`, `--step_names` | Manage Cloud Scheduler jobs for pipeline steps |
+| `aigear-scheduler` | `--create`, `--update`, `--delete`, `--status`, `--list`, `--run`, `--pause`, `--resume`, `--version`, `--step_names`, `--env` | Manage Cloud Scheduler jobs for pipeline steps; `--env` selects staging or production deployment YAML |
 | `aigear-task workflow` | `--version`, `--step` | Run a single pipeline step locally (step name looked up from `env.json`) |
 | `aigear-task grpc` | `--version` | Start a gRPC model serving server (model class path read from `env.json`) |
 | `aigear-model` | `--version`, `--local`/`--staging`/`--production`, `--yaml`/`--deploy`/`--update`/`--delete`/`--status`, `--service_ports`, `--replicas`, `--port` | Generate YAML and manage the full lifecycle of a gRPC model service (local Kubernetes or GCP) |
+| `aigear-logs` | `--version`, `--run-date`, `--run-id`, `--step`, `--format`, `--log-source`, `--time-zone`, `--limit`, `--discovery-limit`, `--clear-cache` | Discover runs and query step timelines or raw logs; see the [CLI reference](cli-reference.md#aigear-logs) |
 
 ---
 
@@ -367,7 +374,7 @@ All CLI commands read `env.json` from the current working directory.
 > [!WARNING]
 > Observe the following conventions to keep the project secure:
 
-- **`env.json` encryption**: Encrypt `env.json` with Cloud KMS using `aigear-kms-env --encrypt` before committing. `aigear-init` automatically installs a git pre-commit hook that blocks commits if `env.json` is newer than its encrypted counterpart — ensuring the plaintext file is never accidentally pushed. To decrypt on a new machine: `aigear-kms-env --decrypt --project-id ID --location LOC --keyring NAME --key NAME`.
+- **`env.json` encryption**: Encrypt `env.json` with Cloud KMS using `aigear-kms-env --encrypt` before committing. The generated `.gitignore` excludes plaintext `env.json`. The pre-commit hook checks ciphertext existence and modification times; it does not inspect staged files and cannot prevent force-added plaintext from being committed. To decrypt on a new machine: `aigear-kms-env --decrypt --project-id ID --location LOC --keyring NAME --key NAME`.
 - **Permission separation**: Infrastructure creation (`aigear-infra`) requires owner-level GCP permissions and should be run in Cloud Shell. Day-to-day pipeline commands require only developer-level permissions.
 - **Environment isolation**: Keep separate `env.json` files for production and staging; never share them across environments.
 - **Restart after changes**: After modifying `env.json`, restart the application or container to load the updated configuration.

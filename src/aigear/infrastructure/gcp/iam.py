@@ -1,3 +1,4 @@
+import json
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -47,17 +48,14 @@ class ServiceAccounts:
             f"--project={self.project_id}",
             "--quiet",
         ]
-        event = run_sh(command)
+        event = run_sh(command, check=True)
         if event.strip():
             logger.info(event)
 
     def _wait_for_sa_ready(self, retries: int = 10, interval: int = 6):
         """Wait until the service account is visible to GCP IAM (propagation delay)."""
         for i in range(retries):
-            event = run_sh(
-                ["gcloud", "iam", "service-accounts", "describe", self.sa_email]
-            )
-            if "name: projects" in event:
+            if self.describe():
                 return
             logger.info(
                 f"Waiting for service account propagation... ({i + 1}/{retries})"
@@ -73,6 +71,7 @@ class ServiceAccounts:
             "roles/compute.instanceAdmin.v1",
             "roles/artifactregistry.reader",
             "roles/container.developer",
+            "roles/logging.logWriter",
         ]
 
         # Project-level bindings share the same IAM policy ETag, so they must
@@ -116,20 +115,27 @@ class ServiceAccounts:
             f_sa.result()
 
     def describe(self):
-        is_exist = False
         command = ["gcloud", "iam", "service-accounts", "describe", self.sa_email]
-        event = run_sh(command)
-        if "name: projects" in event:
-            is_exist = True
-        elif (
-            "ERROR" in event
-            and "NOT_FOUND" not in event
-            and "PERMISSION_DENIED" not in event
-        ):
-            logger.error(
-                f"Unexpected error describing service account ({self.sa_email}): {event}"
-            )
-        return is_exist
+        try:
+            event = run_sh(command, check=True)
+        except RuntimeError as exc:
+            if "NOT_FOUND" in str(exc):
+                return False
+            if "PERMISSION_DENIED" not in str(exc):
+                raise
+            # gcloud describe uses projects/- and can return PERMISSION_DENIED
+            # for a missing account. A project-scoped list disambiguates this;
+            # real list permission failures still propagate.
+            accounts = json.loads(run_sh([
+                "gcloud", "iam", "service-accounts", "list",
+                f"--project={self.project_id}",
+                f"--filter=email={self.sa_email}",
+                "--format=json",
+            ], check=True))
+            return any(account.get("email") == self.sa_email for account in accounts)
+        if "name: projects" not in event:
+            raise RuntimeError(f"Unexpected service account describe output: {event}")
+        return True
 
     def check_iam(self):
         is_owner = False

@@ -220,8 +220,8 @@ aigear-infra --create
 Resources are created in three phases:
 
 1. **Service Account** — created first; IAM bindings wait for propagation automatically
-2. **Buckets, Artifact Registry, Pub/Sub, KMS, Cloud Build, Pre-VM Image, Kubernetes** — run in **parallel**
-3. **Cloud Function** — created last (depends on the Pub/Sub topic from Phase 2)
+2. **Buckets, Artifact Registry, Pub/Sub, KMS, Cloud Build, Pre-VM Image, Kubernetes, Cloud Function** — run in **parallel**
+3. **Eventarc Pub/Sub trigger** — created last
 
 Each step is idempotent — re-running the command safely skips already-existing resources. The log output uses structured JSON and shows only meaningful status per step.
 
@@ -232,6 +232,8 @@ Each step is idempotent — re-running the command safely skips already-existing
 ## 5. Pipeline Step Implementation
 
 Each step is a plain Python function that accepts `pipeline_version` as its only argument. `AssetManagement` handles local ↔ GCS file I/O transparently based on the `bucket_on` flag.
+
+In local mode (`bucket_on=False`), `AssetManagement` requires a non-empty `bucket_name`; omitting it raises a `ValueError` explaining the requirement. Files are stored under `asset/<bucket_name>/<pipeline_version>/<data_type>/`. Local `copy_blob` creates missing destination parent directories automatically. When using `LocalGCSMock` directly, the bucket path accepts a string or `Path`; passing `None` or an empty name uses the `gcs_mock` directory under the current working directory. `bucket_client(bucket_on=False)` also uses this default when `bucket_name` is omitted.
 
 ### 5.1 `fetch_data` — Load the dataset
 
@@ -272,7 +274,7 @@ def fetch_data(pipeline_version):
     logger.info("-----fetch data completed-----")
 ```
 
-**What it does:** Loads the sklearn breast cancer dataset, pickles it locally, and uploads `breast_cancer.pkl` to GCS under `dataset/logistic_regression/`.
+**What it does:** Loads the sklearn breast cancer dataset, pickles it locally, and uploads `breast_cancer.pkl` to GCS under `logistic_regression/dataset/`.
 
 ---
 
@@ -336,7 +338,7 @@ def feature_processing(pipeline_version):
     feature_management.upload(scaler_file_name)
 ```
 
-**What it does:** Downloads `breast_cancer.pkl`, applies an 80/20 stratified split, fits a `StandardScaler`, and uploads `features_data.pkl` and `scaler_model.pkl` to GCS under `feature/logistic_regression/`.
+**What it does:** Downloads `breast_cancer.pkl`, applies an 80/20 stratified split, fits a `StandardScaler`, and uploads `features_data.pkl` and `scaler_model.pkl` to GCS under `logistic_regression/feature/`.
 
 ---
 
@@ -392,7 +394,7 @@ def train_model(pipeline_version):
     training_management.upload(model_name)
 ```
 
-**What it does:** Downloads `features_data.pkl`, fits a `LogisticRegression`, prints accuracy and classification report, and uploads `logistic_regression.pkl` to GCS under `training/logistic_regression/`.
+**What it does:** Downloads `features_data.pkl`, fits a `LogisticRegression`, prints accuracy and classification report, and uploads `logistic_regression.pkl` to GCS under `logistic_regression/training/`.
 
 ---
 
@@ -518,10 +520,10 @@ services:
     # build:
     #   context: .
     #   dockerfile: Dockerfile.pl
-    image: pl_test:latest   # reuse the image built in Step 6
+    image: asia-northeast1-docker.pkg.dev/YOUR_GCP_PROJECT_ID/test-sklearn-pipeline-images/test-sklearn:latest
 ```
 
-This skips the rebuild and speeds up the startup. Either approach works.
+Use the exact pipeline image path printed by Step 6, derived from `env.json` (`gcp_project_id`, `repository_name`, `pl_image_name`, and `image_tag`). Aigear does not add a `pl_test:latest` alias. This skips the rebuild and speeds up startup.
 
 ```bash
 # Run the training pipeline (fetch_data → preprocessing → training)
@@ -572,16 +574,16 @@ print("Model prediction results:", response)
 ### Local Kubernetes (Docker Desktop)
 Before deploying to GKE, validate the Kubernetes deployment locally using **Docker Desktop's built-in Kubernetes**. Enable it via **Settings → Kubernetes → Enable Kubernetes**.
 
-> **Tip:** Docker Desktop uses **kubeadm** to provision its local cluster and shares the same Docker daemon as the host. This means any image built with `docker build` (or `aigear-image --create`) is immediately available to the cluster — no registry push required. `imagePullPolicy: Never` is set automatically for local deployments to enforce this behaviour.
+> **Tip:** Docker Desktop uses **kubeadm** to provision its local cluster and shares the same Docker daemon as the host. This means any image built with `docker build` (or `aigear-image --create --all`) is immediately available to the cluster — no registry push required. `imagePullPolicy: Never` is set automatically for local deployments to enforce this behaviour.
 
 **Prerequisites**
 
-- Build the local Docker image (Step 6): `aigear-image --create`
+- Build the local model service Docker image: `aigear-image --create --dockerfile_path Dockerfile.ms` (or build both with `--create --all` as in Step 6)
 - Run the training pipeline with `gcs_switch = False` (Step 7) so model files are written to `asset/`
 - Verify the `image:` field in `grpc_deployment_local.yaml` matches the image name built in Step 6. Since `imagePullPolicy: Never`, Kubernetes will only look for the image locally — the name must match exactly:
 
   ```yaml
-  image: asia-northeast1-docker.pkg.dev/<your-project>/test-sklearn-pipeline-images/aigear-sklearn-pipeline-service:latest
+  image: asia-northeast1-docker.pkg.dev/<your-project>/test-sklearn-pipeline-images/test-sklearn-model-service:latest
   ```
 
 **Deploy**
@@ -638,7 +640,7 @@ src/pipelines/logistic_regression/model_service/
 
 `--yaml` always overwrites the existing file. To regenerate with different ports or replicas, pass `--service_ports` / `--replicas` / `--port` — these trigger an overwrite automatically.
 
-> **Why bake it into the image?** When the scheduler triggers the model service step on GCP, the VM pulls this image and runs `aigear-task grpc`. The deployment step (`aigear-model`) reads the YAML from within the running container to apply the Kubernetes manifest. If the YAML is absent from the image, the deployment will fail.
+> **Why bake it into the image?** For the scheduled model service step, the VM pulls the service image, uses `docker create` and `docker cp` to extract the YAML, obtains GKE credentials, and runs `kubectl apply` directly on the VM. It does not start the gRPC container there. Kubernetes starts the model container using the manifest's `aigear-task grpc` command. If the YAML is absent from the image, extraction fails and subsequent scheduled steps are cancelled.
 
 ---
 
@@ -663,6 +665,8 @@ aigear-scheduler --create --version logistic_regression --step_names fetch_data,
 ```
 
 After creation, go to [Cloud Scheduler](https://console.cloud.google.com/cloudscheduler) in the GCP Console to manually trigger an immediate run and confirm everything works in production.
+
+The queue runs in the specified order. A failed step stops execution and cancels the remaining steps. Inspect the result with `aigear-logs --version logistic_regression --run-date YYYY-MM-DD`, then `aigear-logs --run-id RUN_ID`. The concise output shows `FAILED` / `CANCELLED` and captured failure details; see the [troubleshooting guide](troubleshooting-logs.md).
 
 ---
 

@@ -33,26 +33,26 @@ class KubernetesCluster:
         run_sh(command, check=True)
 
     def describe(self):
-        is_exist = False
         command = [
             "gcloud",
             "container",
             "clusters",
             "describe",
             self.cluster_name,
-            f"--zone={self.zone}",
+            f"--region={self.zone}",
             f"--project={self.project_id}",
         ]
-        event = run_sh(command)
-        if "ERROR" not in event:
-            is_exist = True
-        elif "Not found" not in event and "NOT_FOUND" not in event:
-            logger.error(
-                f"Unexpected error describing cluster ({self.cluster_name}): {event}"
-            )
-        return is_exist
+        try:
+            event = run_sh(command, check=True)
+        except RuntimeError as exc:
+            if "Not found" in str(exc) or "NOT_FOUND" in str(exc):
+                return False
+            raise
+        if not event.strip():
+            raise RuntimeError("Empty GKE cluster describe output.")
+        return True
 
-    def delete(self):
+    def delete(self, wait: bool = False):
         command = [
             "gcloud",
             "container",
@@ -61,18 +61,13 @@ class KubernetesCluster:
             self.cluster_name,
             f"--location={self.zone}",
             f"--project={self.project_id}",
-            "--async",
             "--quiet",
         ]
-        event = run_sh(command)
-        if "ERROR" in event:
-            logger.error(
-                f"Error occurred while deleting GKE cluster ({self.cluster_name}): {event}"
-            )
-        else:
-            logger.info(
-                f"GKE cluster '{self.cluster_name}' deletion initiated (async)."
-            )
+        if not wait:
+            command.append("--async")
+        run_sh(command, check=True, timeout=1800 if wait else 30)
+        state = "deleted" if wait else "deletion initiated (async)"
+        logger.info(f"GKE cluster '{self.cluster_name}' {state}.")
 
     def update(self):
         command_autoscaling = [

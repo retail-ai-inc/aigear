@@ -1,5 +1,9 @@
 import argparse
+
+from aigear.common.logger import Logging
 from aigear.infrastructure.gcp.infra import Infra
+
+logger = Logging(log_name=__name__).console_logging()
 
 
 def get_argument() -> argparse.Namespace:
@@ -18,7 +22,11 @@ def get_argument() -> argparse.Namespace:
     group.add_argument(
         "--delete",
         action="store_true",
-        help="Delete GCP infrastructure resources. Note: Artifact Registry, Cloud KMS, and Pre-VM Images require manual deletion.",
+        help=(
+            "Delete enabled GCP resources, waiting for Cloud Function and GKE deletion. "
+            "KMS key versions are scheduled for destruction; keyrings persist. "
+            "The service account is retained if cleanup fails."
+        ),
     )
     group.add_argument(
         "--status",
@@ -30,11 +38,19 @@ def get_argument() -> argparse.Namespace:
 
 def gcp_infra() -> None:
     args = get_argument()
-    if args.create:
-        Infra().create()
-    elif args.update:
-        Infra().update()
-    elif args.delete:
-        Infra().delete()
-    elif args.status:
-        Infra().status()
+    try:
+        infra = Infra()
+        if args.create:
+            success = infra.create()
+        elif args.update:
+            success = infra.update()
+        elif args.delete:
+            success = infra.delete()
+        else:
+            infra.status()
+            return
+    except RuntimeError as exc:
+        logger.error(str(exc))
+        raise SystemExit(1) from exc
+    if success is False:
+        raise SystemExit(1)

@@ -39,7 +39,6 @@ class CloudKMS:
         run_sh(command, check=True)
 
     def describe_keyring(self) -> bool:
-        is_exist = False
         command = [
             "gcloud",
             "kms",
@@ -49,14 +48,15 @@ class CloudKMS:
             f"--location={self.location}",
             f"--project={self.project_id}",
         ]
-        event = run_sh(command)
-        if self.keyring_name in event and "ERROR" not in event:
-            is_exist = True
-        elif "ERROR" in event and "NOT_FOUND" not in event:
-            logger.error(
-                f"Unexpected error describing keyring ({self.keyring_name}): {event}"
-            )
-        return is_exist
+        try:
+            event = run_sh(command, check=True)
+        except RuntimeError as exc:
+            if "NOT_FOUND" in str(exc):
+                return False
+            raise
+        if self.keyring_name not in event:
+            raise RuntimeError(f"Unexpected KMS keyring describe output: {event}")
+        return True
 
     # ------------------------------------------------------------------ #
     #  Encryption key                                                      #
@@ -77,7 +77,6 @@ class CloudKMS:
         run_sh(command, check=True)
 
     def describe_key(self) -> bool:
-        is_exist = False
         command = [
             "gcloud",
             "kms",
@@ -88,12 +87,15 @@ class CloudKMS:
             f"--location={self.location}",
             f"--project={self.project_id}",
         ]
-        event = run_sh(command)
-        if self.key_name in event and "ERROR" not in event:
-            is_exist = True
-        elif "ERROR" in event and "NOT_FOUND" not in event:
-            logger.error(f"Unexpected error describing key ({self.key_name}): {event}")
-        return is_exist
+        try:
+            event = run_sh(command, check=True)
+        except RuntimeError as exc:
+            if "NOT_FOUND" in str(exc):
+                return False
+            raise
+        if self.key_name not in event:
+            raise RuntimeError(f"Unexpected KMS key describe output: {event}")
+        return True
 
     def describe_enabled_key_version(self) -> bool:
         command = [
@@ -109,12 +111,16 @@ class CloudKMS:
             "--filter=state=ENABLED",
             "--format=json",
         ]
-        output = run_sh(command)
+        output = run_sh(command, check=True)
         try:
             versions = json.loads(output)
-            return len(versions) > 0
-        except Exception:
-            return False
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                f"Failed to parse KMS key versions ({self.key_name})."
+            ) from exc
+        if not isinstance(versions, list):
+            raise RuntimeError(f"Invalid KMS key versions ({self.key_name}).")
+        return len(versions) > 0
 
     def enable_primary_key_version(self):
         """Restore and enable the primary key version."""
@@ -129,7 +135,7 @@ class CloudKMS:
             f"--project={self.project_id}",
             "--format=json",
         ]
-        output = run_sh(describe_cmd)
+        output = run_sh(describe_cmd, check=True)
         try:
             key_info = json.loads(output)
         except Exception:
@@ -206,11 +212,20 @@ class CloudKMS:
             f"--project={self.project_id}",
             "--format=json",
         ]
-        output = run_sh(list_cmd)
+        output = run_sh(list_cmd, check=True)
         try:
             versions = json.loads(output)
-        except Exception:
-            versions = []
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                f"Failed to parse KMS key versions ({self.key_name})."
+            ) from exc
+        if not isinstance(versions, list) or any(
+            not isinstance(version, dict)
+            or not version.get("name")
+            or not version.get("state")
+            for version in versions
+        ):
+            raise RuntimeError(f"Invalid KMS key versions ({self.key_name}).")
 
         destroyed = 0
         for v in versions:
@@ -229,13 +244,8 @@ class CloudKMS:
                     f"--location={self.location}",
                     f"--project={self.project_id}",
                 ]
-                event = run_sh(destroy_cmd)
-                if "ERROR" in event:
-                    logger.error(
-                        f"Failed to destroy key version {version_num}: {event}"
-                    )
-                else:
-                    destroyed += 1
+                run_sh(destroy_cmd, check=True)
+                destroyed += 1
 
         logger.warning(
             f"KMS keyring ({self.keyring_name}) cannot be deleted — GCP does not support keyring deletion. "
