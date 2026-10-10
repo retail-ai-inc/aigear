@@ -1,3 +1,4 @@
+import json
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -120,7 +121,18 @@ class ServiceAccounts:
         except RuntimeError as exc:
             if "NOT_FOUND" in str(exc):
                 return False
-            raise
+            if "PERMISSION_DENIED" not in str(exc):
+                raise
+            # gcloud describe uses projects/- and can return PERMISSION_DENIED
+            # for a missing account. A project-scoped list disambiguates this;
+            # real list permission failures still propagate.
+            accounts = json.loads(run_sh([
+                "gcloud", "iam", "service-accounts", "list",
+                f"--project={self.project_id}",
+                f"--filter=email={self.sa_email}",
+                "--format=json",
+            ], check=True))
+            return any(account.get("email") == self.sa_email for account in accounts)
         if "name: projects" not in event:
             raise RuntimeError(f"Unexpected service account describe output: {event}")
         return True

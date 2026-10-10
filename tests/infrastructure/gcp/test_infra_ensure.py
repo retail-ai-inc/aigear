@@ -441,11 +441,13 @@ def test_create_returns_false_when_service_account_missing():
     infra.cloud_function.ensure.assert_not_called()
 
 
-def test_create_returns_false_when_service_account_verification_fails():
+def test_create_returns_false_when_service_account_verification_fails(caplog):
     infra = _make_operation_infra("cloud_function")
     infra.service_accounts.describe.side_effect = RuntimeError("PERMISSION_DENIED")
     assert infra.create() is False
     infra.cloud_function.ensure.assert_not_called()
+    assert "setup or verification failed" in caplog.text
+    assert "not found" not in caplog.text
 
 
 def test_create_blocks_eventarc_when_function_deploy_fails():

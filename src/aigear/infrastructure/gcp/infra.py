@@ -353,10 +353,10 @@ class Infra:
         if not sa_exists:
             self._step_fail(
                 f"Gate 1→2: Service Account ({cfg.iam.account_name})",
-                "not found — Phase 2 and Phase 3 skipped",
+                "setup or verification failed — Phase 2 and Phase 3 skipped",
             )
             failed_steps.append(
-                f"Gate 1→2: Service Account ({cfg.iam.account_name}) not found"
+                f"Gate 1→2: Service Account ({cfg.iam.account_name}) setup or verification failed"
             )
             self._log_summary(failed_steps, "Init")
             return False
