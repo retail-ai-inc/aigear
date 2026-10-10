@@ -88,3 +88,58 @@ def test_all_images_report_each_result_and_fail_if_any_operation_failed(monkeypa
     output = capsys.readouterr().out
     assert output.count("operation completed") == sum(results)
     assert output.count("operation failed") == len(results) - sum(results)
+
+
+@pytest.mark.parametrize("codes,expected,counts", [
+    ([0, 0, 0, 0], [("SUCCESS", "SUCCESS"), ("SUCCESS", "SUCCESS")], (2, 2)),
+    ([1, 0, 0], [("FAILED", "SKIPPED"), ("SUCCESS", "SUCCESS")], (1, 1)),
+    ([0, 1, 0, 0], [("SUCCESS", "FAILED"), ("SUCCESS", "SUCCESS")], (2, 1)),
+    ([0, 0, 1], [("SUCCESS", "SUCCESS"), ("FAILED", "SKIPPED")], (1, 1)),
+    ([0, 0, 0, 1], [("SUCCESS", "SUCCESS"), ("SUCCESS", "FAILED")], (2, 1)),
+])
+def test_create_push_summary_reports_each_stage(docker, monkeypatch, capsys, codes, expected, counts):
+    monkeypatch.setattr(images, "run_sh", Mock(return_value=""))
+    docker.side_effect = codes
+    monkeypatch.setattr("sys.argv", ["aigear-image", "--create", "--push", "--all"])
+    if counts == (2, 2):
+        cli.docker_image()
+    else:
+        with pytest.raises(SystemExit) as exc:
+            cli.docker_image()
+        assert exc.value.code == 1
+
+    summary = capsys.readouterr().out.split("Image creation summary:\n")[1]
+    for image_type, filename, tag, (created, pushed) in zip(
+        ("pipeline", "service"), ("Dockerfile.pl", "Dockerfile.ms"),
+        ("pl", "ms"), expected,
+    ):
+        assert (
+            f"{image_type} ({filename}) [registry/{tag}:v1]"
+            f" | Create: {created} | Push: {pushed}"
+        ) in summary
+    assert summary.endswith(f"Create: {counts[0]}/2 succeeded.\nPush: {counts[1]}/2 succeeded.\n")
+    assert docker.call_count == len(codes)
+
+
+def test_create_summary_without_push(docker, monkeypatch, capsys):
+    monkeypatch.setattr("sys.argv", ["aigear-image", "--create", "--dockerfile_path", "Dockerfile.pl"])
+    cli.docker_image()
+    summary = capsys.readouterr().out.split("Image creation summary:\n")[1]
+    assert "Create: SUCCESS | Push: NOT REQUESTED" in summary
+    assert summary.endswith("Create: 1/1 succeeded.\n")
+    assert docker.call_count == 1
+
+
+def test_summary_keeps_first_image_result_when_second_validation_fails(docker, monkeypatch, capsys, tmp_path):
+    monkeypatch.setattr(images, "run_sh", Mock(return_value=""))
+    (tmp_path / "Dockerfile.ms").write_text("ENV VENV_BASE=/wrong/path\n", encoding="utf-8")
+    monkeypatch.setattr("sys.argv", ["aigear-image", "--create", "--push", "--all"])
+    with pytest.raises(SystemExit) as exc:
+        cli.docker_image()
+    assert exc.value.code == 1
+    output = capsys.readouterr().out
+    assert "VENV_BASE mismatch" in output
+    summary = output.split("Image creation summary:\n")[1]
+    assert "pipeline (Dockerfile.pl) [registry/pl:v1] | Create: SUCCESS | Push: SUCCESS" in summary
+    assert "service (Dockerfile.ms) [registry/ms:v1] | Create: FAILED | Push: SKIPPED" in summary
+    assert docker.call_count == 2

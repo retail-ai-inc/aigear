@@ -1,5 +1,5 @@
 import importlib
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 import pytest
 
@@ -21,6 +21,7 @@ def test_create_dispatches_to_create_artifacts_image():
         is_service=False,
         is_build=True,
         is_push=False,
+        result=ANY,
     )
 
 
@@ -69,6 +70,7 @@ def test_create_dockerfile_ms_infers_is_service():
         is_service=True,
         is_build=True,
         is_push=False,
+        result=ANY,
     )
 
 
@@ -169,6 +171,7 @@ def test_all_create_dispatches_both_images(extra):
         is_service=False,
         is_build=True,
         is_push=False,
+        result=ANY,
     )
     mock_fn.assert_any_call(
         dockerfile_path=DOCKERFILE_SERVICE,
@@ -176,6 +179,7 @@ def test_all_create_dispatches_both_images(extra):
         is_service=True,
         is_build=True,
         is_push=False,
+        result=ANY,
     )
 
 

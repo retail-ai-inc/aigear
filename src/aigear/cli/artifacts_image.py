@@ -2,6 +2,7 @@ import argparse
 
 from aigear.common.constant import DOCKERFILE_PIPELINE, DOCKERFILE_SERVICE
 from aigear.deploy.gcp.artifacts_image import (
+    ImageCreationResult,
     clear_artifacts_image,
     create_artifacts_image,
     delete_artifacts_image,
@@ -63,7 +64,7 @@ def get_argument() -> argparse.Namespace:
 
 
 def _run_operation(
-    args: argparse.Namespace, dockerfile_path=None, is_service=False
+    args: argparse.Namespace, dockerfile_path=None, is_service=False, result=None
 ) -> bool:
     if args.create:
         return create_artifacts_image(
@@ -72,6 +73,7 @@ def _run_operation(
             is_service=is_service,
             is_build=True,
             is_push=args.push,
+            result=result,
         )
     if args.delete:
         return delete_artifacts_image(is_service=is_service, is_push=args.push)
@@ -104,12 +106,27 @@ def docker_image():
         targets = [(None, args.is_service)]
 
     all_succeeded = True
+    creation_results = []
     for dockerfile_path, is_service in targets:
         label = dockerfile_path or ("service" if is_service else "pipeline")
         print(f"Processing image: '{label}'...")
-        success = _run_operation(
-            args, dockerfile_path=dockerfile_path, is_service=is_service
-        )
+        if args.create:
+            result = ImageCreationResult()
+            creation_results.append((label, is_service, result))
+            try:
+                success = _run_operation(
+                    args,
+                    dockerfile_path=dockerfile_path,
+                    is_service=is_service,
+                    result=result,
+                )
+            except Exception as exc:
+                print(f"The image({label}) error: {exc}")
+                success = False
+        else:
+            success = _run_operation(
+                args, dockerfile_path=dockerfile_path, is_service=is_service
+            )
         if success:
             print(f"The image({label}) operation completed.")
         else:
@@ -118,6 +135,29 @@ def docker_image():
                 f"The image({label}) operation failed, please check the errors above."
             )
         print("-----------------------------------")
+
+    if args.create:
+        print("\nImage creation summary:")
+        for label, is_service, result in creation_results:
+            image_type = "service" if is_service else "pipeline"
+            created = "SUCCESS" if result.created else "FAILED"
+            if not args.push:
+                pushed = "NOT REQUESTED"
+            elif result.pushed is None:
+                pushed = "SKIPPED"
+            else:
+                pushed = "SUCCESS" if result.pushed else "FAILED"
+            image_path = f" [{result.image_path}]" if result.image_path else ""
+            print(
+                f"  {image_type} ({label}){image_path}"
+                f" | Create: {created} | Push: {pushed}"
+            )
+        total = len(creation_results)
+        created_count = sum(result.created for _, _, result in creation_results)
+        print(f"Create: {created_count}/{total} succeeded.")
+        if args.push:
+            pushed_count = sum(result.pushed is True for _, _, result in creation_results)
+            print(f"Push: {pushed_count}/{total} succeeded.")
 
     if not all_succeeded:
         raise SystemExit(1)
