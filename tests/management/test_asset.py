@@ -38,13 +38,19 @@ def test_local_missing_source_raises(tmp_path):
         client.download("missing.bin", tmp_path / "output.bin")
 
 
-@pytest.mark.parametrize("name", ["bucket", None])
-@pytest.mark.xfail(strict=True, reason="Known defect: LocalGCSMock calls mkdir on string/default bucket names")
+@pytest.mark.parametrize("name", ["nested/bucket", Path("nested/bucket"), None, ""])
 def test_local_bucket_accepts_string_and_default_name(tmp_path, monkeypatch, name):
     monkeypatch.chdir(tmp_path)
     client = bucket.bucket_client(bucket_name=name, bucket_on=False)
     assert isinstance(client.bucket_path, Path)
+    assert client.bucket_path == Path(name or "gcs_mock")
     assert client.bucket_path.is_dir()
+    source = tmp_path / "source.bin"
+    source.write_bytes(b"data")
+    client.upload(source, "models/model.bin")
+    target = tmp_path / "downloads/model.bin"
+    client.download("models/model.bin", str(target))
+    assert target.read_bytes() == b"data"
 
 
 @pytest.mark.xfail(strict=True, reason="Known defect: local AssetManagement cannot combine its default bucket_name=None with Path")

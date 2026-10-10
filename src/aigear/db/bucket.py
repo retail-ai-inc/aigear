@@ -51,7 +51,7 @@ class LocalGCSMock(BucketABC):
         if not bucket_name:
             bucket_name = "gcs_mock"
             print("'bucket_name' is not set in env.json, default 'gcs_mock'.")
-        self.bucket_path = bucket_name
+        self.bucket_path = Path(bucket_name)
         self.bucket_path.mkdir(parents=True, exist_ok=True)
 
     def close(self):

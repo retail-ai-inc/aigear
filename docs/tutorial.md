@@ -233,6 +233,8 @@ Each step is idempotent — re-running the command safely skips already-existing
 
 Each step is a plain Python function that accepts `pipeline_version` as its only argument. `AssetManagement` handles local ↔ GCS file I/O transparently based on the `bucket_on` flag.
 
+When using `LocalGCSMock` directly, the bucket path accepts a string or `Path`; passing `None` or an empty name uses the `gcs_mock` directory under the current working directory. `bucket_client(bucket_on=False)` also uses this default when `bucket_name` is omitted.
+
 ### 5.1 `fetch_data` — Load the dataset
 
 `src/pipelines/logistic_regression/fetch_data/data_from_sklearn.py`
