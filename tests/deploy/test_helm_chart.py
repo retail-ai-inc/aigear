@@ -65,8 +65,18 @@ def test_unix_host_path_is_preserved(monkeypatch):
     assert helm_chart._to_hostpath(Path("/ml/asset")) == "/ml/asset"
 
 
-@pytest.mark.xfail(strict=True, reason="Known defect: missing model_class_path generates a manifest without a service command")
-def test_missing_model_class_is_rejected_before_writing_manifest(model_config):
-    model_config["model_service"].pop("model_class_path")
-    with pytest.raises(ValueError, match="model_class_path"):
-        helm_chart.create_helm_file("v1")
+@pytest.mark.parametrize("environment", ["local", "staging", "production"])
+@pytest.mark.parametrize("missing_service", [False, True])
+def test_missing_model_class_uses_image_startup_at_project_root(model_config, environment, missing_service):
+    if missing_service:
+        model_config.pop("model_service")
+    else:
+        model_config["model_service"].pop("model_class_path")
+    path = helm_chart.create_helm_file("v1", env=environment)
+    assert path == Path.cwd() / f"grpc_deployment_{environment}.yaml"
+    documents = list(yaml.safe_load_all(path.read_text(encoding="utf-8")))
+    deployment = next(document for document in documents if document["kind"] == "Deployment")
+    container = deployment["spec"]["template"]["spec"]["containers"][0]
+    assert container["image"] == "registry/model:v1"
+    assert "command" not in container
+    assert "args" not in container

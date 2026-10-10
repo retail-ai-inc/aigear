@@ -265,6 +265,8 @@ aigear-model --version VERSION {--local | --staging | --production}
 
 `--version` is required for every operation. Omitting it exits with code **2** before YAML generation or Kubernetes operations. Deployment, update, deletion, and status operations proceed only after the local or GCP context-switch command succeeds; a nonzero exit or timeout aborts the operation. Failures from the subsequent kubectl operation are not consistently propagated as nonzero exits; inspect command output afterward.
 
+When `model_service.model_class_path` is configured, YAML is generated in the model module directory and includes `aigear-task grpc --version VERSION` as the container command (using `venv_ms` when configured). If the class path or the entire `model_service` section is omitted, YAML is generated at the project root as `grpc_deployment_<environment>.yaml`, without container `command` or `args`. In that case, the image must provide its own working startup configuration (`ENTRYPOINT`/`CMD`); YAML generation alone does not ensure a gRPC service will start.
+
 **Examples**
 
 ```bash

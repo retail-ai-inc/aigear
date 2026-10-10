@@ -165,6 +165,8 @@ Each pipeline step (e.g., `fetch_data`, `preprocessing`, `training`) shares the 
 | `resources.spec` | `string` | Machine type — [reference](https://docs.cloud.google.com/compute/docs/general-purpose-machines#e2-shared-core) | `e2-medium` |
 | `resources.gpu` | `boolean` | Whether to attach a GPU | `false` |
 
+For Kubernetes YAML generation, `model_class_path` is optional when the image supplies its own startup configuration. If it is omitted (or `model_service` is absent), `aigear-model` writes `grpc_deployment_<environment>.yaml` at the project root and leaves container `command` and `args` unset, using the image's `ENTRYPOINT`/`CMD`. Configure a valid class path to generate the `aigear-task grpc --version VERSION` command automatically.
+
 #### 3.3.1 gRPC Configuration (`model_service.grpc`)
 
 | Parameter | Type | Description | Example |
