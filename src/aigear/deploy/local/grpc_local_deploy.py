@@ -13,7 +13,7 @@ logger = Logging(log_name=__name__).console_logging()
 
 def switch_local_context() -> None:
     command = ["kubectl", "config", "use-context", "docker-desktop"]
-    event = run_sh(command)
+    event = run_sh(command, check=True)
     logger.info(event)
 
 

@@ -22,7 +22,7 @@ def switch_gcp_context(cluster_name: str, project_id: str, region: str) -> None:
         f"--region={region}",
         f"--project={project_id}",
     ]
-    event = run_sh(command)
+    event = run_sh(command, check=True)
     logger.info(event)
 
 
