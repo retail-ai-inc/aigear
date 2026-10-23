@@ -25,8 +25,30 @@ Configuration is loaded once per process. Set `AIGEAR_ENV_PATH` before starting 
 | Parameter | Type | Description | Example |
 | :--- | :--- | :--- | :--- |
 | `on` | `boolean` | Enable GCS bucket creation | `true` |
-| `bucket_name` | `string` | Bucket used by pipeline jobs | `test-sklearn-pipeline` |
-| `bucket_name_for_release` | `string` | Bucket used by model serving | `test-sklearn-pipeline-service` |
+| `train_bucket.bucket_name` | `string` | Bucket used by pipeline jobs | `test-sklearn-pipeline` |
+| `train_bucket.trash_retention_days` | `integer` | Training trash retention period; defaults to 30 | `30` |
+| `release_bucket.bucket_name` | `string` | Bucket used for model releases | `test-sklearn-pipeline-service` |
+
+`trash_retention_days` must be a positive integer. Booleans, strings, floating-point numbers, explicit `null`, zero, and negative values raise a Pydantic `ValidationError`. The `bucket`, `train_bucket`, and `release_bucket` nodes reject unknown fields; `release_bucket` accepts only `bucket_name`. Configuration is still validated when `on` is `false`.
+
+Infrastructure creation, updates, deletion, and status queries read the nested bucket names. The retention setting is currently validated only; infrastructure commands do not yet synchronize GCS trash lifecycle rules.
+
+**Existing configurations:** When both direct `bucket.bucket_name` and `bucket.bucket_name_for_release` fields exist, the loader assigns them to `train_bucket.bucket_name` and `release_bucket.bucket_name`. These old names take precedence over any nested bucket settings. An incomplete pair is rejected. To migrate, remove both direct names and use the nested structure shown in the [complete example](#4-complete-envjson-example).
+
+The runtime model exposes nested bucket names in both modes. Legacy mode sets `train_bucket.trash_retention_days` to `None` internally and retains existing bucket behavior without enabling trash-directory or lifecycle management. New JSON configuration cannot use `null` for this field. Loading preserves the original JSON and raw configuration cache, so existing project schemas continue to receive their old fields.
+
+Read the runtime configuration through the shared entry point:
+
+```python
+from aigear.common.config import AppConfig
+
+bucket = AppConfig.aigear().gcp.bucket
+training_name = bucket.train_bucket.bucket_name
+release_name = bucket.release_bucket.bucket_name
+retention_days = bucket.train_bucket.trash_retention_days
+```
+
+`AigearConfig.get_config()` shares this runtime cache. `AppConfig.raw()` and `EnvConfig.get_config_with_json()` expose the original configuration. For project-specific generated models, use `AppConfig.raw_as(EnvSchema)` or `EnvConfig.get_config_with_schema(EnvSchema)` to retain bucket validation and defaults; see [`aigear-env-schema`](cli-reference.md#aigear-env-schema).
 
 #### 2.1.2 Cloud Build (`cloud_build`)
 
@@ -201,8 +223,13 @@ The values above are examples. If omitted, runtime defaults are `process_count=2
             "location": "asia-northeast1",
             "bucket": {
                 "on": true,
-                "bucket_name": "test-sklearn-pipeline",
-                "bucket_name_for_release": "test-sklearn-pipeline-service"
+                "train_bucket": {
+                    "bucket_name": "test-sklearn-pipeline",
+                    "trash_retention_days": 30
+                },
+                "release_bucket": {
+                    "bucket_name": "test-sklearn-pipeline-service"
+                }
             },
             "cloud_build": {
                 "on": false,
