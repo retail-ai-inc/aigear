@@ -9,13 +9,28 @@ from pydantic import BaseModel
 
 from aigear.common.dynamic_type import DataModelType, InputFileType, generate_schema
 from aigear.common.logger import Logging
-from aigear.common.schema.config_schema import Config
+from aigear.common.schema.config_schema import Bucket, Config
 
 T = TypeVar("T", bound=BaseModel)
 logger = Logging(log_name=__name__).console_logging()
 
 _env_override = os.environ.get("AIGEAR_ENV_PATH")
 ENV_PATH = Path(_env_override) if _env_override else Path.cwd() / "env.json"
+
+
+def _load_bucket(value) -> Bucket:
+    legacy = isinstance(value, dict) and {
+        "bucket_name", "bucket_name_for_release"
+    }.issubset(value)
+    if legacy:
+        value = dict(value)
+        value["train_bucket"] = {"bucket_name": value.pop("bucket_name")}
+        value["release_bucket"] = {"bucket_name": value.pop("bucket_name_for_release")}
+    bucket = Bucket.model_validate(value)
+    if legacy:
+        # Old projects keep their bucket behavior and skip trash management.
+        bucket.train_bucket.trash_retention_days = None
+    return bucket
 
 
 # ─── Raw config loader ───────────────────────────────────────────────────────
@@ -78,7 +93,12 @@ class AppConfig:
     def aigear(cls) -> Config:
         """Return the validated aigear config as a typed Pydantic model."""
         if cls._aigear is None:
-            cls._aigear = Config.model_validate(cls._ensure_loaded().get("aigear", {}))
+            value = cls._ensure_loaded().get("aigear", {})
+            gcp = value.get("gcp") if isinstance(value, dict) else None
+            if isinstance(gcp, dict) and "bucket" in gcp:
+                gcp = {**gcp, "bucket": _load_bucket(gcp["bucket"])}
+                value = {**value, "gcp": gcp}
+            cls._aigear = Config.model_validate(value)
         return cls._aigear
 
     # ── pipelines section ────────────────────────────────────────────────────
@@ -112,8 +132,18 @@ class AppConfig:
 
     @classmethod
     def raw_as(cls, model: Type[T]) -> T:
-        """Validate and return the entire env.json as a Pydantic model."""
-        return model.model_validate(cls._ensure_loaded())
+        """Validate bucket policy before loading a project-specific schema."""
+        raw = cls._ensure_loaded()
+        aigear = raw.get("aigear")
+        gcp = aigear.get("gcp") if isinstance(aigear, dict) else None
+        if isinstance(gcp, dict) and "bucket" in gcp:
+            bucket = _load_bucket(gcp["bucket"])
+            if bucket.train_bucket.trash_retention_days is not None:
+                # Supply defaults to generated project schemas without changing
+                # the raw cache. Old project schemas still see their old fields.
+                gcp = {**gcp, "bucket": bucket.model_dump()}
+                raw = {**raw, "aigear": {**aigear, "gcp": gcp}}
+        return model.model_validate(raw)
 
     # ── Schema generation ────────────────────────────────────────────────────
 

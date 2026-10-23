@@ -303,6 +303,12 @@ aigear-env-schema {--generate | --delete | --show} [--force]
 | `--show` | Print the current schema file content |
 | `--force` | Force regenerate even if the schema already exists (used with `--generate`) |
 
+Generation infers fields from the original project JSON; it preserves legacy bucket fields and does not migrate the configuration. The Python equivalent is `AppConfig.generate_env_schema(forced_generate=True)` for a forced update.
+
+Load a generated model through `AppConfig.raw_as(EnvSchema)` or `EnvConfig.get_config_with_schema(EnvSchema)`. These entry points validate bucket settings before passing data to the project model, supply the default retention period for nested configurations, and preserve old fields for legacy schemas. Directly instantiating a generated class provides only its inferred structural validation. See the [bucket configuration guide](route-guide.md#211-storage-bucket-bucket) for defaults and compatibility rules.
+
+Framework maintainers regenerate `common/schema/config_schema.py` from the repository root with `python src/aigear/common/dynamic_type.py`, or call `generate_aigear_config_schema()` from `aigear.common.dynamic_type`. This function generates the structure from `template/env.sample.json`, corrects defaults, optional fields, and bucket constraints, then validates the corrected model against the sample. Optional `env_sample` and `output_path` arguments accept custom paths. The `__main__` block calls this function; the existing `auto_aigear_schema()` generates only the inferred structure and does not apply these corrections. Framework models can be imported directly without runtime subclasses.
+
 ---
 
 ### `aigear-kms-env`

@@ -1,9 +1,11 @@
 from unittest.mock import MagicMock, patch
+from pathlib import Path
 import pytest
 import json
 
 from aigear.infrastructure.gcp.infra import Infra
 from aigear.infrastructure.gcp import infra as infra_module
+from aigear.common.config import AppConfig
 
 
 def _make_infra():
@@ -11,8 +13,8 @@ def _make_infra():
     infra = Infra.__new__(Infra)
     cfg = MagicMock()
     cfg.gcp.iam.account_name = "my-sa"
-    cfg.gcp.bucket.bucket_name = "my-bucket"
-    cfg.gcp.bucket.bucket_name_for_release = "my-release-bucket"
+    cfg.gcp.bucket.train_bucket.bucket_name = "my-bucket"
+    cfg.gcp.bucket.release_bucket.bucket_name = "my-release-bucket"
     cfg.gcp.artifacts.repository_name = "my-repo"
     cfg.gcp.artifacts.image_tag = "latest"
     cfg.gcp.pub_sub.topic_name = "my-topic"
@@ -39,6 +41,69 @@ def _make_infra():
     infra.eventarc_trigger.trigger_name = "my-function-pubsub"
     infra.kubernetes_cluster = MagicMock()
     return infra
+
+
+@pytest.fixture(params=["nested", "legacy", "mixed"])
+def bucket_config(request, monkeypatch):
+    sample = Path(__file__).resolve().parents[3] / "src/aigear/template/env.sample.json"
+    raw = json.loads(sample.read_text(encoding="utf-8"))
+    gcp = raw["aigear"]["gcp"]
+    for value in gcp.values():
+        if isinstance(value, dict) and "on" in value:
+            value["on"] = False
+    bucket = gcp["bucket"]
+    bucket["on"] = True
+    if request.param != "nested":
+        bucket["bucket_name"] = bucket["train_bucket"]["bucket_name"]
+        bucket["bucket_name_for_release"] = bucket["release_bucket"]["bucket_name"]
+        if request.param == "legacy":
+            bucket.pop("train_bucket")
+            bucket.pop("release_bucket")
+        else:
+            bucket["train_bucket"] = {"bucket_name": "ignored-training"}
+            bucket["release_bucket"] = {"bucket_name": "ignored-release"}
+    monkeypatch.setattr(AppConfig, "_raw", raw)
+    monkeypatch.setattr(AppConfig, "_aigear", None)
+    return AppConfig.aigear()
+
+
+def test_constructor_uses_equivalent_bucket_names(bucket_config, monkeypatch):
+    constructors = {}
+    for name in (
+        "Bucket", "CloudBuild", "CloudFunction", "ServiceAccounts", "PubSub",
+        "Artifacts", "KubernetesCluster", "CloudKMS", "EventarcPubSubTrigger",
+    ):
+        constructors[name] = MagicMock()
+        monkeypatch.setattr(infra_module, name, constructors[name])
+    infra = Infra()
+    calls = constructors["Bucket"].call_args_list
+    assert [call.kwargs for call in calls] == [
+        {"bucket_name": "test-sklearn-pipeline", "location": infra.location, "project_id": infra.project_id},
+        {"bucket_name": "test-sklearn-pipeline-service", "location": infra.location, "project_id": infra.project_id},
+    ]
+    assert infra.aigear_config is bucket_config
+
+
+@pytest.mark.parametrize("method", ["create", "update", "delete", "status"])
+@pytest.mark.parametrize("enabled", [True, False])
+def test_bucket_operations_with_real_config(bucket_config, method, enabled, capsys, caplog):
+    infra = _make_operation_infra()
+    infra.aigear_config = bucket_config
+    bucket_config.gcp.bucket.on = enabled
+    for resource in (infra.model_bucket, infra.release_model_bucket):
+        resource.describe.return_value = method != "create"
+    caplog.set_level("INFO")
+    result = getattr(infra, method)()
+    if method != "status":
+        assert result is True
+    output = capsys.readouterr().out + caplog.text
+    assert "test-sklearn-pipeline)" in output
+    assert "test-sklearn-pipeline-service)" in output
+    for resource in (infra.model_bucket, infra.release_model_bucket):
+        assert resource.create.call_count == int(enabled and method == "create")
+        assert resource.delete.call_count == int(enabled and method == "delete")
+        if method == "update" or not enabled:
+            assert resource.mock_calls == []
 
 
 # ── _ensure_service_account ───────────────────────────────────────────────────

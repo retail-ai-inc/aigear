@@ -87,11 +87,23 @@ def auto_aigear_schema():
     )
 
 
-if __name__ == "__main__":
-    with open("../template/env.sample.json", "r", encoding="utf-8") as f:
+def generate_aigear_config_schema(
+    env_sample: str | Path = None,
+    output_path: str | Path = None,
+) -> None:
+    """Generate, correct, and validate the framework configuration schema."""
+    import runpy
+
+    common_path = Path(__file__).resolve().parent
+    env_sample = (
+        Path(env_sample) if env_sample is not None else common_path.parent / "template/env.sample.json"
+    )
+    output_path = (
+        Path(output_path) if output_path is not None else common_path / "schema/config_schema.py"
+    )
+    with open(env_sample, "r", encoding="utf-8") as f:
         all_cfg = json.load(f)
 
-    output_path = Path.cwd() / "./schema/config_schema.py"
     generate_schema_for_json(
         json_data=all_cfg["aigear"],
         input_file_type=InputFileType.Json,
@@ -101,6 +113,40 @@ if __name__ == "__main__":
         forced_generate=True,
     )
 
-    from aigear.common.schema.config_schema import Config
+    corrections = {
+        "from pydantic import BaseModel": (
+            "from pydantic import BaseModel, ConfigDict, Field\nfrom typing import Optional"
+        ),
+        **{
+            f"class {name}(BaseModel):": (
+                f"class {name}(BaseModel):\n    model_config = ConfigDict(extra=\"forbid\")"
+            )
+            for name in ("Bucket", "TrainBucket", "ReleaseBucket")
+        },
+        "    trash_retention_days: int": (
+            "    trash_retention_days: int = Field(default=30, strict=True, gt=0)"
+        ),
+        "    event: str": "    event: str = \"push\"",
+        "    branch_pattern: str": "    branch_pattern: Optional[str] = None",
+        "    tag_pattern: str": "    tag_pattern: Optional[str] = None",
+        "    ms_image_name: str": "    ms_image_name: Optional[str] = None",
+        "    pl_image_name: str": "    pl_image_name: Optional[str] = None",
+        "    image_tag: str": "    image_tag: Optional[str] = \"latest\"",
+        "    slack: Slack": "    slack: Optional[Slack] = None",
+    }
+    source = output_path.read_text(encoding="utf-8")
+    for original, corrected in corrections.items():
+        if source.count(original) != 1:
+            raise ValueError(f"Expected one generated declaration: {original}")
+        source = source.replace(original, corrected)
+    output_path.write_text(source, encoding="utf-8")
 
-    Config(**all_cfg["aigear"])
+    # Validate the corrected file rather than a cached imported model.
+    namespace = runpy.run_path(str(output_path))
+    model = namespace["Config"]
+    model.model_rebuild(_types_namespace=namespace)
+    model.model_validate(all_cfg["aigear"])
+
+
+if __name__ == "__main__":
+    generate_aigear_config_schema()

@@ -53,13 +53,13 @@ class Infra:
         )
 
         self.model_bucket = Bucket(
-            bucket_name=self.aigear_config.gcp.bucket.bucket_name,
+            bucket_name=self.aigear_config.gcp.bucket.train_bucket.bucket_name,
             location=self.location,
             project_id=self.project_id,
         )
 
         self.release_model_bucket = Bucket(
-            bucket_name=self.aigear_config.gcp.bucket.bucket_name_for_release,
+            bucket_name=self.aigear_config.gcp.bucket.release_bucket.bucket_name,
             location=self.location,
             project_id=self.project_id,
         )
@@ -366,16 +366,16 @@ class Infra:
         cf_title = f"Cloud Function ({cfg.cloud_function.function_name})"
 
         if cfg.bucket.on:
-            phase2_tasks[f"Model Bucket ({cfg.bucket.bucket_name})"] = (
+            phase2_tasks[f"Model Bucket ({cfg.bucket.train_bucket.bucket_name})"] = (
                 self._ensure_model_bucket
             )
             phase2_tasks[
-                f"Release Model Bucket ({cfg.bucket.bucket_name_for_release})"
+                f"Release Model Bucket ({cfg.bucket.release_bucket.bucket_name})"
             ] = self._ensure_release_bucket
         else:
-            self._step_skip(f"Model Bucket ({cfg.bucket.bucket_name})")
+            self._step_skip(f"Model Bucket ({cfg.bucket.train_bucket.bucket_name})")
             self._step_skip(
-                f"Release Model Bucket ({cfg.bucket.bucket_name_for_release})"
+                f"Release Model Bucket ({cfg.bucket.release_bucket.bucket_name})"
             )
 
         self._phase2_add(
@@ -465,16 +465,16 @@ class Infra:
         exists = self.model_bucket.describe()
         if not exists:
             logger.info(
-                f"Model bucket ({self.aigear_config.gcp.bucket.bucket_name}) not found in location "
+                f"Model bucket ({self.aigear_config.gcp.bucket.train_bucket.bucket_name}) not found in location "
                 f"({self.location}). Creating bucket..."
             )
             self.model_bucket.create()
             logger.info(
-                f"Model bucket ({self.aigear_config.gcp.bucket.bucket_name}) created successfully."
+                f"Model bucket ({self.aigear_config.gcp.bucket.train_bucket.bucket_name}) created successfully."
             )
         else:
             logger.info(
-                f"Model bucket ({self.aigear_config.gcp.bucket.bucket_name}) already exists in location "
+                f"Model bucket ({self.aigear_config.gcp.bucket.train_bucket.bucket_name}) already exists in location "
                 f"({self.location}). Skipping creation; re-applying IAM binding."
             )
         self.model_bucket.add_permissions_to_gcs(sa_email=self.service_accounts.sa_email)
@@ -483,16 +483,16 @@ class Infra:
         exists = self.release_model_bucket.describe()
         if not exists:
             logger.info(
-                f"Release model bucket ({self.aigear_config.gcp.bucket.bucket_name_for_release}) not found in "
+                f"Release model bucket ({self.aigear_config.gcp.bucket.release_bucket.bucket_name}) not found in "
                 f"location ({self.location}). Creating bucket..."
             )
             self.release_model_bucket.create()
             logger.info(
-                f"Release model bucket ({self.aigear_config.gcp.bucket.bucket_name_for_release}) created successfully."
+                f"Release model bucket ({self.aigear_config.gcp.bucket.release_bucket.bucket_name}) created successfully."
             )
         else:
             logger.info(
-                f"Release model bucket ({self.aigear_config.gcp.bucket.bucket_name_for_release}) already exists in "
+                f"Release model bucket ({self.aigear_config.gcp.bucket.release_bucket.bucket_name}) already exists in "
                 f"location ({self.location}). Skipping creation; re-applying IAM binding."
             )
         self.release_model_bucket.add_permissions_to_gcs(
@@ -729,14 +729,14 @@ class Infra:
 
         # Resources that do not support update
         if cfg.bucket.on:
-            self._step_no_update(f"Model Bucket ({cfg.bucket.bucket_name})")
+            self._step_no_update(f"Model Bucket ({cfg.bucket.train_bucket.bucket_name})")
             self._step_no_update(
-                f"Release Model Bucket ({cfg.bucket.bucket_name_for_release})"
+                f"Release Model Bucket ({cfg.bucket.release_bucket.bucket_name})"
             )
         else:
-            self._step_skip(f"Model Bucket ({cfg.bucket.bucket_name})")
+            self._step_skip(f"Model Bucket ({cfg.bucket.train_bucket.bucket_name})")
             self._step_skip(
-                f"Release Model Bucket ({cfg.bucket.bucket_name_for_release})"
+                f"Release Model Bucket ({cfg.bucket.release_bucket.bucket_name})"
             )
 
         if cfg.artifacts.on:
@@ -822,16 +822,16 @@ class Infra:
         phase2_tasks = {}
 
         if cfg.bucket.on:
-            phase2_tasks[f"Model Bucket ({cfg.bucket.bucket_name})"] = (
+            phase2_tasks[f"Model Bucket ({cfg.bucket.train_bucket.bucket_name})"] = (
                 self._delete_model_bucket
             )
             phase2_tasks[
-                f"Release Model Bucket ({cfg.bucket.bucket_name_for_release})"
+                f"Release Model Bucket ({cfg.bucket.release_bucket.bucket_name})"
             ] = self._delete_release_bucket
         else:
-            self._step_skip(f"Model Bucket ({cfg.bucket.bucket_name})")
+            self._step_skip(f"Model Bucket ({cfg.bucket.train_bucket.bucket_name})")
             self._step_skip(
-                f"Release Model Bucket ({cfg.bucket.bucket_name_for_release})"
+                f"Release Model Bucket ({cfg.bucket.release_bucket.bucket_name})"
             )
 
         self._phase2_add(
@@ -914,30 +914,30 @@ class Infra:
         exists = self.model_bucket.describe()
         if exists:
             logger.info(
-                f"Deleting model bucket ({self.aigear_config.gcp.bucket.bucket_name})..."
+                f"Deleting model bucket ({self.aigear_config.gcp.bucket.train_bucket.bucket_name})..."
             )
             self.model_bucket.delete()
             logger.info(
-                f"Model bucket ({self.aigear_config.gcp.bucket.bucket_name}) deleted successfully."
+                f"Model bucket ({self.aigear_config.gcp.bucket.train_bucket.bucket_name}) deleted successfully."
             )
         else:
             logger.info(
-                f"Model bucket ({self.aigear_config.gcp.bucket.bucket_name}) not found. Skipping."
+                f"Model bucket ({self.aigear_config.gcp.bucket.train_bucket.bucket_name}) not found. Skipping."
             )
 
     def _delete_release_bucket(self):
         exists = self.release_model_bucket.describe()
         if exists:
             logger.info(
-                f"Deleting release model bucket ({self.aigear_config.gcp.bucket.bucket_name_for_release})..."
+                f"Deleting release model bucket ({self.aigear_config.gcp.bucket.release_bucket.bucket_name})..."
             )
             self.release_model_bucket.delete()
             logger.info(
-                f"Release model bucket ({self.aigear_config.gcp.bucket.bucket_name_for_release}) deleted successfully."
+                f"Release model bucket ({self.aigear_config.gcp.bucket.release_bucket.bucket_name}) deleted successfully."
             )
         else:
             logger.info(
-                f"Release model bucket ({self.aigear_config.gcp.bucket.bucket_name_for_release}) not found. Skipping."
+                f"Release model bucket ({self.aigear_config.gcp.bucket.release_bucket.bucket_name}) not found. Skipping."
             )
 
     def _delete_artifacts(self):
@@ -1055,12 +1055,12 @@ class Infra:
                 self.service_accounts.describe,
             ),
             (
-                f"Model Bucket ({cfg.bucket.bucket_name})",
+                f"Model Bucket ({cfg.bucket.train_bucket.bucket_name})",
                 cfg.bucket.on,
                 self.model_bucket.describe,
             ),
             (
-                f"Release Bucket ({cfg.bucket.bucket_name_for_release})",
+                f"Release Bucket ({cfg.bucket.release_bucket.bucket_name})",
                 cfg.bucket.on,
                 self.release_model_bucket.describe,
             ),
