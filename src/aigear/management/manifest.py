@@ -187,6 +187,11 @@ class PendingOperation(Contract):
     started_at: Optional[UTCTime] = None
     source_manifest_generation: Optional[Generation] = None
     target_manifest_generation: Optional[Generation] = None
+    backup_manifest_generation: Optional[Generation] = None
+    release_path: Optional[ReleasePath] = None
+    extra_files: List[ArtifactPath] = Field(default_factory=list)
+    predecessor_operation_id: Optional[Text] = None
+    cleanup_targets: List[ObjectVersion] = Field(default_factory=list)
     error: Optional[Annotated[str, StringConstraints(strict=True, min_length=1, max_length=512)]] = None
 
     @model_validator(mode="after")

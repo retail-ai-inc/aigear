@@ -248,6 +248,8 @@ class AssetContext:
         never repeats side effects. Managed IO supplies its record update later.
         """
         manifest, generation = self.current()
+        if manifest.pending_operation is not None:
+            raise OperationIncomplete("A workspace operation must finish before step commit", phase="commit")
         if update is not None:
             update(manifest)
         elif manifest.pending_step.writes_started:

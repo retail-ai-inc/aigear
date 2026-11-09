@@ -6,6 +6,7 @@ import logging
 import os
 import sqlite3
 import tempfile
+import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -85,7 +86,14 @@ def atomic_file(path, data):
             stream.write(data)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, path)
+        for attempt in range(6):
+            try:
+                os.replace(temporary, path)
+                break
+            except PermissionError as exc:
+                if getattr(exc, 'winerror', None) not in {5, 32, 33} or attempt == 5:
+                    raise
+                time.sleep(0.01 * (2 ** attempt))
         if os.name != "nt":
             directory = os.open(path.parent, os.O_RDONLY)
             try:

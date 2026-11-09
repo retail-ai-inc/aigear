@@ -29,15 +29,19 @@ def _step_identity(step):
 
 
 class Assets:
-    def __init__(self, pipeline_version, *, project_id=None, bucket_name=None, bucket_on=None):
+    def __init__(self, pipeline_version, *, project_id=None, bucket_name=None, bucket_on=None, release_bucket_name=None):
         self.pipeline_version = identifier(pipeline_version)
         self.project_dir = Path.cwd()
         self._client = None
         self._settings = None
+        self._release_client = None
+        self._release_name = release_bucket_name
         if bucket_name is None:
             from aigear.common.config import AppConfig
             config = AppConfig.aigear()
             self._settings = config.gcp.bucket
+            if self._release_name is None:
+                self._release_name = self._settings.release_bucket.bucket_name
             bucket_name = self._settings.train_bucket.bucket_name
             if project_id is None:
                 project_id = config.gcp.gcp_project_id
@@ -53,7 +57,53 @@ class Assets:
         result.project_dir = Path.cwd()
         result.project_id, result.bucket_name = bucket.project_id, bucket.bucket_name
         result._settings = None
+        result._release_client = None
+        result._release_name = None
         return result
+
+    @property
+    def _release_bucket(self):
+        if self._release_client is None:
+            if self._release_name is None:
+                raise ValueError('release_bucket_name is required with an explicit bucket binding')
+            self._release_client = (RealGCS(self.project_id, self._release_name) if self.bucket_on else
+                LocalGCSMock(self.project_id, local_asset_roots(self.project_dir, self._release_name, self.pipeline_version).bucket))
+        return self._release_client
+
+    def publish(self, *, path=None, extra_files=None):
+        from aigear.management.release import ReleaseManager
+        return self._with_terminal_recovery(lambda: ReleaseManager(self).publish(path=path, extra_files=extra_files))
+
+    def rollback(self, *, path=None):
+        from aigear.management.release import ReleaseManager
+        return self._with_terminal_recovery(lambda: ReleaseManager(self).rollback(path=path))
+
+    def _with_terminal_recovery(self, action):
+        try:
+            result = action()
+        except ValueError:
+            raise
+        except Exception:
+            try:
+                self._finish_finalizing()
+            except Exception:
+                logger.warning('asset_terminal_recovery_incomplete', extra={'pipeline_version': self.pipeline_version})
+            raise
+        self._finish_finalizing()
+        return result
+
+    def _finish_finalizing(self):
+        if self._client is None or active_context(required=False) is not None:
+            return
+        ownership = RunOwnership(self._client, self.pipeline_version)
+        workspace, _ = ownership.read()
+        execution = workspace.execution
+        if (execution and execution.status == 'finalizing' and workspace.pending_operation is None
+                and workspace.pending_step is None):
+            if execution.terminal_status not in {'succeeded', 'failed'}:
+                raise OperationIncomplete('Run finalization has no fixed outcome', phase='finalize')
+            ownership.finalize(execution.run_id, execution.owner_token, execution.current_step, execution.step_attempt_token,
+                               succeeded=execution.terminal_status == 'succeeded', seal=self._seal_run)
 
     @property
     def _bucket(self):
@@ -215,6 +265,11 @@ class Assets:
         return result
 
     def retire(self, keep_latest, *, dry_run=False):
+        if dry_run:
+            return self._retire(keep_latest, dry_run=dry_run)
+        return self._with_terminal_recovery(lambda: self._retire(keep_latest, dry_run=dry_run))
+
+    def _retire(self, keep_latest, *, dry_run=False):
         result = RetirementResult(keep_latest=keep_latest, dry_run=dry_run)
         if not self._trash_enabled():
             raise InvalidArtifact('Trash retention is disabled by the bucket configuration', phase='retire')
@@ -283,6 +338,9 @@ class Assets:
         return result
 
     def restore(self, run_id, *, target='assets'):
+        return self._with_terminal_recovery(lambda: self._restore(run_id, target=target))
+
+    def _restore(self, run_id, *, target='assets'):
         identifier(run_id)
         if target not in {'assets', 'running'}:
             raise ValueError('Restore target must be assets or running')
@@ -398,6 +456,9 @@ class Assets:
         ownership._write(current, generation, 'operation-complete')
 
     def register(self):
+        return self._with_terminal_recovery(self._register)
+
+    def _register(self):
         ownership = self._ownership()
         manifest, generation = ownership.read()
         context = active_context(required=False)

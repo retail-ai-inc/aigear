@@ -13,12 +13,16 @@ def verify_object(bucket, key, member):
     return meta
 
 
-def copy_members(source_bucket, target_bucket, operation, members, source_prefix, target_prefix, persist):
+def copy_members(source_bucket, target_bucket, operation, members, source_prefix, target_prefix, persist,
+                 *, mapping=None, before_copy=None):
     expectations = {value.key: value.generation for value in operation.expected_targets}
     progress = {value.target.key: value for value in operation.progress}
     result = {}
     for member in members:
-        source_key, target_key = f"{source_prefix}/{member.path}", f"{target_prefix}/{member.path}"
+        if before_copy:
+            before_copy()
+        path = mapping[member.path] if mapping is not None else member.path
+        source_key, target_key = f"{source_prefix}/{member.path}", f"{target_prefix}/{path}"
         verify_object(source_bucket, source_key, member)
         try:
             meta = target_bucket.get_metadata(target_key)

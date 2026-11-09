@@ -103,6 +103,8 @@ def _delete(bucket, key, generation):
 
 def commit_step(context):
     manifest, generation = context.current()
+    if manifest.pending_operation is not None:
+        raise OperationIncomplete("A workspace operation must finish before step commit", phase="commit")
     reconcile_writes(context, manifest)
     pending = manifest.pending_step
     for source in pending.inputs:

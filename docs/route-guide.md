@@ -437,6 +437,21 @@ Restoring to running requires an idle workspace, including the interval between 
 
 Restored objects do not inherit trash Custom-Time. Both targets use destination-commit-before-source-cleanup, and an interrupted restore retains its fixed source, target and progress for retry. Existing snapshot queries remain read-only.
 
+Publish explicitly after training has committed:
+
+```python
+published = assets.publish(path="models/current", extra_files=["feature/scaler.pkl"])
+restored = assets.rollback(path="models/current")
+```
+
+The default release path is the pipeline version. Publication includes all valid `training/` files, removing that category prefix, and the explicit extra files, retaining their category paths. For example, `training/model.pkl` becomes `model.pkl` and `feature/scaler.pkl` remains `feature/scaler.pkl`. Extra entries must be distinct committed files; directories, URLs, wildcards, unknown files and mapped-name collisions are rejected before writes. With explicit local binding, supply `release_bucket_name` as well as the training bucket name.
+
+Publication holds workspace and release-manifest ownership in that order. It first copies and verifies the entire previous release, including extra files, into the single `backup/{release_path}` group. Only a committed complete backup can be rolled back. The candidate replaces the live files and removes obsolete managed members before committing the release manifest. Repeating an identical file set, content and provenance does not rotate the backup. Changes to extra files count as a new release. Publication does not register an assets checkpoint.
+
+`rollback()` restores the complete backup and leaves it in place; it does not exchange current and backup. Use the same custom path as publication. Missing current members are written with create-only conditions, and conflicting external versions are rejected. If publication fails after a complete backup was committed, rollback can recover that backup without finishing the candidate. A first publication with no backup reports `BackupUnavailable` and retains its pending state for an identical publication retry.
+
+`OperationIncomplete` reports the fixed operation ID, phase, cause and partial `ReleaseInfo`. Retry with the same path and extra selection; source or target changes are not silently adopted. A recovered operation also converges a stopped run already in `finalizing`, preserving its original succeeded/failed outcome. Pending workspace operations prevent a step from committing successfully. Bucket lifecycle rules are not changed by publishing or rollback.
+
 ---
 
 ## 7. Security Best Practices
