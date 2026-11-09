@@ -31,7 +31,7 @@ Configuration is loaded once per process. Set `AIGEAR_ENV_PATH` before starting 
 
 `trash_retention_days` must be a positive integer. Booleans, strings, floating-point numbers, explicit `null`, zero, and negative values raise a Pydantic `ValidationError`. The `bucket`, `train_bucket`, and `release_bucket` nodes reject unknown fields; `release_bucket` accepts only `bucket_name`. Configuration is still validated when `on` is `false`.
 
-Infrastructure creation, updates, deletion, and status queries read the nested bucket names. The retention setting is currently validated only; infrastructure commands do not yet synchronize GCS trash lifecycle rules.
+Infrastructure creation, updates, deletion, and status queries read the nested bucket names. Infrastructure create and update synchronize the training bucket trash lifecycle rule using bucket metageneration conditions; status reports whether that rule matches the configured retention period.
 
 **Existing configurations:** When both direct `bucket.bucket_name` and `bucket.bucket_name_for_release` fields exist, the loader assigns them to `train_bucket.bucket_name` and `release_bucket.bucket_name`. These old names take precedence over any nested bucket settings. An incomplete pair is rejected. To migrate, remove both direct names and use the nested structure shown in the [complete example](#4-complete-envjson-example).
 
@@ -52,7 +52,7 @@ retention_days = bucket.train_bucket.trash_retention_days
 
 **Local storage:** `AssetManagement(..., bucket_on=False)` exposes ordinary files at `asset/buckets/{bucket_name}/{object_path}`; for example, `asset/buckets/train/running/v1/training/model.bin`. JSON files retain their original names and can be opened directly. Generation- and checksum-verified downloads are cached at `asset/cache/{bucket_name}/{pipeline_version}/{generation}/{artifact_path}`. Stage files for upload with `get_local_path()`, under `asset/{pipeline_version}/{data_type}/`. Use backend methods for writes to keep versions and checksums consistent. Version and recovery data stay in the private sibling directory `asset/buckets/.aigear-local/`; back it up with the bucket tree after stopping local writers. Existing files in the previous `asset/{bucket_name}/` layout remain in place without automatic import.
 
-`RealGCS` and `LocalGCSMock` have the same constructor and object-operation parameters, defaults, return types, and domain exceptions. Select the backend when creating the client; the calling code for uploads, downloads, JSON, copies, metadata, and lifecycle configuration stays the same. Writes and copies return `ObjectMetadata`; lifecycle reads and updates return `BucketLifecycle`; downloads and deletes return `None`. Generations are opaque decimal strings from the selected store. Local crash recovery restores readable files to the committed version before the next backend operation. Lifecycle eligibility is a shared read-only diagnostic; infrastructure rule synchronization is still handled separately.
+`RealGCS` and `LocalGCSMock` have the same constructor and object-operation parameters, defaults, return types, and domain exceptions. Select the backend when creating the client; the calling code for uploads, downloads, JSON, copies, metadata, and lifecycle configuration stays the same. Writes and copies return `ObjectMetadata`; lifecycle reads and updates return `BucketLifecycle`; downloads and deletes return `None`. Generations are opaque decimal strings from the selected store. Local crash recovery restores readable files to the committed version before the next backend operation. Lifecycle eligibility is a shared read-only diagnostic; infrastructure create/update synchronize lifecycle rules separately from asset operations.
 
 #### 2.1.2 Cloud Build (`cloud_build`)
 
@@ -475,6 +475,12 @@ class Models:
 ```
 
 A read or decoder failure leaves the previous `current` group intact; a new instance remains unready while `current` is `None`. Capture `group = models.current` once per request so model and scaler are taken from the same group even during reload. The helper also accepts `LocalGCSMock` for local consumers and tests.
+
+Infrastructure create checks the training bucket lifecycle rule whether the bucket is new or already exists; update synchronizes it and status reports its state. The managed rule is `Delete` with exactly `matchesPrefix=["trash/"]` and `daysSinceCustomTime=trash_retention_days`. An existing rule with that exact shape is replaced in place; unrelated rules are preserved. Duplicate managed rules or other Delete rules whose prefixes can cover `trash/` cause an error. Rules do not use original file creation age.
+
+Lifecycle writes use the metageneration read from the bucket, so a concurrent metadata change is reported rather than overwritten. Separate release buckets receive no deletion rule. When training and release names refer to one physical bucket, creation, update, deletion and status query it once and retain the training rule. Legacy retention `None` skips lifecycle reads/creation and retains the prior bucket-update behavior. Constructing `Assets`, registering, retiring, publishing and restoring do not configure lifecycle rules.
+
+The Python lifecycle client uses Application Default Credentials. The infrastructure operator needs `storage.buckets.get` and `storage.buckets.update`; existing bucket [`roles/storage.admin`](https://docs.cloud.google.com/storage/docs/access-control/iam-roles) bindings already include the required permissions, so no additional role is added. See [Cloud Storage Object Lifecycle Management](https://docs.cloud.google.com/storage/docs/lifecycle) for Custom-Time eligibility and asynchronous rule execution. These rules are applied only when infrastructure commands are explicitly invoked.
 
 ---
 

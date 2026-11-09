@@ -58,7 +58,7 @@ class Infra:
             project_id=self.project_id,
         )
 
-        self.release_model_bucket = Bucket(
+        self.release_model_bucket = self.model_bucket if self._shared_bucket() else Bucket(
             bucket_name=self.aigear_config.gcp.bucket.release_bucket.bucket_name,
             location=self.location,
             project_id=self.project_id,
@@ -369,9 +369,8 @@ class Infra:
             phase2_tasks[f"Model Bucket ({cfg.bucket.train_bucket.bucket_name})"] = (
                 self._ensure_model_bucket
             )
-            phase2_tasks[
-                f"Release Model Bucket ({cfg.bucket.release_bucket.bucket_name})"
-            ] = self._ensure_release_bucket
+            if not self._shared_bucket():
+                phase2_tasks[f"Release Model Bucket ({cfg.bucket.release_bucket.bucket_name})"] = self._ensure_release_bucket
         else:
             self._step_skip(f"Model Bucket ({cfg.bucket.train_bucket.bucket_name})")
             self._step_skip(
@@ -478,6 +477,24 @@ class Infra:
                 f"({self.location}). Skipping creation; re-applying IAM binding."
             )
         self.model_bucket.add_permissions_to_gcs(sa_email=self.service_accounts.sa_email)
+        days = self.aigear_config.gcp.bucket.train_bucket.trash_retention_days
+        if days is not None:
+            self.model_bucket.ensure_trash_lifecycle(days)
+
+    def _shared_bucket(self):
+        bucket = self.aigear_config.gcp.bucket
+        return bucket.train_bucket.bucket_name == bucket.release_bucket.bucket_name
+
+    def _update_model_bucket(self):
+        if not self.model_bucket.describe():
+            raise RuntimeError('Training bucket does not exist. Run --create first.')
+        self.model_bucket.ensure_trash_lifecycle(self.aigear_config.gcp.bucket.train_bucket.trash_retention_days)
+
+    def _status_model_bucket(self):
+        if not self.model_bucket.describe():
+            return 'NOT_FOUND'
+        days = self.aigear_config.gcp.bucket.train_bucket.trash_retention_days
+        return self.model_bucket.trash_lifecycle_status(days) if days is not None else 'EXISTS'
 
     def _ensure_release_bucket(self):
         exists = self.release_model_bucket.describe()
@@ -727,12 +744,14 @@ class Infra:
         else:
             self._step_skip(f"Kubernetes Cluster ({cfg.kubernetes.cluster_name})")
 
-        # Resources that do not support update
+        # Only training lifecycle rules are updated; legacy None keeps prior behavior.
         if cfg.bucket.on:
-            self._step_no_update(f"Model Bucket ({cfg.bucket.train_bucket.bucket_name})")
-            self._step_no_update(
-                f"Release Model Bucket ({cfg.bucket.release_bucket.bucket_name})"
-            )
+            if cfg.bucket.train_bucket.trash_retention_days is not None:
+                phase2_tasks[f"Model Bucket ({cfg.bucket.train_bucket.bucket_name})"] = self._update_model_bucket
+            else:
+                self._step_no_update(f"Model Bucket ({cfg.bucket.train_bucket.bucket_name})")
+            if not self._shared_bucket():
+                self._step_no_update(f"Release Model Bucket ({cfg.bucket.release_bucket.bucket_name})")
         else:
             self._step_skip(f"Model Bucket ({cfg.bucket.train_bucket.bucket_name})")
             self._step_skip(
@@ -825,9 +844,8 @@ class Infra:
             phase2_tasks[f"Model Bucket ({cfg.bucket.train_bucket.bucket_name})"] = (
                 self._delete_model_bucket
             )
-            phase2_tasks[
-                f"Release Model Bucket ({cfg.bucket.release_bucket.bucket_name})"
-            ] = self._delete_release_bucket
+            if not self._shared_bucket():
+                phase2_tasks[f"Release Model Bucket ({cfg.bucket.release_bucket.bucket_name})"] = self._delete_release_bucket
         else:
             self._step_skip(f"Model Bucket ({cfg.bucket.train_bucket.bucket_name})")
             self._step_skip(
@@ -1057,7 +1075,7 @@ class Infra:
             (
                 f"Model Bucket ({cfg.bucket.train_bucket.bucket_name})",
                 cfg.bucket.on,
-                self.model_bucket.describe,
+                self._status_model_bucket,
             ),
             (
                 f"Release Bucket ({cfg.bucket.release_bucket.bucket_name})",
@@ -1102,6 +1120,8 @@ class Infra:
             ),
         ]
 
+        if self._shared_bucket():
+            tasks = [task for task in tasks if task[0] != f"Release Bucket ({cfg.bucket.release_bucket.bucket_name})"]
         results = [None] * len(tasks)
         with ThreadPoolExecutor(max_workers=len(tasks)) as executor:
             future_to_idx = {

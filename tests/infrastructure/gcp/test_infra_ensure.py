@@ -15,6 +15,7 @@ def _make_infra():
     cfg.gcp.iam.account_name = "my-sa"
     cfg.gcp.bucket.train_bucket.bucket_name = "my-bucket"
     cfg.gcp.bucket.release_bucket.bucket_name = "my-release-bucket"
+    cfg.gcp.bucket.train_bucket.trash_retention_days = None
     cfg.gcp.artifacts.repository_name = "my-repo"
     cfg.gcp.artifacts.image_tag = "latest"
     cfg.gcp.pub_sub.topic_name = "my-topic"
@@ -31,6 +32,7 @@ def _make_infra():
     infra.service_accounts = MagicMock()
     infra.service_accounts.sa_email = infra.service_account
     infra.model_bucket = MagicMock()
+    infra.model_bucket.trash_lifecycle_status.return_value = 'EXISTS [trash lifecycle: 30 days since Custom-Time]'
     infra.release_model_bucket = MagicMock()
     infra.artifacts = MagicMock()
     infra.pubsub = MagicMock()
@@ -84,6 +86,52 @@ def test_constructor_uses_equivalent_bucket_names(bucket_config, monkeypatch):
     assert infra.aigear_config is bucket_config
 
 
+def test_shared_bucket_constructor_has_one_physical_resource(bucket_config, monkeypatch):
+    bucket_config.gcp.bucket.release_bucket.bucket_name = bucket_config.gcp.bucket.train_bucket.bucket_name
+    constructors = {}
+    for name in ('Bucket', 'CloudBuild', 'CloudFunction', 'ServiceAccounts', 'PubSub', 'Artifacts',
+                 'KubernetesCluster', 'CloudKMS', 'EventarcPubSubTrigger'):
+        constructors[name] = MagicMock()
+        monkeypatch.setattr(infra_module, name, constructors[name])
+    infra = Infra()
+    constructors['Bucket'].assert_called_once()
+    assert infra.model_bucket is infra.release_model_bucket
+
+
+@pytest.mark.parametrize('method', ['create', 'update', 'status', 'delete'])
+@pytest.mark.parametrize('days', [None, 30])
+@pytest.mark.parametrize('shared', [False, True])
+def test_training_lifecycle_and_shared_bucket_resource_dedup(method, days, shared, capsys):
+    infra = _make_operation_infra('bucket')
+    cfg = infra.aigear_config.gcp.bucket
+    cfg.train_bucket.trash_retention_days = days
+    if shared:
+        cfg.release_bucket.bucket_name = cfg.train_bucket.bucket_name
+    infra.model_bucket.describe.return_value = True
+    infra.release_model_bucket.describe.return_value = True
+    result = getattr(infra, method)()
+    if method != 'status': assert result is True
+    expected = int(days is not None and method in {'create', 'update'})
+    assert infra.model_bucket.ensure_trash_lifecycle.call_count == expected
+    infra.release_model_bucket.ensure_trash_lifecycle.assert_not_called()
+    if method == 'status':
+        assert infra.model_bucket.trash_lifecycle_status.call_count == int(days is not None)
+        if days is not None: assert 'Custom-Time' in capsys.readouterr().out
+    if shared:
+        infra.release_model_bucket.describe.assert_not_called()
+        infra.release_model_bucket.create.assert_not_called()
+        infra.release_model_bucket.delete.assert_not_called()
+
+
+def test_update_lifecycle_missing_bucket_reports_create_first():
+    infra = _make_operation_infra('bucket')
+    infra.aigear_config.gcp.bucket.train_bucket.trash_retention_days = 30
+    infra.model_bucket.describe.return_value = False
+    with pytest.raises(RuntimeError, match='Run --create first'):
+        infra._update_model_bucket()
+    infra.model_bucket.ensure_trash_lifecycle.assert_not_called()
+
+
 @pytest.mark.parametrize("method", ["create", "update", "delete", "status"])
 @pytest.mark.parametrize("enabled", [True, False])
 def test_bucket_operations_with_real_config(bucket_config, method, enabled, capsys, caplog):
@@ -102,7 +150,11 @@ def test_bucket_operations_with_real_config(bucket_config, method, enabled, caps
     for resource in (infra.model_bucket, infra.release_model_bucket):
         assert resource.create.call_count == int(enabled and method == "create")
         assert resource.delete.call_count == int(enabled and method == "delete")
-        if method == "update" or not enabled:
+        if (method == 'update' and enabled and resource is infra.model_bucket
+                and bucket_config.gcp.bucket.train_bucket.trash_retention_days is not None):
+            resource.describe.assert_called_once()
+            resource.ensure_trash_lifecycle.assert_called_once_with(30)
+        elif method == "update" or not enabled:
             assert resource.mock_calls == []
 
 
