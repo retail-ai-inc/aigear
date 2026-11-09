@@ -270,9 +270,11 @@ class AssetContext:
         return self.ownership._write(manifest, generation, "failure")
 
 
-def active_context():
+def active_context(*, required=True):
     context = _active.get()
     if context is None:
+        if not required:
+            return None
         raise ExecutionConflict("Use the managed workflow execution entry point", phase="context")
     context.current()
     return context

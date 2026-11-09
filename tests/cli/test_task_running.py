@@ -5,6 +5,13 @@ import pytest
 from aigear.cli.task_running import run_workflow
 
 
+@pytest.fixture(autouse=True)
+def isolate_ownership_in_logging_unit_tests():
+    from contextlib import nullcontext
+    with patch('aigear.cli.task_running.workflow_step', side_effect=lambda *args: nullcontext(True)):
+        yield
+
+
 @patch("aigear.cli.task_running.AigearConfig")
 @patch("aigear.cli.task_running.RunLogContext")
 @patch("aigear.cli.task_running.Logging")

@@ -127,6 +127,12 @@ class Execution(Contract):
         return self
 
 
+class PendingWrite(Contract):
+    path: ArtifactPath
+    expected_generation: Generation
+    write_id: Text
+
+
 class PendingStep(Contract):
     run_id: Identifier
     step_name: Text
@@ -134,6 +140,7 @@ class PendingStep(Contract):
     inputs: List[Input] = Field(default_factory=list)
     outputs: List[ArtifactObject] = Field(default_factory=list)
     writes_started: bool = Field(default=False, strict=True)
+    writes: List[PendingWrite] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_outputs(self):

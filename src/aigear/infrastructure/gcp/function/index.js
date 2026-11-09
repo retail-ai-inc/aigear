@@ -1,8 +1,9 @@
 import crypto from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { google } from 'googleapis';
 import functions from '@google-cloud/functions-framework';
 import { Logging } from '@google-cloud/logging';
-import { CloudRunProtocol, GCSManifestStore, dispatchManagedTask } from './asset_protocol.js';
+import { CloudRunProtocol, GCSManifestStore, dispatchManagedTask, sealUnregistered, reconcileStoppedStep } from './asset_protocol.js';
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -288,6 +289,7 @@ function buildFatalErrorMessagePrefix({
 }) {
   const json = JSON.stringify({
     error: true,
+    ...(assetContext ? { worker_stopped: true } : {}),
     ...(assetContext ? { asset_context: assetContext } : {}),
     run_id: runId || undefined,
     run_started_at_utc: runStartedAtUtc || undefined,
@@ -380,6 +382,16 @@ export function buildStartupScript({
     assetContext,
     cancelledSteps: JSON.parse(nextMessage).map(task => buildRunLogFields(task)),
   });
+  const nativeManagement = assetContext && !pipelineCommand;
+  const managementGuard = nativeManagement ? `
+management_transition() {
+  python3 - "$1" '${esc(JSON.stringify(assetContext))}' "\${2:-}" <<'AIGEAR_GUARD_PY'
+${readFileSync(new URL('./management_guard.py', import.meta.url), 'utf8')}
+AIGEAR_GUARD_PY
+}
+management_worker=$(management_transition claim) || exit 1
+` : '';
+  const managementCommit = nativeManagement ? 'management_transition commit "$management_worker" >/dev/null || fatal_error management_commit_failed management_commit 1' : '';
 
   // Shared handler: publish terminal error to Pub/Sub and delete this VM.
   const fatalErrorFn = `
@@ -545,7 +557,9 @@ if [ "$pull_exit_code" -ne 0 ]; then
   fatal_error docker_image_not_found docker_pull "$pull_exit_code"
 fi
 ${runPipeline}
+${managementGuard}
 ${runDeploy}
+${managementCommit}
 rm -f "$error_log"
 # ── Notify next step and self-delete ──
 ${publishCommand}
@@ -1015,6 +1029,18 @@ export async function processManagedMessage(payload, auth, { seal, reconcileFail
 
 functions.cloudEvent('cronjobProcessPubSub', async cloudEvent => {
   const message = Buffer.from(cloudEvent.data.message.data, 'base64').toString().trim();
+  let managed;
+  try { managed = JSON.parse(message); } catch { /* legacy validation below */ }
+  if (managed?.asset_context || (Array.isArray(managed) && managed.some(task => task.train_bucket))) {
+    const auth = new google.auth.GoogleAuth({ scopes: ['https://www.googleapis.com/auth/cloud-platform'] });
+    const client = await auth.getClient();
+    if (Array.isArray(managed)) managed = enrichIfNewRun(managed, cloudEvent);
+    const identity = managed.asset_context || managed[0];
+    const store = new GCSManifestStore(google, client, identity.train_bucket, identity.pipeline_version);
+    return processManagedMessage(managed, client, { store,
+      seal: manifest => sealUnregistered(store, manifest),
+      reconcileFailure: context => reconcileStoppedStep(store, context, async () => managed.worker_stopped === true) });
+  }
   await writeCloudFunctionLog({
     event: 'pubsub_message_received',
     message: 'pubsub_message_received',

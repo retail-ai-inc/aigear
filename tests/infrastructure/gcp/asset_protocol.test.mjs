@@ -5,14 +5,14 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { CloudRunProtocol, GCSManifestStore, ExecutionConflict, OperationIncomplete,
+import { CloudRunProtocol, GCSManifestStore, ExecutionConflict, OperationIncomplete, reconcileStoppedStep,
   dispatchManagedTask } from '../../../src/aigear/infrastructure/gcp/function/asset_protocol.js';
 
 // Load the real index.js, replacing only unavailable cloud SDK transports.
 registerHooks({ resolve(specifier, context, next) {
   const stubs = {
-    googleapis: 'export const google = {};',
-    '@google-cloud/functions-framework': 'export default {cloudEvent() {}};',
+    googleapis: 'export const google = {auth: {GoogleAuth: class {async getClient() {return {}}}}, storage() {return {objects: globalThis.__assetObjects}}, compute() {return globalThis.__assetCompute}};',
+    '@google-cloud/functions-framework': 'export default {cloudEvent(name, handler) {globalThis.__assetHandler = handler}};',
     '@google-cloud/logging': 'export class Logging {log() {return {entry(a,b) {return b}, async write() {}}}}',
   };
   if (specifier in stubs) return { url: `data:text/javascript,${encodeURIComponent(stubs[specifier])}`, shortCircuit: true };
@@ -275,4 +275,55 @@ test('unknown execution status cannot be interpreted as an unoccupied workspace'
     async get(args) { return { data: args.alt ? manifest : { generation: '1' } }; },
   } }) }, {}, 'train', 'v1');
   await assert.rejects(gcs.read(), ExecutionConflict);
+});
+
+test('registered handler dispatches managed scheduler delivery and terminal without legacy fallthrough', async () => {
+  const store = new Store(), instances = new Map(), inserted = [];
+  globalThis.__assetObjects = {
+    async get(args) { return { data: args.alt ? store.manifest : { generation: store.generation } }; },
+    async insert(args) { await store.write(JSON.parse(args.media.body), args.ifGenerationMatch); return { data: {} }; },
+    async list() { return { data: { items: [] } }; },
+  };
+  globalThis.__assetCompute = { instances: {
+    async get(args) { if (!instances.has(args.instance)) throw Object.assign(new Error('missing'), { code: 404 }); return { data: {} }; },
+    async insert(args) { inserted.push(args.requestBody); instances.set(args.requestBody.name, args.requestBody); return { data: { name: 'operation', status: 'DONE' } }; },
+  } };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, text: async () => 'service@project.iam.gserviceaccount.com' });
+  const event = payload => ({ data: { message: { data: Buffer.from(JSON.stringify(payload)).toString('base64'), publishTime: task.run_started_at_utc } } });
+  try {
+    const scheduler = { ...task };
+    delete scheduler.run_id;
+    delete scheduler.run_started_at_utc;
+    await globalThis.__assetHandler(event([scheduler]));
+    await globalThis.__assetHandler(event([scheduler]));
+    assert.equal(inserted.length, 1);
+    const startup = inserted[0].metadata.items.find(item => item.key === 'startup-script').value;
+    assert.ok(startup.includes('AIGEAR_OWNER_TOKEN='));
+    const e = store.manifest.execution;
+    const identity = { ...task, run_id: e.run_id, owner_token: e.owner_token, step_attempt_token: e.step_attempt_token };
+    store.commit();
+    await globalThis.__assetHandler(event({ done: true, asset_context: identity, next_tasks: [] }));
+    assert.equal(store.manifest.execution.status, 'succeeded');
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('stopped-worker reconciliation removes only owned versions, preserves manifest on conflict', async () => {
+  const store = new Store(), p = new CloudRunProtocol(store), deleted = [];
+  const identity = await p.dispatch(task);
+  store.manifest.execution.status = 'running';
+  store.manifest.pending_step = { run_id: identity.run_id, step_name: identity.step_name,
+    step_attempt_token: identity.step_attempt_token, inputs: [], outputs: [], writes_started: true,
+    writes: [{ path: 'feature/x', expected_generation: '0', write_id: 'write' }] };
+  store.bucket = 'train'; store.version = 'v1';
+  store.storage = { objects: {
+    async get() { return { data: { generation: '20', size: '4', crc32c: 'check', metadata: { aigear_write_id: 'write' } } }; },
+    async delete(args) { deleted.push(args); },
+  } };
+  await assert.rejects(reconcileStoppedStep(store, identity, async () => false), ExecutionConflict);
+  assert.equal(deleted.length, 0);
+  await reconcileStoppedStep(store, identity, async () => true);
+  assert.equal(deleted[0].ifGenerationMatch, '20');
+  assert.equal(store.manifest.pending_step, null);
+  assert.equal(store.manifest.steps.prepare.status, 'failed');
 });

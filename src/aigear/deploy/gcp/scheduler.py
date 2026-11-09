@@ -354,6 +354,7 @@ def _build_messages(
             env=step_env,
             step_name=resolved_step_name,
         )
+        message["train_bucket"] = aigear_config.gcp.bucket.train_bucket.bucket_name
         messages.append(message)
     return messages
 

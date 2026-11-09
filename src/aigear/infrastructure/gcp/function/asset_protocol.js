@@ -90,6 +90,68 @@ export class GCSManifestStore {
   }
 }
 
+export async function sealUnregistered(store, manifest) {
+  let pageToken;
+  do {
+    const { data } = await store.storage.objects.list({ bucket: store.bucket,
+      prefix: `assets/${store.version}/`, pageToken });
+    for (const meta of data.items || []) {
+      if (!meta.name.endsWith('/manifest.json')) continue;
+      const { data: value } = await store.storage.objects.get({ bucket: store.bucket, object: meta.name,
+        alt: 'media', generation: String(meta.generation), ifGenerationMatch: String(meta.generation) });
+      const snapshot = typeof value === 'string' ? JSON.parse(value) : value;
+      if (snapshot.run_id === manifest.execution.run_id) throw new OperationIncomplete('Checkpoint sealing integration is required');
+    }
+    pageToken = data.nextPageToken;
+  } while (pageToken);
+}
+
+export async function reconcileStoppedStep(store, identity, confirmStopped) {
+  if (!await confirmStopped()) throw new ExecutionConflict('Worker is not confirmed stopped');
+  let { manifest, generation } = await store.read();
+  const e = owned(manifest, identity);
+  const pending = manifest.pending_step;
+  if (!pending) return;
+  if (pending.run_id !== e.run_id || pending.step_name !== e.current_step
+      || pending.step_attempt_token !== e.step_attempt_token) throw new ExecutionConflict('Pending attempt changed');
+  const objects = store.storage.objects;
+  const key = path => `running/${store.version}/${path}`;
+  for (const intent of pending.writes || []) {
+    let meta;
+    try { ({ data: meta } = await objects.get({ bucket: store.bucket, object: key(intent.path) })); }
+    catch (err) { if ((err.response?.status ?? err.code) === 404 && intent.expected_generation === '0') continue; throw err; }
+    if (meta.metadata?.aigear_write_id === intent.write_id) {
+      pending.outputs = pending.outputs.filter(o => o.path !== intent.path);
+      pending.outputs.push({ path: intent.path, generation: String(meta.generation), size: Number(meta.size), crc32c: meta.crc32c });
+    } else if (String(meta.generation) !== intent.expected_generation) throw new ExecutionConflict('Interrupted output changed');
+  }
+  pending.writes = [];
+  await store.write(manifest, generation);
+  ({ manifest, generation } = await store.read());
+  owned(manifest, identity);
+  for (const output of manifest.pending_step.outputs) {
+    try { await objects.delete({ bucket: store.bucket, object: key(output.path), ifGenerationMatch: output.generation }); }
+    catch (err) { if ((err.response?.status ?? err.code) !== 404) throw err; }
+  }
+  const affected = new Set([e.current_step]);
+  let changed;
+  do {
+    changed = false;
+    for (const [name, step] of Object.entries(manifest.steps)) {
+      if (!affected.has(name) && (step.inputs || []).some(input => input.kind === 'managed' && affected.has(input.step_name))) {
+        affected.add(name); changed = true;
+      }
+    }
+  } while (changed);
+  for (const name of affected) if (manifest.steps[name]) manifest.steps[name].status = 'stale';
+  if (manifest.steps[e.current_step]) manifest.steps[e.current_step].status = 'failed';
+  else manifest.steps[e.current_step] = { status: 'failed', inputs: [], outputs: [] };
+  manifest.pending_step = null;
+  manifest.execution.status = 'waiting';
+  manifest.execution.terminal_status = 'failed';
+  await store.write(manifest, generation);
+}
+
 export class CloudRunProtocol {
   constructor(store) { this.store = store; }
 

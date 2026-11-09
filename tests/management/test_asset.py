@@ -5,6 +5,15 @@ import pytest
 
 from aigear.db import bucket
 from aigear.management import asset
+from aigear.common.asset_runtime import workflow_step
+from aigear.management.asset_errors import ExecutionConflict
+from types import SimpleNamespace
+
+
+def local_step(name):
+    config = SimpleNamespace(gcp=SimpleNamespace(gcp_project_id=None,
+        bucket=SimpleNamespace(on=False, train_bucket=SimpleNamespace(bucket_name='local-bucket'))))
+    return workflow_step('v1', name, config)
 
 
 def test_local_asset_roundtrip_and_blob_layout(tmp_path, monkeypatch):
@@ -12,15 +21,17 @@ def test_local_asset_roundtrip_and_blob_layout(tmp_path, monkeypatch):
     manager = asset.AssetManagement("v1", "training", bucket_name="local-bucket", bucket_on=False)
     path = manager.get_local_path("model.bin")
     assert path == tmp_path / "asset/v1/training/model.bin"
-    assert manager.get_bucket_blob("model.bin") == "v1/training/model.bin"
+    assert manager.get_bucket_blob("model.bin") == "running/v1/training/model.bin"
     path.write_bytes(b"model contents")
-    manager.upload("model.bin")
+    with local_step('produce'):
+        manager.upload("model.bin")
     assert manager.bucket_client.bucket_path == tmp_path / "asset/buckets/local-bucket"
-    assert (manager.bucket_client.bucket_path / "v1/training/model.bin").read_bytes() == b"model contents"
-    assert manager.bucket_client.read_bytes("v1/training/model.bin") == b"model contents"
+    assert (manager.bucket_client.bucket_path / "running/v1/training/model.bin").read_bytes() == b"model contents"
+    assert manager.bucket_client.read_bytes("running/v1/training/model.bin") == b"model contents"
     path.unlink()
     assert manager.download("model.bin").read_bytes() == b"model contents"
-    manager.copy_blob("model.bin", "copy.bin")
+    with local_step('copy'):
+        manager.copy_blob("model.bin", "copy.bin")
     assert manager.download("copy.bin").read_bytes() == b"model contents"
 
 
@@ -30,8 +41,9 @@ def test_remote_asset_selects_real_client_without_network(tmp_path, monkeypatch)
     monkeypatch.setattr(asset, "RealGCS", constructor)
     manager = asset.AssetManagement("v1", "dataset", project_id="project", bucket_name="remote")
     constructor.assert_called_once_with("project", "remote")
-    manager.upload("data.bin")
-    constructor.return_value.upload.assert_called_once_with(tmp_path / "asset/v1/dataset/data.bin", "v1/dataset/data.bin")
+    with pytest.raises(ExecutionConflict, match='execution entry point'):
+        manager.upload("data.bin")
+    constructor.return_value.upload.assert_not_called()
 
 
 def test_local_missing_source_raises(tmp_path):

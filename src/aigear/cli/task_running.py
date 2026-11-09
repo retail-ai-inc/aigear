@@ -7,6 +7,7 @@ from aigear.common.lifecycle_log import emit_lifecycle_log
 from aigear.common.logger import Logging
 from aigear.common.loading_module import LoadModule
 from aigear.common.run_log_context import RunLogContext
+from aigear.common.asset_runtime import workflow_step
 from aigear.service.grpc.grpc_service import grpc_service
 
 
@@ -35,8 +36,10 @@ def run_workflow(pipeline_version: str, step_name: str) -> bool:
             if ctx:
                 step_started_at = time.monotonic()
                 emit_lifecycle_log("pipeline_step_started", ctx)
-            function_module = LoadModule(module_path).load_module()
-            function_module(pipeline_version=pipeline_version)
+            with workflow_step(pipeline_version, step_name, aigear_config) as execute:
+                if execute:
+                    function_module = LoadModule(module_path).load_module()
+                    function_module(pipeline_version=pipeline_version)
             if ctx:
                 extra: dict[str, int] = {}
                 if step_started_at is not None:
