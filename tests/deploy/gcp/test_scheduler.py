@@ -1,7 +1,26 @@
 import json
+from datetime import datetime, timezone
+import pytest
 from unittest.mock import patch
 
-from aigear.deploy.gcp.scheduler import Scheduler, _build_step_message
+from aigear.deploy.gcp.scheduler import Scheduler, _build_step_message, _managed_run_messages
+
+
+def test_managed_envelope_adds_per_delivery_identity_without_modifying_job():
+    messages = [{"pipeline_version": "v1", "step_name": "train"}, {"pipeline_version": "v1"}]
+    managed = _managed_run_messages(messages, train_bucket="train", run_id="run-a",
+                                    run_started_at=datetime(2026, 11, 9, tzinfo=timezone.utc))
+    assert [task["step_name"] for task in managed] == ["train", "model_service"]
+    assert all(task["train_bucket"] == "train" and task["run_id"] == "run-a" for task in managed)
+    assert all(task["run_started_at_utc"] == "2026-11-09T00:00:00+00:00" for task in managed)
+    assert "run_id" not in messages[0]
+
+
+@pytest.mark.parametrize("capability", ["owner_token", "step_attempt_token", "asset_context"])
+def test_scheduler_cannot_supply_worker_capabilities(capability):
+    with pytest.raises(ValueError):
+        _managed_run_messages([{capability: "forged"}], train_bucket="train", run_id="run-a",
+                              run_started_at=datetime(2026, 11, 9, tzinfo=timezone.utc))
 
 
 def _make_scheduler(**kwargs):

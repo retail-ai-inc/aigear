@@ -398,6 +398,10 @@ Commands that load configuration use `AIGEAR_ENV_PATH` when set, otherwise `env.
 4. Run `aigear-infra --create` to provision infrastructure (requires GCP owner-level permissions; recommended to run in Cloud Shell).
 5. Run pipeline steps with `aigear-task workflow --version <version> --step <step_name>`.
 
+Managed execution ownership is currently an internal protocol; existing workflow and scheduler commands do not yet acquire it. The protocol reserves `running/{pipeline_version}/manifest.json` with conditional writes, keeps ownership while waiting for the next VM, and rejects replayed runs and obsolete step attempts. A process must claim its attempt before it can install a writable context; copying run identifiers into environment variables does not create one.
+
+Internal integrations must commit a step before dispatching its successor, and persist `finalizing` before invoking an idempotent checkpoint-sealing callback. A failed seal or terminal write retains ownership for retry. Recovery requires confirmation that the original execution has stopped, reconciliation of pending writes, and a fresh attempt token; elapsed time does not grant takeover. Managed execution entry points and snapshot registration will be connected in subsequent changes.
+
 ---
 
 ## 7. Security Best Practices

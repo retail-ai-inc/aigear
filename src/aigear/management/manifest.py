@@ -113,6 +113,11 @@ class Execution(Contract):
     current_step: Optional[Text] = None
     step_attempt_token: Optional[Text] = None
     committed_steps: List[Text] = Field(default_factory=list)
+    # A dispatch can be redelivered, but only one process may claim its attempt.
+    worker_token: Optional[Text] = None
+    terminal_status: Optional[Literal["succeeded", "failed"]] = None
+    previous_step_name: Optional[Text] = None
+    previous_step_attempt_token: Optional[Text] = None
 
     @model_validator(mode="after")
     def validate_attempt(self):

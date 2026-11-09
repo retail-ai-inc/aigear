@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { google } from 'googleapis';
 import functions from '@google-cloud/functions-framework';
 import { Logging } from '@google-cloud/logging';
+import { CloudRunProtocol, GCSManifestStore, dispatchManagedTask } from './asset_protocol.js';
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -283,9 +284,11 @@ function buildFatalErrorMessagePrefix({
   stepName,
   dockerImage,
   cancelledSteps = [],
+  assetContext,
 }) {
   const json = JSON.stringify({
     error: true,
+    ...(assetContext ? { asset_context: assetContext } : {}),
     run_id: runId || undefined,
     run_started_at_utc: runStartedAtUtc || undefined,
     pipeline_version: pipelineVersion || undefined,
@@ -348,7 +351,7 @@ function taskFromCompletionPayload(payload) {
  * @param {string} p.gkeZone      GKE cluster zone  (from task field gke_zone)
  * @returns {string}
  */
-function buildStartupScript({
+export function buildStartupScript({
   dockerImage,
   gpuFlag,
   pipelineCommand,
@@ -362,6 +365,7 @@ function buildStartupScript({
   pipelineVersion,
   projectName,
   stepName,
+  assetContext,
 }) {
   // Single-quote-escape all values interpolated into shell to prevent injection
   const esc = s => s.replace(/'/g, "'\\''");
@@ -373,6 +377,7 @@ function buildStartupScript({
     projectName,
     stepName,
     dockerImage,
+    assetContext,
     cancelledSteps: JSON.parse(nextMessage).map(task => buildRunLogFields(task)),
   });
 
@@ -406,9 +411,9 @@ payload["error_output_truncated"] = size > 8192
 print(json.dumps(payload, ensure_ascii=True))
 PY
 ) || error_payload='${esc(fatalErrorPrefix)},"exit_code":"'"$exit_code"'"}'
-  echo "$error_payload"
+  ${assetContext ? 'echo "Managed step failed: $failure_stage ($exit_code)"' : 'echo "$error_payload"'}
   rm -f "$error_log"
-  gcloud pubsub topics publish '${esc(topicName)}' --message "$error_payload" || true
+  gcloud pubsub topics publish '${esc(topicName)}' --message "$error_payload" ${assetContext ? '|| exit 1' : '|| true'}
   gcp_zone=$(curl -sf -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/zone | cut -d/ -f4)
   sleep ${CONFIG.vm.sleepBeforeDelete}
   gcloud compute instances delete "$(hostname | cut -d. -f1)" --zone "$gcp_zone" --quiet
@@ -424,6 +429,11 @@ PY
     `-e AIGEAR_PIPELINE_VERSION='${esc(pipelineVersion || '')}'`,
     `-e AIGEAR_STEP_NAME='${esc(stepName || '')}'`,
     `-e AIGEAR_PROJECT_NAME='${esc(projectName || '')}'`,
+    ...(assetContext ? [
+      `-e AIGEAR_OWNER_TOKEN='${esc(assetContext.owner_token)}'`,
+      `-e AIGEAR_STEP_ATTEMPT_TOKEN='${esc(assetContext.step_attempt_token)}'`,
+      `-e AIGEAR_TRAIN_BUCKET='${esc(assetContext.train_bucket)}'`,
+    ] : []),
   ].join(' ');
 
   const runPipeline = pipelineCommand ? `
@@ -504,6 +514,12 @@ fi
     project_name: projectName || undefined,
   });
   const publishMessage = nextMessage === MSG.EMPTY_QUEUE ? completionMessage : nextMessage;
+  const managedMessage = assetContext ? JSON.stringify({
+    done: true, asset_context: assetContext, next_tasks: JSON.parse(nextMessage),
+  }) : publishMessage;
+  const publishCommand = assetContext
+    ? `gcloud pubsub topics publish '${esc(topicName)}' --message '${esc(managedMessage)}'`
+    : `gcloud pubsub topics publish '${esc(topicName)}' --message '${esc(publishMessage)}'`;
 
   // gcloud and docker are already on PATH in the custom image — no sudo needed.
   // nextMessage is inlined as a literal string by the Cloud Function at script-generation
@@ -532,7 +548,7 @@ ${runPipeline}
 ${runDeploy}
 rm -f "$error_log"
 # ── Notify next step and self-delete ──
-gcloud pubsub topics publish '${esc(topicName)}' --message '${esc(publishMessage)}'
+${publishCommand}
 gcp_zone=$(curl -sf -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/zone | cut -d/ -f4)
 sleep ${CONFIG.vm.sleepBeforeDelete}
 gcloud compute instances delete "$(hostname | cut -d. -f1)" --zone "$gcp_zone" --quiet
@@ -927,10 +943,75 @@ async function createVMWithFallback(authClient, configFactory, vmName, logContex
     }
   }
 
-  throw new Error('All zones exhausted, no resources available.');
+  throw Object.assign(new Error('All zones exhausted, no resources available.'), { definitelyNotStarted: true });
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
+
+/** Internal managed route. Deliberately not registered as an event handler until
+ * PR-05 installs worker claims/commits. seal is the mandatory PR-06 boundary.
+ * Ambiguous insert failures are retried with the same attempt/VM, never released.
+ */
+export async function processManagedMessage(payload, auth, { seal, reconcileFailure, createVM, store } = {}) {
+  if (typeof seal !== 'function') throw new Error('A run sealing callback is required');
+  const identity = payload.asset_context;
+  const tasks = Array.isArray(payload) ? payload : payload.next_tasks;
+  const task = tasks?.[0];
+  const context = identity || task;
+  if (!context?.train_bucket || !context?.pipeline_version) throw new Error('Missing managed storage identity');
+  const protocol = new CloudRunProtocol(store || new GCSManifestStore(google, auth,
+    context.train_bucket, context.pipeline_version));
+  if (identity && payload.error) {
+    await writeCloudFunctionLog({ event: 'managed_run_failed', message: 'managed_run_failed', severity: 'ERROR',
+      task: identity, extra: { failure_layer: payload.failure_stage === 'pipeline_step' ? 'pipeline' : 'infrastructure',
+        failure_stage: payload.failure_stage || 'vm_start',
+        attempt_id: crypto.createHash('sha256').update(identity.step_attempt_token || '').digest('hex').slice(0, 12) } });
+    return protocol.terminal(identity, false, seal, reconcileFailure);
+  }
+  if (identity && payload.done && (!tasks || tasks.length === 0)) {
+    return protocol.terminal(identity, true, seal);
+  }
+  if (!Array.isArray(tasks) || !tasks.length || (identity && !payload.done)) throw new Error('Invalid managed queue');
+  for (const queued of tasks) {
+    if (queued.pipeline_version !== context.pipeline_version || queued.train_bucket !== context.train_bucket
+        || queued.run_id !== context.run_id
+        || new Date(queued.run_started_at_utc).getTime() !== new Date(context.run_started_at_utc).getTime()) {
+      throw new Error('Mixed managed queue identities');
+    }
+  }
+  return dispatchManagedTask(protocol, task, identity, async (reserved, suffix) => {
+    let insertStarted = false;
+    try {
+      if (createVM) {
+        insertStarted = true;
+        return await createVM(reserved, suffix);
+      }
+      validateTask(reserved);
+      const startupScript = buildStartupScript({
+        dockerImage: reserved.docker_image, gpuFlag: reserved.gpu === true ? '--gpus all' : '',
+        pipelineCommand: buildPipelineCommand(reserved),
+        yamlPathInImage: reserved.model_class_path ? modelClassPathToYaml(reserved.model_class_path, reserved.env || 'staging') : '',
+        nextMessage: JSON.stringify(tasks.slice(1)), topicName: CONFIG.topicName,
+        gkeCluster: reserved.gke_cluster || '', gkeZone: reserved.gke_zone || '',
+        runId: reserved.run_id, runStartedAtUtc: reserved.run_started_at_utc,
+        pipelineVersion: reserved.pipeline_version, projectName: reserved.project_name || '',
+        stepName: reserved.step_name, assetContext: reserved,
+      });
+      const vmName = `${reserved.vm_name}-${suffix}`;
+      insertStarted = true;
+      return await createVMWithFallback(auth, (zone, serviceAccount) => buildVmConfig({
+        current: reserved, vmName, startupScript, zone, serviceAccount,
+      }), vmName, buildRunLogFields(reserved));
+    } catch (err) {
+      await writeCloudFunctionLog({ event: 'managed_vm_dispatch_failed', message: 'managed_vm_dispatch_failed',
+        severity: 'ERROR', task: reserved, extra: { failure_layer: 'infrastructure', failure_stage: 'vm_create' } });
+      if (!insertStarted || isFatalVmError(err) || err.definitelyNotStarted === true) {
+        return protocol.terminal(reserved, false, seal, reconcileFailure);
+      }
+      throw err;
+    }
+  });
+}
 
 functions.cloudEvent('cronjobProcessPubSub', async cloudEvent => {
   const message = Buffer.from(cloudEvent.data.message.data, 'base64').toString().trim();

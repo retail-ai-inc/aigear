@@ -51,6 +51,7 @@ class CloudFunction:
         package_file_src = source_path / "package.json"
         package_file_dst = destination_path / "package.json"
         shutil.copy(package_file_src, package_file_dst)
+        shutil.copy(source_path / "asset_protocol.js", destination_path / "asset_protocol.js")
 
         return destination_path.as_posix()
 

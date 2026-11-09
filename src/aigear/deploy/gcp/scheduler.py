@@ -9,6 +9,27 @@ from aigear.common.logger import Logging
 logger = Logging(log_name=__name__).console_logging()
 
 
+def _managed_run_messages(messages, *, train_bucket, run_id, run_started_at):
+    """Internal scheduler→function envelope builder; PR-05 enables its caller.
+
+    Run identity is assigned per scheduler delivery, never baked into a recurring
+    job. Owner/attempt capabilities are assigned only by the manifest CAS.
+    """
+    from aigear.management.asset_paths import identifier, utc_datetime
+
+    identifier(run_id)
+    started = utc_datetime(run_started_at).isoformat()
+    if not train_bucket:
+        raise ValueError("Managed tasks require a training bucket")
+    result = []
+    for message in messages:
+        if any(key in message for key in ("owner_token", "step_attempt_token", "asset_context")):
+            raise ValueError("Scheduler tasks cannot supply execution capabilities")
+        result.append({**message, "run_id": run_id, "run_started_at_utc": started,
+                       "train_bucket": train_bucket, "step_name": message.get("step_name") or "model_service"})
+    return result
+
+
 class Scheduler:
     """Wraps gcloud scheduler jobs commands; each instance represents one Cloud Scheduler job."""
 

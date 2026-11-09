@@ -75,3 +75,5 @@ def test_function_source_render_refreshes_stale_files(tmp_path, monkeypatch):
     fn._function_path()
     assert source.read_text(encoding="utf-8") == text
     assert (tmp_path / "cloud_function/package.json").exists()
+    protocol = tmp_path / "cloud_function/asset_protocol.js"
+    assert "export class CloudRunProtocol" in protocol.read_text(encoding="utf-8")
