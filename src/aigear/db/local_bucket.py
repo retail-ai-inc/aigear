@@ -162,12 +162,22 @@ class LocalGCSMock(BucketABC):
         target = resolve_under(self._root, name)
         if row is None:
             try:
-                target.unlink(missing_ok=True)
+                if not target.is_dir():
+                    target.unlink(missing_ok=True)
             except NotADirectoryError:
                 pass  # A failed write below an existing file never created it.
+            parent = target.parent
+            while parent != self._root:
+                try:
+                    parent.rmdir()  # Remove only empty projection directories.
+                except OSError:
+                    break
+                parent = parent.parent
         else:
             data = self._data(row)
             if not target.is_file() or target.read_bytes() != data:
+                if target.is_dir():
+                    target.rmdir()  # Never remove untracked files to make room.
                 atomic_file(target, data)
 
     def _recover(self, transaction):

@@ -50,7 +50,7 @@ async function validateMembers(store, manifest, prefix, workspace = false) {
       await visit(input.step_name);
       const producer = manifest.steps[input.step_name], output = producer.outputs.find(o => o.path === input.artifact);
       if (!output || producer.producer_run_id !== input.run_id || producer.producer_step_revision !== input.step_revision
-          || (workspace && output.generation !== input.observed_object.generation)) throw new ExecutionConflict('Input production changed');
+          || (workspace && !manifest.restored_from && output.generation !== input.observed_object.generation)) throw new ExecutionConflict('Input production changed');
     }
     visiting.delete(name); checked.add(name);
   }

@@ -431,6 +431,12 @@ Retirement copies and verifies the complete destination before deleting fixed so
 
 After source cleanup, all trash members and the final manifest receive the same fixed UTC `retired_at` as Custom-Time. Metadata retries reuse that time, so an old model entering trash today starts its retention period today. Retirement never changes bucket lifecycle rules or starts a background cleanup service. Legacy bucket configuration with retention disabled skips trash queries and rejects retirement until migrated to the nested configuration with a positive retention period.
 
+Restore a precise retired run with `assets.restore(run_id, target="assets")` or `assets.restore(run_id, target="running")`. Both return `RestoreResult`; repeat a failed operation with the same run ID and target. A different target is rejected while recovery is pending. Source corruption or conflicting destination versions stop the operation. Restoring to assets keeps the original registration time, producer identities and sealed state, so a later retire still sorts by that original time. A complete identical assets destination can be adopted and its remaining trash source cleaned safely.
+
+Restoring to running requires an idle workspace, including the interval between cloud VMs. The operation blocks training and managed reads while it replaces the complete manifest-selected file set. It conditionally removes only previously managed files that are absent from the snapshot; untracked files remain outside the committed artifact set. Producer identities and recorded historical inputs remain intact, while restored object generations and the workspace revision change. Downloads therefore use newly verified generation-specific cache entries. `last_run_id` is cleared and the replay watermark is retained. Once a newer run modifies the workspace, retrying an older completed restore is rejected.
+
+Restored objects do not inherit trash Custom-Time. Both targets use destination-commit-before-source-cleanup, and an interrupted restore retains its fixed source, target and progress for retry. Existing snapshot queries remain read-only.
+
 ---
 
 ## 7. Security Best Practices

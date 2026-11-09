@@ -15,7 +15,7 @@ from aigear.management.asset_paths import identifier, local_asset_roots, manifes
 from aigear.management.artifact_validity import valid_step
 from aigear.management.asset_operations import copy_members, verify_object
 from aigear.management.manifest import (ArtifactObject, FixedManifest, ObjectExpectation, ObjectVersion,
-    PendingOperation, ProductionIdentity, RetirementItem, RetirementResult, SnapshotInfo, SnapshotManifest)
+    PendingOperation, ProductionIdentity, RetirementItem, RetirementResult, RestoreResult, SnapshotInfo, SnapshotManifest)
 from aigear.management.managed_io import record_input
 
 logger = logging.getLogger(__name__)
@@ -168,10 +168,35 @@ class Assets:
             raise SnapshotConflict('Snapshot changed before transfer', phase='transfer')
         location = 'trash' if kind == 'retire' else 'assets'
         prefix = snapshot_prefix(location, self.pipeline_version, snapshot.run_id, snapshot.run_started_at)
+        previous_target = None
+        target_versions = {}
+        if kind == 'restore':
+            from aigear.management.snapshot_transfer import _same_members
+            try:
+                target_meta = self._bucket.get_metadata(manifest_key(prefix))
+                target_snapshot = SnapshotManifest.from_json(self._bucket.read_bytes(target_meta.name, generation=target_meta.generation))
+            except ObjectNotFound:
+                target_meta = target_snapshot = None
+            if target_snapshot:
+                if (target_snapshot.pending_operation or not target_snapshot.committed or not _same_members(target_snapshot, snapshot)
+                        or target_meta.custom_time is not None or target_snapshot.retired_at is not None):
+                    raise SnapshotConflict('Existing restore destination disagrees with source', phase='restore')
+                for name in target_snapshot.steps:
+                    try:
+                        valid_step(target_snapshot, name, self._bucket, prefix)
+                    except InvalidArtifact as exc:
+                        raise SnapshotConflict('Existing restore destination is incomplete', phase='restore', cause=exc) from exc
+                for member in target_snapshot.committed_files():
+                    info = self._bucket.get_metadata(f'{prefix}/{member.path}')
+                    if info.custom_time is not None:
+                        raise SnapshotConflict('Existing assets destination has trash retention metadata', phase='restore')
+                    target_versions[member.path] = member.generation
+                previous_target = FixedManifest(object=ObjectVersion(key=target_meta.name, generation=target_meta.generation), manifest=target_snapshot)
         operation = PendingOperation(operation_id=uuid4().hex, kind=kind, phase='preparing', target=target,
             started_at=datetime.now(timezone.utc), source=FixedManifest(object=ObjectVersion(key=meta.name, generation=meta.generation), manifest=snapshot),
-            expected_targets=[ObjectExpectation(key=f'{prefix}/{member.path}', generation=None) for member in snapshot.committed_files()]
-                             + [ObjectExpectation(key=manifest_key(prefix), generation=None)])
+            previous_targets=[previous_target] if previous_target else [],
+            expected_targets=[ObjectExpectation(key=f'{prefix}/{member.path}', generation=target_versions.get(member.path)) for member in snapshot.committed_files()]
+                             + [ObjectExpectation(key=manifest_key(prefix), generation=previous_target.object.generation if previous_target else None)])
         workspace.pending_operation = operation
         ownership._write(workspace, generation, 'transfer-preparing')
         return operation
@@ -199,6 +224,9 @@ class Assets:
         workspace, _ = ownership.read()
         operation = workspace.pending_operation
         if operation:
+            if (not dry_run and active_context(required=False) is None and workspace.execution
+                    and workspace.execution.status in {'running', 'waiting'}):
+                raise ExecutionConflict('An active workflow owns the pending operation', phase='retire')
             source = operation.source.manifest
             run_id = source.run_id if isinstance(source, SnapshotManifest) else source.execution.run_id
             blocked = RetirementItem(run_id=run_id, uri=f'gs://{self.bucket_name}/{operation.source.object.key}',
@@ -253,6 +281,92 @@ class Assets:
                 raise OperationIncomplete('Retirement is incomplete', operation_id=operation.operation_id if operation else None,
                     phase=operation.phase if operation else 'acquire', cause=exc, partial_result=result) from exc
         return result
+
+    def restore(self, run_id, *, target='assets'):
+        identifier(run_id)
+        if target not in {'assets', 'running'}:
+            raise ValueError('Restore target must be assets or running')
+        if not self._trash_enabled():
+            raise InvalidArtifact('Trash retention is disabled by the bucket configuration', phase='restore')
+        ownership = self._ownership()
+        workspace, generation = ownership.read()
+        operation = workspace.pending_operation
+        if operation:
+            if (active_context(required=False) is None and workspace.execution
+                    and workspace.execution.status in {'running', 'waiting'}):
+                raise ExecutionConflict('An active workflow owns the pending restore', phase='restore')
+            if operation.kind != 'restore' or operation.source.manifest.run_id != run_id or operation.target != target:
+                raise SnapshotConflict('Pending restore has a different source or target', phase='restore')
+        else:
+            if (workspace.execution and workspace.execution.status in {'running', 'waiting', 'finalizing'}
+                    and (target == 'running' or active_context(required=False) is None)):
+                raise ExecutionConflict('An active or waiting run prevents restoration', phase='restore')
+            matches = [(meta, snapshot) for meta, snapshot in self._snapshots(('trash',)) if snapshot.run_id == run_id]
+            if not matches:
+                if target == 'running' and workspace.restored_from and workspace.restored_from.run_id == run_id:
+                    if workspace.last_run_id is not None or workspace.execution is not None:
+                        raise SnapshotConflict('A newer run prevents replay of an old restore', phase='restore')
+                    for name, step in workspace.steps.items():
+                        if step.outputs:
+                            valid_step(workspace, name, self._bucket, workspace_prefix(self.pipeline_version))
+                    return self._restore_result(run_id, target, workspace.restored_from.operation_id)
+                if target == 'assets':
+                    if workspace.restored_from and workspace.restored_from.run_id == run_id:
+                        raise SnapshotConflict('The completed restore targeted running', phase='restore')
+                    existing = [(meta, snapshot) for meta, snapshot in self._snapshots() if snapshot.run_id == run_id]
+                    if len(existing) == 1 and existing[0][0].metadata.get('aigear_operation'):
+                        meta, snapshot = existing[0]
+                        for name in snapshot.steps:
+                            valid_step(snapshot, name, self._bucket, meta.name.rsplit('/', 1)[0])
+                        return self._restore_result(run_id, target, meta.metadata['aigear_operation'], snapshot)
+                raise SnapshotNotFound('Trash snapshot run was not found', phase='restore')
+            if len(matches) != 1:
+                raise SnapshotConflict('Multiple trash sources disagree', phase='restore')
+            meta, snapshot = matches[0]
+            if target == 'assets':
+                operation = self._begin_transfer(meta, snapshot, kind='restore', target='assets')
+            else:
+                if not snapshot.committed or not snapshot.sealed or snapshot.pending_operation:
+                    raise InvalidArtifact('Restore requires a complete sealed source', phase='restore')
+                for name in snapshot.steps:
+                    valid_step(snapshot, name, self._bucket, meta.name.rsplit('/', 1)[0])
+                previous = {member.path: member for member in workspace.committed_files()}
+                expected = {}
+                for member in [*workspace.committed_files(), *snapshot.committed_files()]:
+                    key = f'{workspace_prefix(self.pipeline_version)}/{member.path}'
+                    try:
+                        actual = self._bucket.get_metadata(key)
+                    except ObjectNotFound:
+                        expected[key] = None
+                        continue
+                    if member.path not in previous or actual.generation != previous[member.path].generation:
+                        raise SnapshotConflict('Running destination contains an unowned version', phase='restore')
+                    expected[key] = actual.generation
+                operation = PendingOperation(operation_id=uuid4().hex, kind='restore', target='running', phase='preparing',
+                    started_at=datetime.now(timezone.utc), source=FixedManifest(object=ObjectVersion(key=meta.name, generation=meta.generation), manifest=snapshot),
+                    previous_targets=[FixedManifest(object=ObjectVersion(key=ownership.key, generation=generation), manifest=workspace.model_copy(deep=True))] if generation != '0' else [],
+                    expected_targets=[ObjectExpectation(key=key, generation=expected[key])
+                        for key in [f'{workspace_prefix(self.pipeline_version)}/{member.path}' for member in snapshot.committed_files()]]
+                                     + [ObjectExpectation(key=ownership.key, generation=generation if generation != '0' else None)])
+                workspace.pending_operation = operation
+                ownership._write(workspace, generation, 'restore-preparing')
+        try:
+            if target == 'assets':
+                snapshot = self._resume_transfer(operation)
+                return self._restore_result(run_id, target, operation.operation_id, snapshot)
+            from aigear.management.running_restore import resume_running_restore
+            resume_running_restore(self, operation)
+            return self._restore_result(run_id, target, operation.operation_id)
+        except Exception as exc:
+            raise OperationIncomplete('Restoration is incomplete', operation_id=operation.operation_id,
+                phase=operation.phase, cause=exc, partial_result=self._restore_result(run_id, target, operation.operation_id,
+                    operation.source.manifest, operation_status='incomplete')) from exc
+
+    def _restore_result(self, run_id, target, operation_id, snapshot=None, *, operation_status='completed'):
+        prefix = workspace_prefix(self.pipeline_version) if target == 'running' or snapshot is None else snapshot_prefix(
+            'assets', self.pipeline_version, snapshot.run_id, snapshot.run_started_at)
+        return RestoreResult(pipeline_version=self.pipeline_version, run_id=run_id, target=target,
+            target_uri=f'gs://{self.bucket_name}/{prefix}', operation_status=operation_status, operation_id=operation_id)
 
     def get(self, run_id):
         identifier(run_id)

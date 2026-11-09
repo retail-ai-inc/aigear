@@ -7,7 +7,7 @@ from aigear.common.schema.bucket_schema import ObjectNotFound
 from aigear.management.asset_errors import SnapshotConflict
 from aigear.management.asset_operations import copy_members, verify_object
 from aigear.management.asset_paths import manifest_key, snapshot_prefix
-from aigear.management.manifest import ArtifactObject, SnapshotManifest
+from aigear.management.manifest import ArtifactObject, ObjectVersion, SnapshotManifest, VerifiedObject
 
 
 def write_manifest(bucket, key, snapshot, generation, operation, *, custom_time=None):
@@ -50,12 +50,13 @@ def resume_transfer(assets, operation):
         target_meta, target = _read(bucket, target_key)
     except ObjectNotFound:
         target_meta, target = None, None
-    if target and target.pending_operation is None and target.committed and _same_members(target, fixed):
-        if target_meta.metadata.get('aigear_operation') != operation.operation_id:
-            raise SnapshotConflict('Completed transfer target belongs to another operation', phase='complete')
+    if (target and target.pending_operation is None and target.committed and _same_members(target, fixed)
+            and target_meta.metadata.get('aigear_operation') == operation.operation_id):
         verify_target(target, retention=True)
         if location == 'trash' and (target.retired_at != operation.retired_at or target_meta.custom_time != operation.retired_at):
             raise SnapshotConflict('Transfer retention time changed', phase='complete')
+        if location == 'assets' and target_meta.custom_time is not None:
+            raise SnapshotConflict('Restored manifest inherited Custom-Time', phase='complete')
         assets._clear_operation(operation)
         return target
 
@@ -84,6 +85,25 @@ def resume_transfer(assets, operation):
             target.revision += 1
             target.updated_at = datetime.now(timezone.utc)
             target_meta = write_manifest(bucket, target_key, target, '0', operation)
+            operation.target_manifest_generation = target_meta.generation
+            assets._persist_operation(operation)
+        elif (operation.kind == 'restore' and operation.previous_targets and target.pending_operation is None
+              and target.committed and _same_members(target, fixed)
+              and target_meta.generation == operation.previous_targets[0].object.generation):
+            for step in target.steps.values():
+                for member in step.outputs:
+                    verify_object(bucket, f'{prefix}/{member.path}', member)
+                    original = next(o for o in fixed.committed_files() if o.path == member.path)
+                    if not any(item.target.key == f'{prefix}/{member.path}' for item in operation.progress):
+                        operation.progress.append(VerifiedObject(
+                            source=ObjectVersion(key=f'{source_prefix}/{member.path}', generation=original.generation),
+                            target=ObjectVersion(key=f'{prefix}/{member.path}', generation=member.generation),
+                            size=member.size, crc32c=member.crc32c))
+            assets._persist_operation(operation)
+            target.pending_operation = operation
+            target.revision += 1
+            target.updated_at = datetime.now(timezone.utc)
+            target_meta = write_manifest(bucket, target_key, target, target_meta.generation, operation)
             operation.target_manifest_generation = target_meta.generation
             assets._persist_operation(operation)
         elif target.pending_operation is None or target.pending_operation.operation_id != operation.operation_id:

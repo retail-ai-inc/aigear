@@ -29,7 +29,8 @@ def valid_step(manifest, step_name, bucket, prefix, visiting=None):
             # production identity against its own fixed members, not running/.
             if (producer.producer_run_id, producer.producer_step_revision) != (source.run_id, source.step_revision) or output is None:
                 raise InvalidArtifact("Managed input production changed", phase="validate")
-            if manifest.manifest_type == "workspace" and source.observed_object.generation != output.generation:
+            if (manifest.manifest_type == "workspace" and manifest.restored_from is None
+                    and source.observed_object.generation != output.generation):
                 raise InvalidArtifact("Managed input version changed", phase="validate")
         return step
     finally:
