@@ -2,20 +2,71 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from dataclasses import dataclass
 import logging
+from types import MappingProxyType
+from typing import Mapping
 from uuid import uuid4
 
 from aigear.common.asset_context import RunOwnership, active_context
-from aigear.common.schema.bucket_schema import ObjectNotFound, PreconditionFailed
+from aigear.common.schema.bucket_schema import ObjectNotFound, PreconditionFailed, VersionMismatch
+from aigear.db.storage_common import crc32c
 from aigear.management.asset_errors import (BackupUnavailable, ExecutionConflict, IntegrityError, InvalidArtifact,
                                           OperationIncomplete, SnapshotConflict)
-from aigear.management.asset_paths import artifact_path, manifest_key, release_prefix, validate_file_set, workspace_prefix
+from aigear.management.asset_paths import artifact_path, manifest_key, release_path, release_prefix, validate_file_set, workspace_prefix
 from aigear.management.artifact_validity import valid_step
 from aigear.management.asset_operations import copy_members, verify_object
 from aigear.management.manifest import (ArtifactObject, FixedManifest, ObjectExpectation, ObjectVersion,
     PendingOperation, ReleaseFile, ReleaseInfo, ReleaseManifest, WorkspaceManifest)
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ReleaseBundle:
+    manifest: ReleaseManifest
+    manifest_generation: str
+    files: Mapping[str, bytes]
+
+
+def read_release(bucket, path, *, max_attempts=3):
+    """Read a whole fixed release group, confirming its manifest again at the end.
+
+    No unversioned fallback or local cache is used. Decode every member before
+    replacing a consumer's one current-group reference. An exception leaves the
+    consumer's existing group untouched; a new consumer remains uninitialized.
+    """
+    prefix = release_path(path)
+    if type(max_attempts) is not int or max_attempts <= 0:
+        raise ValueError('max_attempts must be a positive integer')
+    key = manifest_key(prefix)
+    last = None
+    for _ in range(max_attempts):
+        try:
+            meta = bucket.get_metadata(key)
+            payload = bucket.read_bytes(key, generation=meta.generation)
+            manifest = ReleaseManifest.from_json(payload)
+            if not manifest.committed or manifest.pending_operation:
+                raise OperationIncomplete('Release group is pending', phase='read')
+            members = {}
+            for file in manifest.files:
+                data = bucket.read_bytes(f'{prefix}/{file.path}', generation=file.generation)
+                if len(data) != file.size or crc32c(data) != file.crc32c:
+                    raise IntegrityError('Release member checksum differs', phase='read')
+                members[file.path] = data
+            if bucket.get_metadata(key).generation != meta.generation:
+                raise VersionMismatch('Release manifest changed during read', phase='read')
+            if bucket.read_bytes(key, generation=meta.generation) != payload:
+                raise IntegrityError('Fixed manifest content changed', phase='read')
+            return ReleaseBundle(manifest=manifest, manifest_generation=meta.generation,
+                                 files=MappingProxyType(members))
+        except IntegrityError as exc:
+            if exc.phase != 'read':
+                raise  # Unsupported/invalid schemas cannot be made readable by retrying.
+            last = exc
+        except (ObjectNotFound, PreconditionFailed, VersionMismatch, OperationIncomplete) as exc:
+            last = exc
+    raise OperationIncomplete('No complete consistent release group was available', phase='read', cause=last)
 
 
 def _file_identity(file):

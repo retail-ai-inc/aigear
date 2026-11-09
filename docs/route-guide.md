@@ -452,6 +452,30 @@ Publication holds workspace and release-manifest ownership in that order. It fir
 
 `OperationIncomplete` reports the fixed operation ID, phase, cause and partial `ReleaseInfo`. Retry with the same path and extra selection; source or target changes are not silently adopted. A recovered operation also converges a stopped run already in `finalizing`, preserving its original succeeded/failed outcome. Pending workspace operations prevent a step from committing successfully. Bucket lifecycle rules are not changed by publishing or rollback.
 
+Consumers load the release bucket with `read_release(bucket, release_path, max_attempts=3)` from `aigear.management.release`. It returns a `ReleaseBundle` containing the fixed manifest generation and an immutable mapping of all published member bytes. The helper reads a committed manifest, downloads every member at its recorded generation, checks size/CRC32C, then confirms the manifest again. Pending groups, missing files, checksum failures and concurrent publication receive only bounded retries; no unversioned download or old cached scaler is substituted. Unsupported manifest schemas and permission errors are rejected.
+
+Bind a remote consumer to `AppConfig.aigear().gcp.bucket.release_bucket.bucket_name` with `RealGCS(project_id, release_bucket_name)`. Decode the entire candidate before replacing one current-group reference:
+
+```python
+import pickle
+from aigear.management.release import read_release
+
+class Models:
+    def __init__(self, release_bucket):
+        self.bucket = release_bucket
+        self.current = None
+
+    def reload(self):
+        bundle = read_release(self.bucket, "models/current")
+        candidate = (
+            pickle.loads(bundle.files["model.pkl"]),
+            pickle.loads(bundle.files["feature/scaler.pkl"]),
+        )
+        self.current = candidate
+```
+
+A read or decoder failure leaves the previous `current` group intact; a new instance remains unready while `current` is `None`. Capture `group = models.current` once per request so model and scaler are taken from the same group even during reload. The helper also accepts `LocalGCSMock` for local consumers and tests.
+
 ---
 
 ## 7. Security Best Practices

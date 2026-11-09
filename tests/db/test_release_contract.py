@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from aigear.common import asset_runtime
 from aigear.management import asset
 from aigear.management.assets import Assets
+from aigear.management.release import read_release
 
 
 def test_publish_backup_and_rollback_use_same_cross_bucket_backend_contract(stores, tmp_path, monkeypatch):
@@ -23,3 +24,6 @@ def test_publish_backup_and_rollback_use_same_cross_bucket_backend_contract(stor
     assets.rollback()
     assert release.read_bytes('v1/model') == b'one'
     assert release.get_metadata('backup/v1/manifest.json').generation == backup_generation
+    bundle = read_release(release, 'v1')
+    assert bundle.files == {'model': b'one'}
+    assert isinstance(bundle.manifest_generation, str)
