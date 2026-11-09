@@ -185,6 +185,8 @@ class PendingOperation(Contract):
     target: Optional[Literal["running", "assets"]] = None
     retired_at: Optional[UTCTime] = None
     started_at: Optional[UTCTime] = None
+    source_manifest_generation: Optional[Generation] = None
+    target_manifest_generation: Optional[Generation] = None
     error: Optional[Annotated[str, StringConstraints(strict=True, min_length=1, max_length=512)]] = None
 
     @model_validator(mode="after")

@@ -425,6 +425,12 @@ A terminal run seals its explicit checkpoints before releasing ownership. Failed
 
 `list()` and `get(run_id)` return `SnapshotInfo` and do not repair operations. `list(include_trash=True)` also includes retired snapshots when available. Query results expose only committed members and report pending operation status; their integrity status is unverified until object validation is performed by an operation. Unknown run IDs raise `SnapshotNotFound`. For local storage without configuration, bind explicitly with `Assets("v1", bucket_name="train", bucket_on=False)`.
 
+Retire older checkpoints explicitly with `assets.retire(keep_latest=3, dry_run=True)` to inspect a `RetirementResult`, then call with `dry_run=False` to execute. `keep_latest` must be a positive integer. Selection uses registration time descending, then run ID ascending; active runs remain protected and can make the retained count exceed the requested limit. Running files, trash and preparing snapshots do not consume retention slots. Dry-run performs no mutations and reports pending operations or workspace ownership that block execution.
+
+Retirement copies and verifies the complete destination before deleting fixed source generations, removing the source manifest last. A retry first reconciles a pending migration and then recalculates retention. Both sides of an interrupted move represent one logical snapshot; queries do not repair it. `OperationIncomplete` carries the operation ID, phase, cause and partial `RetirementResult`, including earlier groups that already completed.
+
+After source cleanup, all trash members and the final manifest receive the same fixed UTC `retired_at` as Custom-Time. Metadata retries reuse that time, so an old model entering trash today starts its retention period today. Retirement never changes bucket lifecycle rules or starts a background cleanup service. Legacy bucket configuration with retention disabled skips trash queries and rejects retirement until migrated to the nested configuration with a positive retention period.
+
 ---
 
 ## 7. Security Best Practices

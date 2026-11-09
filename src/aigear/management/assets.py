@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+import logging
 from uuid import uuid4
 
 from aigear.common.asset_context import RunOwnership, active_context
@@ -14,8 +15,10 @@ from aigear.management.asset_paths import identifier, local_asset_roots, manifes
 from aigear.management.artifact_validity import valid_step
 from aigear.management.asset_operations import copy_members, verify_object
 from aigear.management.manifest import (ArtifactObject, FixedManifest, ObjectExpectation, ObjectVersion,
-    PendingOperation, ProductionIdentity, SnapshotInfo, SnapshotManifest)
+    PendingOperation, ProductionIdentity, RetirementItem, RetirementResult, SnapshotInfo, SnapshotManifest)
 from aigear.management.managed_io import record_input
+
+logger = logging.getLogger(__name__)
 
 
 def _step_identity(step):
@@ -70,8 +73,12 @@ class Assets:
         return RunOwnership(self._bucket, self.pipeline_version)
 
     def _snapshots(self, locations=('assets',)):
+        if self._local_store_absent():
+            return []
         found = []
         for location in locations:
+            if location == 'trash' and not self._trash_enabled():
+                continue
             for meta in self._bucket.list_metadata(f'{location}/{self.pipeline_version}/'):
                 if not meta.name.endswith('/manifest.json'):
                     continue
@@ -82,6 +89,13 @@ class Assets:
                     raise SnapshotConflict('Snapshot identity differs from its location', phase='query')
                 found.append((meta, snapshot))
         return found
+
+    def _local_store_absent(self):
+        return (self._client is None and not self.bucket_on
+                and not local_asset_roots(self.project_dir, self.bucket_name, self.pipeline_version).bucket.exists())
+
+    def _trash_enabled(self):
+        return self._settings is None or self._settings.train_bucket.trash_retention_days is not None
 
     def _info(self, snapshot, *, operation=None):
         operation = operation or snapshot.pending_operation
@@ -96,13 +110,149 @@ class Assets:
                      producer_step_revision=step.producer_step_revision) for name, step in snapshot.steps.items()})
 
     def list(self, *, include_trash=False):
-        values = self._snapshots(('assets', 'trash') if include_trash else ('assets',))
+        values = self._logical_snapshots()
+        return [self._info(snapshot, operation=operation) for _, snapshot, operation in
+                sorted(values, key=lambda value: (-value[1].registered_at.timestamp(), value[1].run_id))
+                if include_trash or snapshot.location == 'assets']
+
+    def _logical_snapshots(self):
+        from aigear.management.snapshot_transfer import _same_members
+        values = self._snapshots(('assets', 'trash'))
         runs = {}
         for meta, snapshot in values:
-            if snapshot.run_id in runs:
-                raise SnapshotConflict('Multiple snapshot locations require reconciliation', phase='query')
-            runs[snapshot.run_id] = snapshot
-        return [self._info(snapshot) for snapshot in sorted(runs.values(), key=lambda s: (-s.registered_at.timestamp(), s.run_id))]
+            runs.setdefault(snapshot.run_id, []).append((meta, snapshot))
+        result = []
+        for copies in runs.values():
+            if len(copies) == 1:
+                meta, snapshot = copies[0]
+                result.append((meta, snapshot, snapshot.pending_operation))
+                continue
+            operations = [snapshot.pending_operation for _, snapshot in copies if snapshot.pending_operation]
+            if (len(copies) != 2 or not operations or len({op.operation_id for op in operations}) != 1
+                    or any(op.kind not in {'retire', 'restore'} for op in operations)):
+                raise SnapshotConflict('Conflicting snapshot copies', phase='query')
+            operation = operations[0]
+            keys = {meta.name for meta, _ in copies}
+            if keys != {operation.source.object.key, operation.expected_targets[-1].key}:
+                raise SnapshotConflict('Snapshot locations differ from fixed migration', phase='query')
+            for _, snapshot in copies:
+                if snapshot.committed and not _same_members(snapshot, operation.source.manifest):
+                    raise SnapshotConflict('Snapshot migration copies disagree', phase='query')
+            target = next((value for value in copies if value[0].name == operation.expected_targets[-1].key and value[1].committed), None)
+            meta, snapshot = target or next(value for value in copies if value[0].name == operation.source.object.key)
+            result.append((meta, snapshot, operation))
+        if result:
+            workspace, _ = RunOwnership(self._bucket, self.pipeline_version).read()
+            current = workspace.pending_operation
+            if current:
+                source = current.source.manifest
+                run_id = source.run_id if isinstance(source, SnapshotManifest) else source.execution.run_id
+                result = [(meta, snapshot, current if snapshot.run_id == run_id else operation)
+                          for meta, snapshot, operation in result]
+        return result
+
+    def _begin_transfer(self, meta, snapshot, *, kind='retire', target=None):
+        from aigear.management.artifact_validity import valid_step
+        ownership = self._ownership()
+        workspace, generation = ownership.read()
+        if workspace.pending_operation:
+            raise OperationIncomplete('Another workspace operation is pending', phase='transfer')
+        if active_context(required=False) is None and workspace.execution and workspace.execution.status in {'running', 'waiting', 'finalizing'}:
+            raise ExecutionConflict('Workspace is owned by an active run', phase='transfer')
+        if not snapshot.sealed or not snapshot.committed or snapshot.pending_operation:
+            raise InvalidArtifact('Only complete sealed snapshots can be transferred', phase='transfer')
+        source_prefix = meta.name.rsplit('/', 1)[0]
+        for name in snapshot.steps:
+            valid_step(snapshot, name, self._bucket, source_prefix)
+        if self._bucket.get_metadata(meta.name).generation != meta.generation:
+            raise SnapshotConflict('Snapshot changed before transfer', phase='transfer')
+        location = 'trash' if kind == 'retire' else 'assets'
+        prefix = snapshot_prefix(location, self.pipeline_version, snapshot.run_id, snapshot.run_started_at)
+        operation = PendingOperation(operation_id=uuid4().hex, kind=kind, phase='preparing', target=target,
+            started_at=datetime.now(timezone.utc), source=FixedManifest(object=ObjectVersion(key=meta.name, generation=meta.generation), manifest=snapshot),
+            expected_targets=[ObjectExpectation(key=f'{prefix}/{member.path}', generation=None) for member in snapshot.committed_files()]
+                             + [ObjectExpectation(key=manifest_key(prefix), generation=None)])
+        workspace.pending_operation = operation
+        ownership._write(workspace, generation, 'transfer-preparing')
+        return operation
+
+    def _resume_transfer(self, operation):
+        from aigear.management.snapshot_transfer import resume_transfer
+        fields = {'operation_id': operation.operation_id, 'phase': operation.phase,
+                  'pipeline_version': self.pipeline_version, 'run_id': operation.source.manifest.run_id}
+        logger.info('asset_transfer_started', extra=fields)
+        try:
+            result = resume_transfer(self, operation)
+        except Exception:
+            logger.warning('asset_transfer_incomplete', extra={**fields, 'phase': operation.phase})
+            raise
+        logger.info('asset_transfer_completed', extra={**fields, 'phase': 'completed'})
+        return result
+
+    def retire(self, keep_latest, *, dry_run=False):
+        result = RetirementResult(keep_latest=keep_latest, dry_run=dry_run)
+        if not self._trash_enabled():
+            raise InvalidArtifact('Trash retention is disabled by the bucket configuration', phase='retire')
+        if self._local_store_absent():
+            return result
+        ownership = self._ownership()
+        workspace, _ = ownership.read()
+        operation = workspace.pending_operation
+        if operation:
+            source = operation.source.manifest
+            run_id = source.run_id if isinstance(source, SnapshotManifest) else source.execution.run_id
+            blocked = RetirementItem(run_id=run_id, uri=f'gs://{self.bucket_name}/{operation.source.object.key}',
+                                     reason='pending operation', operation_id=operation.operation_id)
+            if dry_run:
+                result.incomplete.append(blocked)
+            elif operation.kind == 'retire':
+                try:
+                    completed = self._resume_transfer(operation)
+                    result.retired.append(RetirementItem(run_id=completed.run_id, uri=self._info(completed).uri,
+                                                        reason='retired', operation_id=operation.operation_id))
+                except Exception as exc:
+                    result.incomplete.append(blocked)
+                    raise OperationIncomplete('Retirement reconciliation is incomplete', operation_id=operation.operation_id,
+                        phase=operation.phase, cause=exc, partial_result=result) from exc
+            else:
+                result.incomplete.append(blocked)
+                raise OperationIncomplete('Another operation must finish before retirement', operation_id=operation.operation_id,
+                                          phase=operation.phase, partial_result=result)
+        workspace, _ = ownership.read()
+        protected = workspace.execution.run_id if workspace.execution and workspace.execution.status in {'running', 'waiting', 'finalizing'} else None
+        snapshots = sorted([value for value in self._logical_snapshots() if value[1].location == 'assets' and value[1].committed],
+                           key=lambda value: (-value[1].registered_at.timestamp(), value[1].run_id))
+        planned = []
+        for index, (meta, snapshot, pending) in enumerate(snapshots):
+            item = RetirementItem(run_id=snapshot.run_id, uri=self._info(snapshot).uri,
+                                  reason='active' if snapshot.run_id == protected or not snapshot.sealed else 'recent')
+            if index < keep_latest or snapshot.run_id == protected or not snapshot.sealed:
+                result.retained.append(item)
+            elif pending:
+                result.incomplete.append(item.model_copy(update={'reason': 'pending operation', 'operation_id': pending.operation_id}))
+            else:
+                item.reason = 'retention limit'
+                result.planned.append(item)
+                planned.append((meta, snapshot, item))
+        if dry_run:
+            if protected and active_context(required=False) is None:
+                result.incomplete.extend(item.model_copy(update={'reason': 'workspace occupied'}) for _, _, item in planned)
+            return result
+        if result.incomplete:
+            raise OperationIncomplete('Pending snapshots prevent retirement', phase='plan', partial_result=result)
+        for meta, snapshot, item in planned:
+            operation = None
+            try:
+                operation = self._begin_transfer(meta, snapshot)
+                completed = self._resume_transfer(operation)
+                result.retired.append(RetirementItem(run_id=completed.run_id, uri=self._info(completed).uri,
+                                                    reason='retired', operation_id=operation.operation_id))
+            except Exception as exc:
+                result.incomplete.append(item.model_copy(update={'reason': 'retirement incomplete',
+                    'operation_id': operation.operation_id if operation else None}))
+                raise OperationIncomplete('Retirement is incomplete', operation_id=operation.operation_id if operation else None,
+                    phase=operation.phase if operation else 'acquire', cause=exc, partial_result=result) from exc
+        return result
 
     def get(self, run_id):
         identifier(run_id)
