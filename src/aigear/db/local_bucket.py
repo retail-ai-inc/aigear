@@ -246,7 +246,7 @@ class LocalGCSMock(BucketABC):
                                     metadata=metadata, content_type=content_type)
 
     def copy_blob(self, source_blob_name, destination_blob_name, *, destination_bucket=None,
-                  source_generation=None, if_generation_match=None, custom_time=None):
+                  source_generation=None, if_generation_match=None, custom_time=None, metadata=None):
         destination = self if destination_bucket is None else destination_bucket
         if not isinstance(destination, LocalGCSMock):
             raise TypeError("Copy requires two local buckets")
@@ -261,7 +261,7 @@ class LocalGCSMock(BucketABC):
             # Both stores remain locked until the destination pointer commits.
             return destination._put(transactions[str(destination._database)], target_name,
                                     self._data(source), condition, custom_time,
-                                    json.loads(source["metadata"]), source["content_type"])
+                                    json.loads(source["metadata"]) if metadata is None else metadata, source["content_type"])
 
     def delete(self, name, *, if_generation_match):
         name = self._key(name)

@@ -85,7 +85,7 @@ class RealGCS(BucketABC):
                                     custom_time=custom_time, metadata=metadata, content_type=content_type)
 
     def copy_blob(self, source_blob_name, destination_blob_name, *, destination_bucket=None,
-                  source_generation=None, if_generation_match=None, custom_time=None):
+                  source_generation=None, if_generation_match=None, custom_time=None, metadata=None):
         destination = self if destination_bucket is None else destination_bucket
         if not isinstance(destination, RealGCS):
             raise TypeError("Copy requires two GCS buckets")
@@ -108,7 +108,7 @@ class RealGCS(BucketABC):
             target = destination.bucket.blob(target_name)
             # Nonempty replacement metadata prevents editable metadata inheritance,
             # including Custom-Time. Never send customTime:null to clear it.
-            target.metadata = source_info.metadata
+            target.metadata = source_info.metadata if metadata is None else metadata
             target.content_type = source_info.content_type or "application/octet-stream"
             target.cache_control = "no-cache"
             if custom_time is not None:

@@ -3,7 +3,8 @@ import { readFileSync } from 'node:fs';
 import { google } from 'googleapis';
 import functions from '@google-cloud/functions-framework';
 import { Logging } from '@google-cloud/logging';
-import { CloudRunProtocol, GCSManifestStore, dispatchManagedTask, sealUnregistered, reconcileStoppedStep } from './asset_protocol.js';
+import { CloudRunProtocol, GCSManifestStore, dispatchManagedTask, reconcileStoppedStep } from './asset_protocol.js';
+import { sealSnapshots } from './snapshot_protocol.js';
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -1038,7 +1039,7 @@ functions.cloudEvent('cronjobProcessPubSub', async cloudEvent => {
     const identity = managed.asset_context || managed[0];
     const store = new GCSManifestStore(google, client, identity.train_bucket, identity.pipeline_version);
     return processManagedMessage(managed, client, { store,
-      seal: manifest => sealUnregistered(store, manifest),
+      seal: manifest => sealSnapshots(store, manifest),
       reconcileFailure: context => reconcileStoppedStep(store, context, async () => managed.worker_stopped === true) });
   }
   await writeCloudFunctionLog({

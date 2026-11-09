@@ -90,22 +90,6 @@ export class GCSManifestStore {
   }
 }
 
-export async function sealUnregistered(store, manifest) {
-  let pageToken;
-  do {
-    const { data } = await store.storage.objects.list({ bucket: store.bucket,
-      prefix: `assets/${store.version}/`, pageToken });
-    for (const meta of data.items || []) {
-      if (!meta.name.endsWith('/manifest.json')) continue;
-      const { data: value } = await store.storage.objects.get({ bucket: store.bucket, object: meta.name,
-        alt: 'media', generation: String(meta.generation), ifGenerationMatch: String(meta.generation) });
-      const snapshot = typeof value === 'string' ? JSON.parse(value) : value;
-      if (snapshot.run_id === manifest.execution.run_id) throw new OperationIncomplete('Checkpoint sealing integration is required');
-    }
-    pageToken = data.nextPageToken;
-  } while (pageToken);
-}
-
 export async function reconcileStoppedStep(store, identity, confirmStopped) {
   if (!await confirmStopped()) throw new ExecutionConflict('Worker is not confirmed stopped');
   let { manifest, generation } = await store.read();

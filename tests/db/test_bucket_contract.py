@@ -11,6 +11,16 @@ from aigear.management.asset_errors import InvalidAssetPath
 NOW = datetime(2026, 10, 23, tzinfo=timezone.utc)
 
 
+def test_copy_can_atomically_replace_operation_metadata(stores):
+    source, target = stores
+    original = source.write_bytes('source', b'content', metadata={'old': 'value'}, custom_time=NOW)
+    copied = source.copy_blob('source', 'target', destination_bucket=target,
+        source_generation=original.generation, if_generation_match='0', metadata={'aigear_operation': 'fixed-operation'})
+    assert copied.metadata == {'aigear_operation': 'fixed-operation'}
+    assert copied.custom_time is None
+    assert source.get_metadata('source') == original
+
+
 def test_json_metadata_and_fixed_download(stores, tmp_path):
     source, _ = stores
     info = source.write_json("running/v1/manifest.json", {"unicode": "数据", "values": [1, None]},

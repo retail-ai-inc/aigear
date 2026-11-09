@@ -125,8 +125,12 @@ class BucketABC(ABC):
     @abstractmethod
     def copy_blob(self, source_blob_name, destination_blob_name, *, destination_bucket=None,
                   source_generation=None, if_generation_match=None,
-                  custom_time=None) -> ObjectMetadata:
-        """Create a new generation, omitting source Custom-Time by default."""
+                  custom_time=None, metadata=None) -> ObjectMetadata:
+        """Create a new generation, omitting source Custom-Time by default.
+
+        metadata=None inherits user metadata; a dict atomically replaces it,
+        allowing resumable operations to identify copies after response loss.
+        """
         pass
 
     def rewrite(self, source_blob_name, destination_blob_name, **kwargs) -> ObjectMetadata:

@@ -184,6 +184,7 @@ class PendingOperation(Contract):
     progress: List[VerifiedObject] = Field(default_factory=list)
     target: Optional[Literal["running", "assets"]] = None
     retired_at: Optional[UTCTime] = None
+    started_at: Optional[UTCTime] = None
     error: Optional[Annotated[str, StringConstraints(strict=True, min_length=1, max_length=512)]] = None
 
     @model_validator(mode="after")

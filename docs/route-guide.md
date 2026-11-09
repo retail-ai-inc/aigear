@@ -400,13 +400,30 @@ Commands that load configuration use `AIGEAR_ENV_PATH` when set, otherwise `env.
 
 Workflow commands acquire managed execution ownership. Newly created or updated scheduler jobs carry the training bucket identity, enabling the same protocol across Cloud Function and VM steps; update existing jobs to adopt it. The protocol reserves `running/{pipeline_version}/manifest.json` with conditional writes, keeps ownership while waiting for the next VM, and rejects replayed runs and obsolete step attempts. A process must claim its attempt before it can install a writable context; copying run identifiers into environment variables does not create one.
 
-Internal integrations must commit a step before dispatching its successor, and persist `finalizing` before invoking an idempotent checkpoint-sealing callback. A failed seal or terminal write retains ownership for retry. Recovery requires confirmation that the original execution has stopped, reconciliation of pending writes, and a fresh attempt token; elapsed time does not grant takeover. Snapshot registration is not yet available; runs without explicit registration do not create snapshots.
+Internal integrations must commit a step before dispatching its successor, and persist `finalizing` before invoking an idempotent checkpoint-sealing callback. A failed seal or terminal write retains ownership for retry. Recovery requires confirmation that the original execution has stopped, reconciliation of pending writes, and a fresh attempt token; elapsed time does not grant takeover. Snapshot registration is explicit; runs without a call to `Assets.register()` do not create snapshots.
 
 Each local `aigear-task workflow` command creates a distinct run. A later command can reuse valid feature files produced by an earlier run; their production identity remains unchanged. Rewriting an upstream step marks dependent results stale before the first object is changed. Unrelated results remain valid. Cloud scheduler steps share one run across VM handoffs.
 
 Use `AssetManagement.upload()` and `copy_blob()` inside a workflow step. Writes outside the executor raise an error directing callers to the workflow entry point. `download()` reads a committed, valid production record and records managed lineage when called inside a workflow. Pending uploads are not visible as valid artifacts. Successful reruns remove outputs the step no longer produces; a previously productive step that returns no output fails rather than silently reusing its historical files. A zero-output management step is committed and deduplicated separately.
 
-A failed step cleans only the output generations it owns. Conflicting external writes and interrupted cleanup retain pending state and ownership for explicit recovery. URI credentials, query parameters, and fragments supplied through the internal input recorder are removed before persistence. Public input recording and asset registration are delivered with snapshot support.
+A failed step cleans only the output generations it owns. Conflicting external writes and interrupted cleanup retain pending state and ownership for explicit recovery. URI credentials, query parameters, and fragments supplied through the internal input recorder are removed before persistence. Use `Assets.record_input(name, uri=..., version=...)` inside an artifact-producing workflow step to record external inputs. Do not pass credentials in labels or versions.
+
+Use the public facade for snapshots:
+
+```python
+from aigear import Assets
+
+assets = Assets("v1")  # Binds configuration; no bucket IO or run is created.
+checkpoint = assets.register()
+checkpoints = assets.list()
+checkpoint = assets.get(checkpoint.run_id)
+```
+
+`register()` selects all valid committed artifact files from the active workflow context, or from the most recently completed run when invoked outside a workflow. Call it after a producer step has committed, for example from a separate management step. Pending outputs, empty workspaces, invalid lineage and stale or failed artifact steps are rejected. Existing members of the same run are immutable; another call can append newly committed steps while the run is active, retaining its original registration time and directory. Altered or missing old members raise `SnapshotConflict`.
+
+A terminal run seals its explicit checkpoints before releasing ownership. Failed runs retain already registered checkpoints, and a fixed pending registration may finish during finalization. Sealing failure keeps the run occupied for retry. Registering the most recently completed run creates an immediately sealed checkpoint; sealed checkpoints accept identical retries only. Registering does not move running files or apply a retention policy.
+
+`list()` and `get(run_id)` return `SnapshotInfo` and do not repair operations. `list(include_trash=True)` also includes retired snapshots when available. Query results expose only committed members and report pending operation status; their integrity status is unverified until object validation is performed by an operation. Unknown run IDs raise `SnapshotNotFound`. For local storage without configuration, bind explicitly with `Assets("v1", bucket_name="train", bucket_on=False)`.
 
 ---
 

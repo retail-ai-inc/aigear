@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from aigear.common.asset_context import RunOwnership
 from aigear.db.bucket import LocalGCSMock, RealGCS
-from aigear.management.asset_errors import ExecutionConflict, OperationIncomplete
+from aigear.management.asset_errors import ExecutionConflict
 from aigear.management.asset_paths import local_asset_roots
 from aigear.management.managed_io import commit_step, fail_step
 
@@ -22,13 +22,9 @@ def training_bucket(config, pipeline_version):
     return LocalGCSMock(config.gcp.gcp_project_id, local_asset_roots(Path.cwd(), name, pipeline_version).bucket)
 
 
-def seal_unregistered(bucket, manifest):
-    """Before registration is available, prove there is no checkpoint to seal."""
-    for meta in bucket.list_metadata(f"assets/{manifest.pipeline_version}/"):
-        if meta.name.endswith('/manifest.json'):
-            snapshot = bucket.read_json(meta.name, generation=meta.generation)
-            if snapshot.get('run_id') == manifest.execution.run_id:
-                raise OperationIncomplete("Registered checkpoints require the snapshot sealing integration", phase="seal")
+def seal_run(bucket, manifest):
+    from aigear.management.assets import Assets
+    return Assets._from_bucket(manifest.pipeline_version, bucket)._seal_run(manifest)
 
 
 @contextmanager
@@ -70,6 +66,6 @@ def workflow_step(pipeline_version, step_name, config):
         finally:
             if not cloud and ownership.read()[0].pending_step is None:
                 ownership.finalize(run_id, owner, step_name, attempt, succeeded=success,
-                                   seal=lambda manifest: seal_unregistered(bucket, manifest))
+                                   seal=lambda manifest: seal_run(bucket, manifest))
     finally:
         bucket.close()
