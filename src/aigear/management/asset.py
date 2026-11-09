@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Literal
 
 from aigear.db.bucket import LocalGCSMock, RealGCS
+from aigear.management.asset_paths import local_asset_roots
 
 
 class AssetManagement:
@@ -23,7 +24,9 @@ class AssetManagement:
         else:
             if not bucket_name:
                 raise ValueError("bucket_name is required when bucket_on=False (local mode).")
-            local_bucket_mock_path = self.project_dir / "asset" / bucket_name
+            local_bucket_mock_path = local_asset_roots(
+                self.project_dir, bucket_name, pipeline_version
+            ).bucket
             self.bucket_client = LocalGCSMock(project_id, local_bucket_mock_path)
 
     def download(self, file_name: str) -> Path:

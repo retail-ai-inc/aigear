@@ -58,6 +58,7 @@ gcp = [
     "google-cloud-logging>=3.0.0",
     "google-cloud-secret-manager>=2.24.0",
     "google-cloud-storage>=3.2.0",
+    "google-crc32c>=1.0.0",
     "google-cloud-compute>=1.38.0",
     "google-api-core>=2.0.0",
 ]

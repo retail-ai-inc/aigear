@@ -50,6 +50,10 @@ retention_days = bucket.train_bucket.trash_retention_days
 
 `AigearConfig.get_config()` shares this runtime cache. `AppConfig.raw()` and `EnvConfig.get_config_with_json()` expose the original configuration. For project-specific generated models, use `AppConfig.raw_as(EnvSchema)` or `EnvConfig.get_config_with_schema(EnvSchema)` to retain bucket validation and defaults; see [`aigear-env-schema`](cli-reference.md#aigear-env-schema).
 
+**Local storage:** `AssetManagement(..., bucket_on=False)` exposes ordinary files at `asset/buckets/{bucket_name}/{object_path}`; for example, `asset/buckets/train/v1/training/model.bin`. JSON files retain their original names and can be opened directly. The download cache stays at `asset/{pipeline_version}/{data_type}/`. Use backend methods for writes to keep versions and checksums consistent. Version and recovery data stay in the private sibling directory `asset/buckets/.aigear-local/`; back it up with the bucket tree after stopping local writers. Existing files in the previous `asset/{bucket_name}/` layout remain in place without automatic import.
+
+`RealGCS` and `LocalGCSMock` have the same constructor and object-operation parameters, defaults, return types, and domain exceptions. Select the backend when creating the client; the calling code for uploads, downloads, JSON, copies, metadata, and lifecycle configuration stays the same. Writes and copies return `ObjectMetadata`; lifecycle reads and updates return `BucketLifecycle`; downloads and deletes return `None`. Generations are opaque decimal strings from the selected store. Local crash recovery restores readable files to the committed version before the next backend operation. Lifecycle eligibility is a shared read-only diagnostic; infrastructure rule synchronization is still handled separately.
+
 #### 2.1.2 Cloud Build (`cloud_build`)
 
 | Parameter | Type | Description | Example |
