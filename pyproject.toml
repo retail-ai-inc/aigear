@@ -41,6 +41,7 @@ Issues = "https://github.com/retail-ai-inc/aigear/issues"
 common = [
     "tabulate>=0.9",
     "cloudpickle>=2.0.0",
+    "tzdata; sys_platform == 'win32'",
     "pydantic>=2.11.9",
     "datamodel_code_generator<0.55.0",
 ]
@@ -104,3 +105,4 @@ include = [
 
 [tool.pytest.ini_options]
 addopts = "--tb=short"
+markers = ["live_gcs: explicit authorized-bucket small-object integration test"]

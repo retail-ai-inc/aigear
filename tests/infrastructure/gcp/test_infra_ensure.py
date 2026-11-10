@@ -8,6 +8,16 @@ from aigear.infrastructure.gcp import infra as infra_module
 from aigear.common.config import AppConfig
 
 
+@pytest.fixture(autouse=True)
+def capture_infra_logs(caplog):
+    # The application logger disables propagation; pytest 8 captures root only.
+    infra_module.logger.addHandler(caplog.handler)
+    try:
+        yield
+    finally:
+        infra_module.logger.removeHandler(caplog.handler)
+
+
 def _make_infra():
     """Return an Infra instance with all GCP dependencies mocked."""
     infra = Infra.__new__(Infra)

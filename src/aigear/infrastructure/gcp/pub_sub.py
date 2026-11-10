@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from aigear.common import run_sh
 from aigear.common.logger import Logging
 
