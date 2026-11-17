@@ -8,7 +8,7 @@ def generate_schema(
     input_path: str | Path = None,
     input_file_type: InputFileType = InputFileType.Json,
     output: str | Path = None,
-    output_model_type: DataModelType = DataModelType.PydanticBaseModel,
+    output_model_type: DataModelType = DataModelType.PydanticV2BaseModel,
     class_name: str = None,
     forced_generate: bool = False,
 ):
@@ -43,7 +43,7 @@ def generate_schema_for_json(
     json_data,
     input_file_type: InputFileType = InputFileType.Json,
     output: str | Path = None,
-    output_model_type: DataModelType = DataModelType.PydanticBaseModel,
+    output_model_type: DataModelType = DataModelType.PydanticV2BaseModel,
     class_name: str = None,
     forced_generate: bool = False,
 ):
@@ -81,7 +81,7 @@ def auto_aigear_schema():
         json_data=cfg["aigear"],
         input_file_type=InputFileType.Json,
         output=output_path,
-        output_model_type=DataModelType.PydanticBaseModel,
+        output_model_type=DataModelType.PydanticV2BaseModel,
         class_name="Config",
         forced_generate=True,
     )
@@ -96,7 +96,7 @@ if __name__ == "__main__":
         json_data=all_cfg["aigear"],
         input_file_type=InputFileType.Json,
         output=output_path,
-        output_model_type=DataModelType.PydanticBaseModel,
+        output_model_type=DataModelType.PydanticV2BaseModel,
         class_name="Config",
         forced_generate=True,
     )

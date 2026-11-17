@@ -132,7 +132,7 @@ class AppConfig:
             input_path=ENV_PATH,
             input_file_type=InputFileType.Json,
             output=output_path,
-            output_model_type=DataModelType.PydanticBaseModel,
+            output_model_type=DataModelType.PydanticV2BaseModel,
             class_name="EnvSchema",
             forced_generate=forced_generate,
         )
